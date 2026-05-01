@@ -74,7 +74,7 @@
 
     - name: Add git-core PPA repository
       ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/git-core-ppa.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu {{ git_ppa_codename }} main"
+        repo: "deb [signed-by=/etc/apt/keyrings/git-core-ppa.gpg] http://ppa.launchpadcontent.net/git-core/ppa/ubuntu {{ git_ppa_codename }} main"
         filename: git-core-ppa
         state: present
 
