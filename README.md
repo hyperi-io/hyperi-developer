@@ -7,7 +7,9 @@
 [![Last Commit](https://img.shields.io/github/last-commit/hyperi-io/dfe-developer)](https://github.com/hyperi-io/dfe-developer/commits/main)
 [![Stars](https://img.shields.io/github/stars/hyperi-io/dfe-developer?style=social)](https://github.com/hyperi-io/dfe-developer/stargazers)
 
-Standardised developer environment for HyperSec DFE teams. One command gets you Docker, Kubernetes tools, cloud CLIs, and a properly configured desktop.
+Standardised modern auto-updating developer environment with opt-in HyperI-specific sections.
+
+Anyone — HyperI staff, contractors, or external developers — can use it as a clean generic dev base, then opt into language-specific tooling (Rust, Python, Go, C, Node, TypeScript), infrastructure-as-code tools, GUI editors, or HyperI's org-specific stack (Slack, Linear, JFrog, NetBird VPN, etc.). The default install is lightweight and won't impose HyperI policies on your environment.
 
 ## Platform Support
 
