@@ -10,15 +10,62 @@ This is the authoritative table for what every existing task migrates to and wha
 
 ## Decision summary (2026-05-01)
 
-- Languages: `rust`, `python`, `go`, `c`, `typescript` (TS depends on Node)
-- TypeScript: includes Cursor in `developer-typescript-gui` (TS devs commonly want Cursor as their editor)
-- Docker Desktop: **removed entirely** from the build (any platform). On macOS, no container runtime is installed by default; document `colima` / `orbstack` / `podman` as user-installed options. On Linux, Docker Engine stays in `developer`.
-- Browser policies: **removed entirely**, not migrated.
-- Auto-updates: **moved to `hyperi`** — not forced on non-HyperI users.
-- Bash history auto-commit: **moved to `hyperi`** — opinionated workflow, not generic.
-- Nemo (replaces Nautilus) and `desktop_cleanup.yml` (hide Nautilus + dedupe Flatpak) **moved to `hyperi-gui`** — these are HyperI's desktop opinions.
-- `--core` flag: **removed** entirely.
-- No-flag default: `--tags developer` (lightweight CLI base only).
+- **Repo rename**: `dfe-developer` → `hyperi-developer` (separate work stream — see "Out-of-scope-but-tracked")
+- **Submodule attachment**: hyperi-developer added as a submodule under hyperi-infra for in-flight development convenience (separate work stream)
+- **Languages**: `rust`, `python`, `go`, `c`, `typescript` (TS depends on Node)
+- **TypeScript**: includes Cursor in `developer-typescript-gui` (TS devs commonly want Cursor as their editor)
+- **Docker on macOS**: install latest **Docker CLI** via Homebrew (NOT Docker Desktop). Docker Desktop's GUI/proprietary install is dropped entirely. On Linux, Docker Engine stays in `developer`.
+- **Browser policies**: **removed entirely**, not migrated.
+- **Removed entirely** (per user 2026-05-01):
+  - Bitwarden CLI (the GUI also? — see open question below)
+  - JFrog CLI
+  - Linear CLI
+  - NetBird CLI
+- **Renamed**: `telemetry.yml` → `telemetry-disable.yml` (it disables telemetry/ads, doesn't add it — name was misleading)
+- **Auto-updates**: **moved to `hyperi`** — not forced on non-HyperI users.
+- **Bash history auto-commit**: **moved to `hyperi`** — opinionated workflow, not generic.
+- **VPN (NetBird, OpenVPN)**: HyperI-specific. NetBird removed entirely; OpenVPN stays in `hyperi`.
+- **Nemo + `desktop_cleanup.yml`**: **moved to `hyperi-gui`** — HyperI desktop opinions.
+- **`--core` flag**: **removed** entirely.
+- **No-flag default**: `--tags developer` (lightweight CLI base only).
+- **`/fedora/` directory**: **deleted** — deprecated bash-script installer, superseded by the Ansible playbook. (Fedora support stays in the Ansible tasks via `when: distribution == 'Fedora'`.)
+- **Tagging scheme**: two-level — primary group tags (`developer`, `hyperi-gui`, etc.) + per-app sub-tags (`slack`, `vscode`, etc.) on every task. See "Tagging mechanism" section below.
+
+---
+
+## Tagging mechanism — primary tags + per-app sub-tags
+
+To install a single app (e.g. just Slack, nothing else) without exploding the top-level tag list to a "bazillion entries", use **two-level tags**:
+
+**Every task gets two tags:**
+1. A **primary group tag** — the role/group the task belongs to (`developer`, `developer-gui`, `hyperi-gui`, etc.)
+2. A **per-app sub-tag** — the specific task name (`slack`, `vscode`, `ghostty`, `claude`, `cursor`, `lens`, `dbeaver`, etc.)
+
+**Implementation pattern in `playbooks/main.yml`:**
+
+```yaml
+- name: Install Slack
+  ansible.builtin.include_tasks:
+    file: slack.yml
+    apply:
+      tags: ['hyperi-gui', 'slack']
+  tags: ['hyperi-gui', 'slack']
+```
+
+**User-facing behaviour:**
+
+| Command | Result |
+|---|---|
+| `./install.sh` (no flags) | Just `developer` group |
+| `./install.sh --tags hyperi-gui` | All hyperi-gui apps (Slack, Bitwarden GUI, OnlyOffice, etc.) |
+| `./install.sh --tags slack` | **Only** Slack — skips everything else, including the rest of hyperi-gui |
+| `./install.sh --tags slack,claude` | Just those two |
+| `./install.sh --tags developer,developer-rust,vscode` | Generic dev base + Rust + just VS Code (no other GUI tools) |
+| `./install.sh --all` | Everything (kitchen sink) |
+
+**`--help` only shows primary group tags** (~12 entries, manageable). Per-app tags are listed in this `ROLE-TASK-MAPPING.md` doc under each role section. New helper flag `--list-apps` will dump the full per-app tag list for power users.
+
+This is the standard Ansible pattern — `include_tasks` with multiple tags applied. No custom plumbing required.
 
 ---
 
@@ -57,15 +104,15 @@ chrome / brave             individual browser tags
 
 Universal lightweight dev base. Anyone can install this without it touching their existing environment hard.
 
-| Task | Source | What it does |
-|---|---|---|
-| `apparmor_userns.yml` | (existing in `developer`) | Disable AppArmor unprivileged user-namespace restriction — Ubuntu 23.10+ regression that breaks Flatpak GUI apps. Generic Ubuntu bug fix. |
-| `repository.yml` | (existing) | OS repo mirror config / fastestmirror. Performance only, no opinion. |
-| `git.yml` | (existing) | Latest Git via official PPA (Ubuntu) / Fedora / brew. |
-| `utilities.yml` | (existing) | CLI utilities (htop, ripgrep, fd, fzf, jq, yq, etc.) + Flatpak runtime. |
-| `docker.yml` (Linux only) | (existing, trimmed) | Docker Engine on Linux. **macOS branch deleted** (no Docker Desktop). |
-| `init.yml` | (existing) | Setup common variables. |
-| `verify.yml` | (existing) | Role-end verification. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `apparmor_userns.yml` | `apparmor` | (existing in `developer`) | Disable AppArmor unprivileged user-namespace restriction — Ubuntu 23.10+ regression that breaks Flatpak GUI apps. Generic Ubuntu bug fix. |
+| `repository.yml` | `repository` | (existing) | OS repo mirror config / fastestmirror. Performance only, no opinion. |
+| `git.yml` | `git` | (existing) | Latest Git via official PPA (Ubuntu) / Fedora / brew. |
+| `utilities.yml` | `utilities` | (existing) | CLI utilities (htop, ripgrep, fd, fzf, jq, yq, etc.) + Flatpak runtime. |
+| `docker.yml` | `docker` | (existing, trimmed) | **Linux:** Docker Engine. **macOS:** latest Docker CLI via brew (NOT Docker Desktop — no GUI/proprietary install). User picks their own daemon (colima/orbstack/podman). |
+| `init.yml` | `init` | (existing) | Setup common variables. |
+| `verify.yml` | `verify` | (existing) | Role-end verification. |
 
 ---
 
@@ -73,68 +120,68 @@ Universal lightweight dev base. Anyone can install this without it touching thei
 
 GUI tooling for general devs. Requires a desktop environment to be present (or installs one if missing — see `desktop.yml`).
 
-| Task | Source | What it does |
-|---|---|---|
-| `desktop.yml` (Linux only) | from `developer/` | Install GNOME (Fedora) or `ubuntu-desktop-minimal` (Ubuntu) if not present. Only runs if `developer-gui` opted into. |
-| `vscode.yml` | from `developer/` | VS Code editor. |
-| `ghostty.yml` | from `developer/` | Ghostty terminal + JetBrains Mono font. Theme fix already applied. |
-| `dbeaver.yml` | **NEW** | DBeaver Community — DB GUI. (User decision: lives in developer-gui not infrastructure-gui.) |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `desktop.yml` (Linux only) | `desktop` | from `developer/` | Install GNOME (Fedora) or `ubuntu-desktop-minimal` (Ubuntu) if not present. Only runs if `developer-gui` opted into. |
+| `vscode.yml` | `vscode` | from `developer/` | VS Code editor. |
+| `ghostty.yml` | `ghostty` | from `developer/` | Ghostty terminal + JetBrains Mono font. Theme fix already applied. |
+| `dbeaver.yml` | `dbeaver` | **NEW** | DBeaver Community — DB GUI. (User decision: lives in developer-gui not infrastructure-gui.) |
 
 ---
 
 ## `developer-rust` (opt-in)
 
-| Task | Source | What it does |
-|---|---|---|
-| `rust.yml` | from `developer_core/` | rustup-init + cargo + sccache + mold + cargo-sweep. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `rust.yml` | `rust` | from `developer_core/` | rustup-init + cargo + sccache + mold + cargo-sweep. |
 
 ---
 
 ## `developer-python` (opt-in)
 
-| Task | Source | What it does |
-|---|---|---|
-| `uv.yml` | from `developer/` | UV (Astral's Python package manager + interpreter manager). |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `uv.yml` | `uv` | from `developer/` | UV (Astral's Python package manager + interpreter manager). |
 
 ---
 
 ## `developer-go` (opt-in, NEW)
 
-| Task | Source | What it does |
-|---|---|---|
-| `go.yml` | **NEW** | Go toolchain via package manager + gopls + dlv. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `go.yml` | `go` | **NEW** | Go toolchain via package manager + gopls + dlv. |
 
 ---
 
 ## `developer-c` (opt-in)
 
-| Task | Source | What it does |
-|---|---|---|
-| `c_tools.yml` | from `developer_core/` | `@c-development` (Fedora) / build-essential (Ubuntu) / Xcode CLT (macOS) + valgrind + gdb. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `c_tools.yml` | `c-tools` | from `developer_core/` | `@c-development` (Fedora) / build-essential (Ubuntu) / Xcode CLT (macOS) + valgrind + gdb. |
 
 ---
 
 ## `developer-node` (opt-in)
 
-| Task | Source | What it does |
-|---|---|---|
-| `nodejs.yml` | from `developer_core/` | Node.js (latest LTS via NodeSource or fnm) + pnpm. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `nodejs.yml` | `nodejs` | from `developer_core/` | Node.js (latest LTS via NodeSource or fnm) + pnpm. |
 
 ---
 
 ## `developer-typescript` (opt-in, **depends on `developer-node`**)
 
-| Task | Source | What it does |
-|---|---|---|
-| `typescript.yml` | **NEW** | `npm install -g typescript ts-node tsx` (or pnpm equivalents). |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `typescript.yml` | `typescript` | **NEW** | `npm install -g typescript ts-node tsx` (or pnpm equivalents). |
 
 ---
 
 ## `developer-typescript-gui` (opt-in, **depends on `developer-typescript`**)
 
-| Task | Source | What it does |
-|---|---|---|
-| `cursor.yml` | **NEW** | Cursor editor (cursor.sh — VS Code fork with AI built-in). Linux: AppImage / .deb. macOS: brew cask. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `cursor.yml` | `cursor` | **NEW** | Cursor editor (cursor.sh — VS Code fork with AI built-in). Linux: AppImage / .deb. macOS: brew cask. |
 
 ---
 
@@ -142,21 +189,21 @@ GUI tooling for general devs. Requires a desktop environment to be present (or i
 
 Generic IaC + cloud — not HyperI-specific.
 
-| Task | Source | What it does |
-|---|---|---|
-| `cloud.yml` | from `developer/` | HashiCorp tools (Terraform, Vault, Packer) + AWS CLI v2. |
-| `azure.yml` | from `developer_core/` | Azure CLI. |
-| `gcloud.yml` | from `developer_core/` | Google Cloud CLI. |
-| `k8s.yml` | from `developer/` | kubectl + helm + k9s + minikube. |
-| `data_tools.yml` (Vector) | from `developer/` | Vector data pipeline tool. (Niche; debatable. Possibly remove entirely?) |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `cloud.yml` | `cloud` | from `developer/` | HashiCorp tools (Terraform, Vault, Packer) + AWS CLI v2. |
+| `azure.yml` | `azure` | from `developer_core/` | Azure CLI. |
+| `gcloud.yml` | `gcloud` | from `developer_core/` | Google Cloud CLI. |
+| `k8s.yml` | `k8s` | from `developer/` | kubectl + helm + k9s + minikube. |
+| `data_tools.yml` (Vector) | `vector` | from `developer/` | Vector data pipeline tool. (Niche; debatable. Possibly remove entirely?) |
 
 ---
 
 ## `infrastructure-gui` (opt-in, NEW)
 
-| Task | Source | What it does |
-|---|---|---|
-| `lens.yml` | **NEW** | Lens — K8s desktop client. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `lens.yml` | `lens` | **NEW** | Lens — K8s desktop client. |
 
 (DBeaver is in `developer-gui`, not here.)
 
@@ -166,34 +213,34 @@ Generic IaC + cloud — not HyperI-specific.
 
 Things only HyperI users want imposed on their machine.
 
-| Task | Source | What it does |
-|---|---|---|
-| `security.yml` | from `developer/` (was always-run) | Configure auto-updates (`unattended-upgrades` / `dnf-automatic`). HyperI policy. **Now opt-in.** |
-| `shell_config.yml` | from `developer/` (was always-run) | Bash history auto-commit. HyperI workflow. **Now opt-in.** |
-| `act.yml` | from `developer_core/` | act — run GH Actions locally (HyperI heavy CI user). |
-| `bitwarden.yml` (CLI part only) | from `developer_core/` | Bitwarden CLI. |
-| `claude.yml` | from `developer_core/` | Claude Code (HyperI uses it heavily). |
-| `gitleaks.yml` | from `developer_core/` | Gitleaks — secret scanner. (HyperI security policy.) |
-| `jfrog.yml` | from `developer_core/` | JFrog CLI (HyperI Artifactory). |
-| `linear.yml` | from `developer_core/` | Linear CLI (HyperI issue tracker). |
-| `netbird.yml` | from `developer_core/` | NetBird CLI (HyperI mesh VPN). |
-| `openvpn.yml` | from `developer_core/` | OpenVPN client (HyperI fallback VPN). |
-| `telemetry.yml` | from `developer_core/` | HyperI telemetry config. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `security.yml` | `auto-updates` | from `developer/` (was always-run) | Configure auto-updates (`unattended-upgrades` / `dnf-automatic`). HyperI policy. **Now opt-in.** |
+| `shell_config.yml` | `bash-history` | from `developer/` (was always-run) | Bash history auto-commit. HyperI workflow. **Now opt-in.** |
+| `act.yml` | `act` | from `developer_core/` | act — run GH Actions locally (HyperI heavy CI user). |
+| `claude.yml` | `claude` | from `developer_core/` | Claude Code (HyperI uses it heavily). |
+| `gitleaks.yml` | `gitleaks` | from `developer_core/` | Gitleaks — secret scanner. (HyperI security policy.) |
+| `openvpn.yml` | `openvpn` | from `developer_core/` | OpenVPN client (HyperI VPN). |
+| `telemetry-disable.yml` | `telemetry-disable` | renamed from `telemetry.yml` | Disable Ubuntu Pro/ESM ads, MOTD news, crash reporting, telemetry. Privacy hardening. |
+| ❌ `bitwarden.yml` (CLI part) | — | **REMOVED** | User decision 2026-05-01 |
+| ❌ `jfrog.yml` | — | **REMOVED** | User decision 2026-05-01 |
+| ❌ `linear.yml` | — | **REMOVED** | User decision 2026-05-01 |
+| ❌ `netbird.yml` | — | **REMOVED** | User decision 2026-05-01 |
 
 ---
 
 ## `hyperi-gui` (opt-in — org-specific GUI apps)
 
-| Task | Source | What it does |
-|---|---|---|
-| `slack.yml` | from `developer_core/` | Slack desktop. |
-| `bitwarden_gui.yml` | from `developer_core/bitwarden.yml` (split) | Bitwarden GUI (Flatpak). |
-| `onlyoffice.yml` | from `developer/` | OnlyOffice Desktop Editors. |
-| `office.yml` | from `developer_core/` | Office suite tasks (need to read what this does). |
-| `nemo.yml` | from `developer/` (was always-run) | Nemo file manager (replaces Nautilus). HyperI desktop choice. |
-| `desktop_cleanup.yml` | from `developer/` (was always-run) | Hide Nautilus from menus + dedupe Flatpak/apt versions. |
-| `gnome.yml` | from `developer/` (was always-run) | GNOME extensions (Astra Monitor etc.). |
-| `browser_policies.yml` | ❌ **DELETED** | Was applying privacy policies. User decision: drop entirely. |
+| Task | Per-app tag | Source | What it does |
+|---|---|---|---|
+| `slack.yml` | `slack` | from `developer_core/` | Slack desktop. |
+| `onlyoffice.yml` | `onlyoffice` | from `developer/` | OnlyOffice Desktop Editors. |
+| `office.yml` | `office` | from `developer_core/` | Office suite tasks (need to read what this does). |
+| `nemo.yml` | `nemo` | from `developer/` (was always-run) | Nemo file manager (replaces Nautilus). HyperI desktop choice. |
+| `desktop_cleanup.yml` | `desktop-cleanup` | from `developer/` (was always-run) | Hide Nautilus from menus + dedupe Flatpak/apt versions. |
+| `gnome.yml` | `gnome-extensions` | from `developer/` (was always-run) | GNOME extensions (Astra Monitor etc.). |
+| ❌ `bitwarden_gui.yml` | — | **REMOVED** | User decision 2026-05-01 — see open question on whether to keep |
+| ❌ `browser_policies.yml` | — | **DELETED** | Privacy policies. Drop entirely. |
 
 ---
 
@@ -258,7 +305,7 @@ Anyone wanting more does `--tags developer,developer-gui` or `--tags developer,d
 | Tag | Installs |
 |---|---|
 | (always-run) | AppArmor userns fix, repo mirrors |
-| `developer` | git, CLI utilities, Docker Engine (Linux only) |
+| `developer` | git, CLI utilities, Docker (Engine on Linux / CLI-only via brew on macOS — no Docker Desktop) |
 | `developer-gui` | desktop env if missing, VS Code, Ghostty + JetBrains Mono, DBeaver |
 | `developer-python` | UV |
 
@@ -267,24 +314,53 @@ What they DON'T get:
 - ❌ No Nemo replacing Nautilus
 - ❌ No GNOME extensions
 - ❌ No bash history auto-commit
-- ❌ No Slack, Linear, JFrog, NetBird, OpenVPN, Bitwarden, Claude Code
-- ❌ No browser privacy policies
+- ❌ No Slack, OpenVPN, Claude Code (HyperI org-tools)
+- ❌ No browser privacy policies (deleted entirely)
 - ❌ No wallpaper or avatar
-- ❌ No Rust, Go, C, Node toolchains
-- ❌ No Docker Desktop, no Cursor
+- ❌ No Rust, Go, C, Node toolchains (separate language tags)
+- ❌ No Docker Desktop, no Cursor (Cursor lives under `developer-typescript-gui`)
 
-Lightweight, no surprises, no org-imposing.
+Lightweight, no surprises, no org-imposing. macOS users still get a working modern Docker CLI (just not the Desktop GUI/proprietary).
+
+---
+
+## Out-of-scope-but-tracked (separate work streams)
+
+These are bigger pieces that follow this refactor but aren't part of the role/tag work:
+
+### Repo rename: `dfe-developer` → `hyperi-developer`
+
+- Update `package.json` `name` field
+- Update README + CHANGELOG headers
+- Update VERSION metadata
+- Update CI release config if it references the repo name
+- GitHub: `gh repo rename hyperi-developer` (must be run by user — safety hook blocks remote repo admin)
+- Update consumers — `hyperi-infra/packer/templates/ubuntu-desktop.pkr.hcl` references `https://github.com/hyperi-io/dfe-developer.git`; needs swap
+
+### Submodule attachment in hyperi-infra
+
+- `git submodule add https://github.com/hyperi-io/hyperi-developer.git subprojects/hyperi-developer` (or wherever)
+- Update `hyperi-infra/CLAUDE.md` to document the new submodule and how it relates to the desktop build pipeline
+- Decide: does the desktop Packer template clone fresh from URL (current behaviour) or pull from the submodule path? Probably stays URL-based for build reproducibility, with submodule as a dev-convenience path.
+
+### Delete `/fedora/` directory
+
+- Deprecated bash-script installer (still says "HyperSec"), superseded by Ansible roles
+- Files: `fedora/{QUICKSTART.md,default-background.svg,install-*.sh,lib.sh,tests/}` — all go
+- Update README + CHANGELOG to remove references
+- Fedora support stays via `when: ansible_facts['distribution'] == 'Fedora'` conditionals in tasks
 
 ---
 
 ## Open questions for you to amend before implementation
 
-- [ ] **Confirm language list**: rust, python, go, c, node, typescript. Drop any? Add any?
-- [ ] **DBeaver**: confirm it's `developer-gui` (you said so above — recording)
-- [ ] **Vector**: keep in `infrastructure`, or drop entirely (niche tool)
-- [ ] **GNOME extensions** in `hyperi-gui`: keep, or move to opt-in `gnome-extensions` tag
-- [ ] **Cosmetic split**: should `wallpaper` and `avatar` be one tag (`cosmetic`) or two (`wallpaper`, `avatar`)?
+- [ ] **Bitwarden GUI**: user said "remove bitwarden cli" — does that include the GUI in `hyperi-gui`, or keep that? Currently marked REMOVED-pending-confirmation.
+- [ ] **Languages**: confirmed rust, python, go, c, node, typescript. (Java? Ruby? — assume not unless added.)
+- [ ] **Vector** in `infrastructure`: keep, or drop entirely (niche)?
+- [ ] **`office.yml`** in `hyperi-gui`: I haven't read its contents yet — will check during implementation; might be redundant with `onlyoffice.yml`.
 - [ ] **Auto-updates in hyperi**: actively configure auto-updates, or just ensure the package is present and let the user enable? (Currently configures.)
-- [ ] **Always-run additions/removals**: anything you'd add or take off the "always-run" list of 2 items?
+- [ ] **Cosmetic split**: should `wallpaper` and `avatar` be one tag (`cosmetic`) or two (`wallpaper`, `avatar`)? (Per-app tags exist either way; this is about the group label.)
+- [ ] **Always-run additions/removals**: anything you'd add or take off the "always-run" list of 2 items (apparmor + repository)?
+- [ ] **Submodule path**: where in hyperi-infra should hyperi-developer attach? `subprojects/hyperi-developer` (matches mail-migration / atlassian-decom pattern)?
 
 Edit this file with your decisions, then I'll execute.
