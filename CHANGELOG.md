@@ -5,98 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.23.14](https://github.com/hyperi-io/dfe-developer/compare/v2.23.13...v2.23.14) (2026-02-20)
+## [2.23.14](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.13...v2.23.14) (2026-02-20)
 
 
 ### Bug Fixes
 
-* replace PAM GPU group approach with udev world-readable rule ([fff2cc2](https://github.com/hyperi-io/dfe-developer/commit/fff2cc275ad2eff4c885d406320de9850690cc81))
+* replace PAM GPU group approach with udev world-readable rule ([fff2cc2](https://github.com/hyperi-io/hyperi-developer/commit/fff2cc275ad2eff4c885d406320de9850690cc81))
 
-## [2.23.13](https://github.com/hyperi-io/dfe-developer/compare/v2.23.12...v2.23.13) (2026-02-17)
-
-
-### Bug Fixes
-
-* use system dconf profile for RDP animation disable ([cc097c0](https://github.com/hyperi-io/dfe-developer/commit/cc097c0447655e76e15e1bbad430cf505db29dcf))
-
-## [2.23.12](https://github.com/hyperi-io/dfe-developer/compare/v2.23.11...v2.23.12) (2026-02-17)
+## [2.23.13](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.12...v2.23.13) (2026-02-17)
 
 
 ### Bug Fixes
 
-* remove duplicate mesa-va-drivers from vm_tools (already in rdp role) ([9e445df](https://github.com/hyperi-io/dfe-developer/commit/9e445dfb047097a81eb530b285da142d09390951))
+* use system dconf profile for RDP animation disable ([cc097c0](https://github.com/hyperi-io/hyperi-developer/commit/cc097c0447655e76e15e1bbad430cf505db29dcf))
 
-## [2.23.11](https://github.com/hyperi-io/dfe-developer/compare/v2.23.10...v2.23.11) (2026-02-17)
-
-
-### Bug Fixes
-
-* tune RDP software encoding for virtio-gpu VMs without VA-API H.264 ([5fbd6ca](https://github.com/hyperi-io/dfe-developer/commit/5fbd6cab09a763c90fccced6a067ac39c1599bab))
-
-## [2.23.10](https://github.com/hyperi-io/dfe-developer/compare/v2.23.9...v2.23.10) (2026-02-17)
+## [2.23.12](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.11...v2.23.12) (2026-02-17)
 
 
 ### Bug Fixes
 
-* add mesa-va-drivers for VA-API video acceleration in VMs ([29c4fdb](https://github.com/hyperi-io/dfe-developer/commit/29c4fdb0d7a0849bdcf6f9bb8038fd9eeebb43bf))
+* remove duplicate mesa-va-drivers from vm_tools (already in rdp role) ([9e445df](https://github.com/hyperi-io/hyperi-developer/commit/9e445dfb047097a81eb530b285da142d09390951))
 
-## [2.23.9](https://github.com/hyperi-io/dfe-developer/compare/v2.23.8...v2.23.9) (2026-02-16)
-
-
-### Bug Fixes
-
-* add desktop-mode script for winlike/maclike switching ([2373c42](https://github.com/hyperi-io/dfe-developer/commit/2373c42b8d69ef7fd76e7ddcc1ae577fc53d9071))
-
-## [2.23.8](https://github.com/hyperi-io/dfe-developer/compare/v2.23.7...v2.23.8) (2026-02-16)
+## [2.23.11](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.10...v2.23.11) (2026-02-17)
 
 
 ### Bug Fixes
 
-* rewrite broken symlinks after home directory rename ([0d14135](https://github.com/hyperi-io/dfe-developer/commit/0d14135d1b360defccbbbde81e636d7a1a4c8756))
+* tune RDP software encoding for virtio-gpu VMs without VA-API H.264 ([5fbd6ca](https://github.com/hyperi-io/hyperi-developer/commit/5fbd6cab09a763c90fccced6a067ac39c1599bab))
 
-## [2.23.7](https://github.com/hyperi-io/dfe-developer/compare/v2.23.6...v2.23.7) (2026-02-16)
-
-
-### Bug Fixes
-
-* change default --all UI mode from maclike to winlike ([99afa79](https://github.com/hyperi-io/dfe-developer/commit/99afa7997795586d9da18e53dcbda98752a47b38))
-
-## [2.23.6](https://github.com/hyperi-io/dfe-developer/compare/v2.23.5...v2.23.6) (2026-02-16)
+## [2.23.10](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.9...v2.23.10) (2026-02-17)
 
 
 ### Bug Fixes
 
-* rename-user heredoc expansion bug and keyring reset ([ef73811](https://github.com/hyperi-io/dfe-developer/commit/ef73811b55e0f44a10d84aabe6cbfde662cda9b7))
+* add mesa-va-drivers for VA-API video acceleration in VMs ([29c4fdb](https://github.com/hyperi-io/hyperi-developer/commit/29c4fdb0d7a0849bdcf6f9bb8038fd9eeebb43bf))
 
-## [2.23.5](https://github.com/hyperi-io/dfe-developer/compare/v2.23.4...v2.23.5) (2026-02-16)
-
-
-### Bug Fixes
-
-* add LTS codename fallback for OpenVPN3 repo on Ubuntu interim releases ([2427e01](https://github.com/hyperi-io/dfe-developer/commit/2427e0194101f3732786c8f5496d8e25cb781a3c))
-
-## [2.23.4](https://github.com/hyperi-io/dfe-developer/compare/v2.23.3...v2.23.4) (2026-02-16)
+## [2.23.9](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.8...v2.23.9) (2026-02-16)
 
 
 ### Bug Fixes
 
-* add LTS codename fallback for HashiCorp, Docker, and git-core repos ([21608fb](https://github.com/hyperi-io/dfe-developer/commit/21608fb4788691d32fb1e2567281f15f76c453d2))
+* add desktop-mode script for winlike/maclike switching ([2373c42](https://github.com/hyperi-io/hyperi-developer/commit/2373c42b8d69ef7fd76e7ddcc1ae577fc53d9071))
 
-## [2.23.3](https://github.com/hyperi-io/dfe-developer/compare/v2.23.2...v2.23.3) (2026-02-15)
-
-
-### Bug Fixes
-
-* add regional locale support and rename-user script ([3f07a98](https://github.com/hyperi-io/dfe-developer/commit/3f07a98acc44282a5dc88d848ec9b9fd48e4a5de))
-* azure CLI and vector apt repos for plucky (Ubuntu 25.04) ([839c5a1](https://github.com/hyperi-io/dfe-developer/commit/839c5a1f7186a413ab23ed07a7bf84ae6abeee45))
-
-## [2.23.2](https://github.com/hyperi-io/dfe-developer/compare/v2.23.1...v2.23.2) (2026-02-13)
+## [2.23.8](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.7...v2.23.8) (2026-02-16)
 
 
 ### Bug Fixes
 
-* replace deprecated apt-key with signed-by keyring for OnlyOffice ([c704bd0](https://github.com/hyperi-io/dfe-developer/commit/c704bd0bf56744c021067bfdb53ada6b64f2af7b))
-* use HTTP export for git-core PPA GPG keys ([8aed3fa](https://github.com/hyperi-io/dfe-developer/commit/8aed3fa53b7112c74b2902262ef0e5e121b63b5b))
+* rewrite broken symlinks after home directory rename ([0d14135](https://github.com/hyperi-io/hyperi-developer/commit/0d14135d1b360defccbbbde81e636d7a1a4c8756))
+
+## [2.23.7](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.6...v2.23.7) (2026-02-16)
+
+
+### Bug Fixes
+
+* change default --all UI mode from maclike to winlike ([99afa79](https://github.com/hyperi-io/hyperi-developer/commit/99afa7997795586d9da18e53dcbda98752a47b38))
+
+## [2.23.6](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.5...v2.23.6) (2026-02-16)
+
+
+### Bug Fixes
+
+* rename-user heredoc expansion bug and keyring reset ([ef73811](https://github.com/hyperi-io/hyperi-developer/commit/ef73811b55e0f44a10d84aabe6cbfde662cda9b7))
+
+## [2.23.5](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.4...v2.23.5) (2026-02-16)
+
+
+### Bug Fixes
+
+* add LTS codename fallback for OpenVPN3 repo on Ubuntu interim releases ([2427e01](https://github.com/hyperi-io/hyperi-developer/commit/2427e0194101f3732786c8f5496d8e25cb781a3c))
+
+## [2.23.4](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.3...v2.23.4) (2026-02-16)
+
+
+### Bug Fixes
+
+* add LTS codename fallback for HashiCorp, Docker, and git-core repos ([21608fb](https://github.com/hyperi-io/hyperi-developer/commit/21608fb4788691d32fb1e2567281f15f76c453d2))
+
+## [2.23.3](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.2...v2.23.3) (2026-02-15)
+
+
+### Bug Fixes
+
+* add regional locale support and rename-user script ([3f07a98](https://github.com/hyperi-io/hyperi-developer/commit/3f07a98acc44282a5dc88d848ec9b9fd48e4a5de))
+* azure CLI and vector apt repos for plucky (Ubuntu 25.04) ([839c5a1](https://github.com/hyperi-io/hyperi-developer/commit/839c5a1f7186a413ab23ed07a7bf84ae6abeee45))
+
+## [2.23.2](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.1...v2.23.2) (2026-02-13)
+
+
+### Bug Fixes
+
+* replace deprecated apt-key with signed-by keyring for OnlyOffice ([c704bd0](https://github.com/hyperi-io/hyperi-developer/commit/c704bd0bf56744c021067bfdb53ada6b64f2af7b))
+* use HTTP export for git-core PPA GPG keys ([8aed3fa](https://github.com/hyperi-io/hyperi-developer/commit/8aed3fa53b7112c74b2902262ef0e5e121b63b5b))
 
 ## [2.23.1](https://github.com/hypersec-io/dfe-developer/compare/v2.23.0...v2.23.1) (2026-02-09)
 

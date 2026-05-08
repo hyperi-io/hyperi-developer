@@ -1,4 +1,4 @@
-# Contributing to DFE Developer Environment
+# Contributing to HyperI Developer Environment
 
 We welcome contributions from the community! This project follows standard Apache project guidelines.
 
@@ -20,7 +20,7 @@ We welcome contributions from the community! This project follows standard Apach
 # Fork via GitHub UI, then clone your fork
 git clone https://github.com/YOUR-USERNAME/dfe-developer
 cd dfe-developer
-git remote add upstream https://github.com/hyperi-io/dfe-developer
+git remote add upstream https://github.com/hyperi-io/hyperi-developer
 ```
 
 ### 2. Create a Feature Branch
@@ -217,7 +217,7 @@ git clone https://github.com/YOUR-USERNAME/dfe-developer
 cd dfe-developer
 
 # Keep your fork synced
-git remote add upstream https://github.com/hyperi-io/dfe-developer
+git remote add upstream https://github.com/hyperi-io/hyperi-developer
 git fetch upstream
 git rebase upstream/main
 ```

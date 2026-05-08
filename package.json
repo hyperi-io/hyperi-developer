@@ -1,11 +1,11 @@
 {
-  "name": "dfe-developer",
+  "name": "hyperi-developer",
   "version": "2.4.4",
   "private": true,
-  "description": "Standardised complete developer environment setup for HyperSec DFE developers",
+  "description": "Standardised modern auto-updating developer environment with opt-in HyperI-specific sections",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hyperi-io/dfe-developer.git"
+    "url": "https://github.com/hyperi-io/hyperi-developer.git"
   },
   "scripts": {
     "release": "semantic-release",
@@ -26,6 +26,6 @@
     "fedora",
     "macos"
   ],
-  "author": "HyperSec",
+  "author": "HyperI",
   "license": "MIT"
 }

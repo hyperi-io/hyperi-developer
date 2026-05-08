@@ -1,21 +1,21 @@
 ---
-# Docker CE installation
+# Docker installation
+#
+# Linux: Docker Engine (CE) from Docker's official APT/DNF repo.
+# macOS:  Docker CLI (formula, not cask) — Docker Desktop is intentionally
+#         NOT installed. Users pick their own daemon: colima, orbstack,
+#         podman, etc. See README for alternatives.
 
 # ============================================================================
-# ADD DOCKER REPOSITORY
+# Linux — Add Docker repository
 # ============================================================================
 
-# Fedora
 - name: Add Docker repository (Fedora)
   ansible.builtin.command:
     cmd: dnf config-manager addrepo --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo --overwrite
   args:
     creates: /etc/yum.repos.d/docker-ce.repo
   when: ansible_facts['distribution'] == 'Fedora'
-
-# ============================================================================
-# UBUNTU - Add Docker repository
-# ============================================================================
 
 - name: Configure Docker repository (Ubuntu)
   block:
@@ -31,8 +31,8 @@
         dest: /etc/apt/keyrings/docker.asc
         mode: '0644'
 
-    # Map unsupported Ubuntu releases to nearest supported LTS
-    # Docker only publishes repos for LTS releases (jammy, noble)
+    # Docker only publishes repos for Ubuntu LTS releases (jammy, noble).
+    # Map non-LTS interim releases to the nearest supported LTS.
     - name: Determine Docker repo codename
       ansible.builtin.set_fact:
         docker_codename: >-
@@ -51,31 +51,8 @@
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 
-# macOS
-- name: Install Docker Desktop via Homebrew (macOS)
-  community.general.homebrew_cask:
-    name: docker
-    state: present
-  environment: "{{ homebrew_cask_env }}"
-  become: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-- name: Display Docker Desktop installation note (macOS)
-  ansible.builtin.debug:
-    msg: |
-      Docker Desktop installed via Homebrew.
-
-      IMPORTANT: You must manually launch Docker Desktop for first-time setup:
-      1. Open Applications folder
-      2. Double-click Docker.app
-      3. Accept the service agreement and configure settings
-      4. Docker CLI will be available after initialization
-
-      This is a one-time setup - Docker will auto-start on subsequent logins.
-  when: ansible_facts['distribution'] == 'MacOSX'
-
 # ============================================================================
-# REMOVE CONFLICTING PACKAGES
+# Linux — remove conflicting packages
 # ============================================================================
 
 - name: Remove Podman (conflicts with Docker on Fedora)
@@ -91,7 +68,7 @@
   failed_when: false  # OK if packages don't exist
 
 # ============================================================================
-# INSTALL DOCKER PACKAGES
+# Linux — install Docker Engine (CLI + daemon + buildx + compose)
 # ============================================================================
 
 - name: Install Docker CE (Fedora)
@@ -117,56 +94,37 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 # ============================================================================
-# INSTALL DOCKER DESKTOP (GUI)
+# macOS — install Docker CLI only (no Docker Desktop)
 # ============================================================================
 
-# Fedora Docker Desktop
-- block:
-    - name: Download Docker Desktop RPM (Fedora)
-      ansible.builtin.get_url:
-        url: "{{ docker_desktop_url_fedora }}"
-        dest: /tmp/docker-desktop.rpm
-        mode: '0644'
+- name: Install Docker CLI via Homebrew (macOS)
+  community.general.homebrew:
+    name:
+      - docker
+      - docker-buildx
+      - docker-compose
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
 
-    - name: Install Docker Desktop (Fedora)
-      ansible.builtin.dnf:
-        name: /tmp/docker-desktop.rpm
-        state: present
-        disable_gpg_check: true
+- name: Display Docker daemon hint (macOS)
+  ansible.builtin.debug:
+    msg: |
+      Docker CLI installed (no Docker Desktop bundled — by design).
 
-    - name: Remove Docker Desktop RPM (Fedora)
-      ansible.builtin.file:
-        path: /tmp/docker-desktop.rpm
-        state: absent
-  when:
-    - ansible_facts['distribution'] == 'Fedora'
-    - has_gnome | default(false)
-    - docker_install_desktop | default(true)
+      You need to choose a container runtime/daemon. Common options:
+        - colima    : brew install colima  (lightweight, CLI-only)
+        - orbstack  : brew install orbstack  (newer, fast — paid for commercial)
+        - podman    : brew install podman   (rootless, daemonless)
 
-# Ubuntu Docker Desktop
-- block:
-    - name: Download Docker Desktop DEB (Ubuntu)
-      ansible.builtin.get_url:
-        url: "{{ docker_desktop_url_ubuntu }}"
-        dest: /tmp/docker-desktop.deb
-        mode: '0644'
-
-    - name: Install Docker Desktop (Ubuntu)
-      ansible.builtin.apt:
-        deb: /tmp/docker-desktop.deb
-        state: present
-
-    - name: Remove Docker Desktop DEB (Ubuntu)
-      ansible.builtin.file:
-        path: /tmp/docker-desktop.deb
-        state: absent
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - has_gnome | default(false)
-    - docker_install_desktop | default(true)
+      After installing your chosen daemon, start it (e.g. `colima start`).
+      The Docker CLI installed here will then connect to it via the standard
+      DOCKER_HOST socket.
+  when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================
-# CONFIGURE DOCKER
+# Linux — group memberships + service
 # ============================================================================
 
 - name: Add users to docker group
@@ -178,17 +136,6 @@
   notify: Inform user to logout
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-# Docker Desktop requires KVM access for nested virtualization
-# The kvm group provides access to /dev/kvm
-- name: Add users to kvm group (for Docker Desktop nested virtualization)
-  ansible.builtin.user:
-    name: "{{ item }}"
-    groups: kvm
-    append: true
-  loop: "{{ docker_users }}"
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-  failed_when: false  # kvm group may not exist on all systems
-
 - name: Enable and start Docker service
   ansible.builtin.systemd:
     name: docker
@@ -197,25 +144,25 @@
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
-# VERIFY INSTALLATION
+# Verification
 # ============================================================================
 
-- name: Verify Docker is installed (Linux)
+- name: Verify Docker (Linux)
   ansible.builtin.command: docker --version
   register: docker_version
   changed_when: false
   failed_when: docker_version.rc != 0
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Verify Docker CLI is available (macOS - may fail if not launched yet)
+- name: Verify Docker CLI (macOS — daemon may not be running yet)
   ansible.builtin.command: docker --version
   environment:
     PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
   register: docker_version
   changed_when: false
-  failed_when: false
+  failed_when: docker_version.rc != 0
   when: ansible_facts['distribution'] == 'MacOSX'
 
 - name: Display Docker version
   ansible.builtin.debug:
-    msg: "Docker installed: {{ docker_version.stdout | default('Docker Desktop - launch manually') }}"
+    msg: "Docker installed: {{ docker_version.stdout | default('not detected') }}"
