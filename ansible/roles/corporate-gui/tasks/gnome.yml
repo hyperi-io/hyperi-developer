@@ -2,8 +2,10 @@
 # GNOME Desktop customizations and extensions
 # Unified configuration for both Windows-like (winlike) and macOS-like (maclike) modes
 #
-# Usage: --tags winlike OR --tags maclike
-# If neither tag is specified, GNOME is left untouched.
+# Default mode: winlike (Windows-style GNOME taskbar via Dash to Panel).
+# Override with --tags maclike for macOS-style dock instead.
+# If both --tags winlike and --tags maclike are passed, winlike wins
+# (install.sh strips maclike from the tag set in this case).
 #
 # This file handles:
 # - Prerequisites (UV, psutil, gext)
@@ -15,19 +17,19 @@
 # - Font installation
 
 # ============================================================================
-# DETERMINE UI MODE FROM TAGS
+# DETERMINE UI MODE
 # ============================================================================
-# Set ui_mode based on which tag is active. This is the SSoT for mode selection.
+# Default to winlike. The maclike task below overrides it iff --tags maclike
+# is explicitly passed.
 
-- name: Set UI mode to winlike
+- name: Set default UI mode to winlike
   ansible.builtin.set_fact:
     ui_mode: "winlike"
-  tags: ['winlike', 'never']
   when:
     - has_gnome | default(false)
     - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
 
-- name: Set UI mode to maclike
+- name: Override UI mode to maclike (explicit opt-in)
   ansible.builtin.set_fact:
     ui_mode: "maclike"
   tags: ['maclike', 'never']

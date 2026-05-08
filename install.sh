@@ -59,6 +59,8 @@ OPTIONS:
                        (generic dev + HyperI org tools, no IaC, no langs)
                        Equivalent to:
                        --tags developer,developer-gui,corporate,corporate-gui,cosmetic
+  --list-apps          Print every per-app sub-tag (slack, vscode, claude, etc.)
+                       for granular --tags X selection
   --help               Show this help message
 
 NOTE:
@@ -96,10 +98,80 @@ EXAMPLES:
     ./install.sh --check
 
 NOTES:
-  - If both winlike and maclike are included, maclike takes precedence
+  - winlike (Windows-style GNOME taskbar) is the default UI mode
+  - If both winlike and maclike are specified, winlike wins
   - RDP configures GNOME Remote Desktop with default credentials (dfe/dfe)
-  - ghostty, fastestmirror, and wallpaper are included by default
-  - Use --tags-exclude to disable default features without specifying all tags
+  - Use --tags-exclude to skip specific tags within a chosen group
+  - Use --list-apps to see every per-app sub-tag for granular installs
+EOF
+    exit 0
+}
+
+list_apps() {
+    cat << 'EOF'
+Per-app sub-tags — pass via --tags <name> to install just that one app.
+
+Generic dev base (developer):
+    apparmor          Ubuntu AppArmor userns fix
+    repository        OS repo mirrors / fastestmirror
+    docker            Docker (Engine on Linux, CLI on macOS — no Desktop)
+    utilities         CLI utilities (htop, ripgrep, fd, fzf, jq, yq, ...)
+    git               Latest Git via PPA / Fedora / brew
+    region            Locale + hunspell (gated by --region too)
+    chrome            Google Chrome  (opt-in via --tags chrome)
+    brave             Brave browser  (opt-in via --tags brave)
+    avatar            User avatar    (opt-in via --tags avatar)
+
+Generic dev GUI (developer-gui):
+    desktop           GNOME / ubuntu-desktop-minimal install if missing
+    vscode            Visual Studio Code
+    ghostty           Ghostty terminal + JetBrains Mono font
+    dbeaver           DBeaver Community DB GUI
+
+Languages (developer-<lang>):
+    rust              rustup + cargo + sccache + mold + cargo-sweep
+    uv                UV (Python package manager)
+    go                Go toolchain + gopls + dlv
+    c-tools           C/C++ build tools
+    nodejs            Node.js LTS + pnpm
+    typescript        typescript + tsx + ts-node (depends on nodejs)
+    cursor            Cursor editor (in developer-typescript-gui)
+
+Infrastructure (infrastructure):
+    cloud             HashiCorp tools + AWS CLI v2
+    azure             Azure CLI
+    gcloud            Google Cloud CLI
+    k8s               kubectl + helm + k9s + minikube
+    vector            Vector data pipeline tool
+    lens              K8s desktop client (in infrastructure-gui)
+
+Corporate / HyperI-specific (corporate, corporate-gui):
+    auto-updates      unattended-upgrades / dnf-automatic
+    bash-history      bash history auto-commit
+    act               Run GitHub Actions locally
+    claude            Claude Code CLI
+    gitleaks          Secret scanner
+    openvpn           OpenVPN 3 client
+    telemetry-disable Disable Ubuntu Pro/ESM ads + telemetry
+    slack             Slack desktop
+    onlyoffice        OnlyOffice Desktop Editors
+    nemo              Nemo file manager (replaces Nautilus)
+    desktop-cleanup   Hide duplicate apps, dedupe Flatpak/apt
+    gnome-extensions  GNOME extensions (Astra Monitor etc.)
+    office            Office suite tasks
+
+Targeted deployment:
+    rdp               GNOME Remote Desktop (RDP server on port 3389)
+    vm                VM guest optimisations (QEMU agent etc.)
+
+macOS-only:
+    bash-modern       Modern Bash via Homebrew (does NOT chsh)
+
+Composability examples:
+    ./install.sh --tags slack                    Just Slack
+    ./install.sh --tags developer-gui            All of developer-gui
+    ./install.sh --tags vscode,ghostty           VS Code + Ghostty only
+    ./install.sh --corporate --tags developer-rust  Corporate + Rust
 EOF
     exit 0
 }
@@ -156,6 +228,9 @@ while [[ $# -gt 0 ]]; do
             fi
             shift
             ;;
+        --list-apps)
+            list_apps
+            ;;
         --help|-h)
             show_help
             ;;
@@ -167,13 +242,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Handle winlike/maclike priority: maclike overrides winlike (since winlike is default in --all)
-# If both are specified, remove winlike from tags
+# Handle winlike/maclike priority: winlike wins (it's the default UI mode).
+# If both are specified, drop maclike from tags so the taskbar stays winlike.
 if [[ "$ANSIBLE_TAGS" == *"maclike"* ]] && [[ "$ANSIBLE_TAGS" == *"winlike"* ]]; then
-    print_info "Both winlike and maclike specified - using maclike (maclike overrides default winlike)"
-    ANSIBLE_TAGS="${ANSIBLE_TAGS//,winlike/}"
-    ANSIBLE_TAGS="${ANSIBLE_TAGS//winlike,/}"
-    ANSIBLE_TAGS="${ANSIBLE_TAGS//winlike/}"
+    print_info "Both winlike and maclike specified - using winlike (winlike is default and wins)"
+    ANSIBLE_TAGS="${ANSIBLE_TAGS//,maclike/}"
+    ANSIBLE_TAGS="${ANSIBLE_TAGS//maclike,/}"
+    ANSIBLE_TAGS="${ANSIBLE_TAGS//maclike/}"
 fi
 
 # Handle --region: resolve short codes to full locale, add tag and extra var
