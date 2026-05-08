@@ -15,8 +15,8 @@
 #   --tags TAGS          Include specific tags (alias for --tags-include)
 #   --tags-include TAGS  Include specific tags to run (comma-separated)
 #   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
-#   --core               Install core developer tools (JFrog, Azure, Node.js, etc.)
-#   --all                Install everything (base + core + VM + RDP + winlike)
+#   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
+#   --branch BRANCH      Git branch to use (default: main)
 #   --help               Show this help message
 #
 # SUPPORTED PLATFORMS:
@@ -54,71 +54,49 @@ OPTIONS:
   --tags-include TAGS  Include specific tags to run (comma-separated)
   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
   --branch BRANCH      Git branch to use (default: main)
-  --core               Shortcut for: --tags developer,base,core,advanced
-  --all                Shortcut for: --tags developer,base,core,advanced,vm,optimizer,rdp,winlike
   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
+  --corporate          Shortcut: HyperI staff workstation defaults
+                       (generic dev + HyperI org tools, no IaC, no langs)
+                       Equivalent to:
+                       --tags developer,developer-gui,hyperi,hyperi-gui,cosmetic
   --help               Show this help message
 
-AVAILABLE TAGS:
+NOTE:
+  The role/tag taxonomy is being refactored — see
+  docs/ROLE-TASK-MAPPING.md for the target structure (per-role + per-app
+  tags, generic dev base + opt-in HyperI sections).
 
-  Base Tags (included by default):
-    developer       Base DFE developer role
-    base            Base tools (Docker, Git, K8s, Python, VS Code, Chrome)
-
-  Feature Tags (opt-in, require explicit --tags or --all):
-    winlike         Windows-style GNOME taskbar (Dash to Panel, bottom panel)
-    maclike         macOS-style GNOME dock (Dash to Dock, Logo Menu, Magic Lamp)
-    core            Core developer tools (JFrog, Azure CLI, Node.js, Linear CLI)
-    advanced        Advanced tools (included with --core)
-    vm              VM guest optimizations (QEMU guest agent, SPICE agent)
-    optimizer       VM optimizer role (included with --vm)
-    rdp             GNOME Remote Desktop configuration (RDP server on port 3389)
-
-  Regional Tags (opt-in via --region):
-    region          Regional locale, formats, spell-check (opt-in)
-
-  Optional Tags (included by default, can be excluded):
-    ghostty         Ghostty terminal emulator (included by default)
-    fastestmirror   DNF/APT performance optimizations (included by default)
-    wallpaper       Custom DFE wallpaper (included by default)
+  There is no longer a kitchen-sink shortcut. Pick what you want via
+  --tags. Default (no flags) is the lightweight CLI dev base.
 
 EXAMPLES:
 
-  Default installation (base tools only):
+  Default installation (lightweight CLI dev base):
     ./install.sh
 
-  Include Windows-style GNOME desktop:
-    ./install.sh --tags developer,base,winlike
+  Generic dev base + GUI editors + Python:
+    ./install.sh --tags developer,developer-gui,developer-python
 
-  Include macOS-style GNOME desktop:
-    ./install.sh --tags developer,base,maclike
+  Just Slack and nothing else:
+    ./install.sh --tags slack
 
-  Install core tools + winlike desktop:
-    ./install.sh --tags developer,base,core,advanced,winlike
+  HyperI staff machine + Rust:
+    ./install.sh --corporate --tags developer-rust
 
-  Exclude Ghostty terminal (use system terminal):
-    ./install.sh --tags-exclude ghostty
+  HyperI SRE workstation:
+    ./install.sh --corporate --tags infrastructure,infrastructure-gui
 
-  Exclude fastestmirror (use default OS mirrors):
-    ./install.sh --tags-exclude fastestmirror
-
-  Install everything with Australian region (locale, formats, spell-check):
-    ./install.sh --all --region au
-
-  Install everything except wallpaper:
-    ./install.sh --all --tags-exclude wallpaper
-
-  Install everything with macOS-style (maclike overrides default winlike):
-    ./install.sh --all --tags maclike
+  Install with Australian region (locale, formats, spell-check):
+    ./install.sh --region au
 
   Install RDP support for remote desktop access:
-    ./install.sh --tags developer,base,rdp
+    ./install.sh --tags rdp
 
   Dry-run to see what would change:
     ./install.sh --check
 
 NOTES:
-  - If both winlike and maclike are included, maclike takes precedence (overrides default)
+  - If both winlike and maclike are included, maclike takes precedence
   - RDP configures GNOME Remote Desktop with default credentials (dfe/dfe)
   - ghostty, fastestmirror, and wallpaper are included by default
   - Use --tags-exclude to disable default features without specifying all tags
@@ -161,17 +139,22 @@ while [[ $# -gt 0 ]]; do
             GIT_BRANCH="$2"
             shift 2
             ;;
-        --core)
-            ANSIBLE_TAGS="--tags developer,base,core,advanced"
-            shift
-            ;;
-        --all)
-            ANSIBLE_TAGS="--tags developer,base,core,advanced,vm,optimizer,rdp,winlike"
-            shift
-            ;;
         --region)
             REGION_ARG="$2"
             shift 2
+            ;;
+        --corporate)
+            # HyperI staff workstation default: generic dev + HyperI org tools.
+            # Excludes infrastructure (SRE-leaning, opt-in via --tags) and
+            # specific languages (too personal — add --tags developer-rust etc.).
+            CORPORATE_TAGS="developer,developer-gui,hyperi,hyperi-gui,cosmetic"
+            if [[ -n "$ANSIBLE_TAGS" ]]; then
+                CURRENT_TAGS="${ANSIBLE_TAGS#--tags }"
+                ANSIBLE_TAGS="--tags ${CURRENT_TAGS},${CORPORATE_TAGS}"
+            else
+                ANSIBLE_TAGS="--tags ${CORPORATE_TAGS}"
+            fi
+            shift
             ;;
         --help|-h)
             show_help
@@ -311,17 +294,18 @@ python3 -m venv "$TEMP_ANSIBLE_DIR" || {
     exit 1
 }
 
-# Install latest Ansible via pip
-print_info "Installing latest Ansible via pip..."
+# Install latest Ansible + ansible-lint via pip
+print_info "Installing latest Ansible + ansible-lint via pip..."
 "$TEMP_ANSIBLE_DIR/bin/pip" install --upgrade pip setuptools wheel >/dev/null 2>&1
-"$TEMP_ANSIBLE_DIR/bin/pip" install ansible >/dev/null 2>&1 || {
-    print_error "Failed to install Ansible via pip"
+"$TEMP_ANSIBLE_DIR/bin/pip" install ansible ansible-lint >/dev/null 2>&1 || {
+    print_error "Failed to install Ansible + ansible-lint via pip"
     rm -rf "$TEMP_ANSIBLE_DIR"
     exit 1
 }
 
 ANSIBLE_VERSION=$("$TEMP_ANSIBLE_DIR/bin/ansible" --version | head -1 | awk '{print $2}')
-print_success "Ansible $ANSIBLE_VERSION installed (temporary venv)"
+ANSIBLE_LINT_VERSION=$("$TEMP_ANSIBLE_DIR/bin/ansible-lint" --version 2>/dev/null | head -1 | awk '{print $2}')
+print_success "Ansible $ANSIBLE_VERSION + ansible-lint $ANSIBLE_LINT_VERSION installed (temporary venv)"
 
 # Determine script directory and check for ansible directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

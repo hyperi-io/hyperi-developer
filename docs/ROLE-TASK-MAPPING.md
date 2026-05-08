@@ -17,7 +17,7 @@ This is the authoritative table for what every existing task migrates to and wha
 - **Docker on macOS**: install latest **Docker CLI** via Homebrew (NOT Docker Desktop). Docker Desktop's GUI/proprietary install is dropped entirely. On Linux, Docker Engine stays in `developer`.
 - **Browser policies**: **removed entirely**, not migrated.
 - **Removed entirely** (per user 2026-05-01):
-  - Bitwarden CLI (the GUI also? — see open question below)
+  - Bitwarden — both CLI and GUI (confirmed)
   - JFrog CLI
   - Linear CLI
   - NetBird CLI
@@ -27,6 +27,8 @@ This is the authoritative table for what every existing task migrates to and wha
 - **VPN (NetBird, OpenVPN)**: HyperI-specific. NetBird removed entirely; OpenVPN stays in `hyperi`.
 - **Nemo + `desktop_cleanup.yml`**: **moved to `hyperi-gui`** — HyperI desktop opinions.
 - **`--core` flag**: **removed** entirely.
+- **`--all` flag**: **removed** entirely. No kitchen-sink shortcut. Pick what you want via `--tags`.
+- **`--corporate` flag**: **NEW** — single shortcut for "what a HyperI staff member typically wants on their machine". See "—corporate flag composition" section below.
 - **No-flag default**: `--tags developer` (lightweight CLI base only).
 - **`/fedora/` directory**: **deleted** — deprecated bash-script installer, superseded by the Ansible playbook. (Fedora support stays in the Ansible tasks via `when: distribution == 'Fedora'`.)
 - **Tagging scheme**: two-level — primary group tags (`developer`, `hyperi-gui`, etc.) + per-app sub-tags (`slack`, `vscode`, etc.) on every task. See "Tagging mechanism" section below.
@@ -239,7 +241,7 @@ Things only HyperI users want imposed on their machine.
 | `nemo.yml` | `nemo` | from `developer/` (was always-run) | Nemo file manager (replaces Nautilus). HyperI desktop choice. |
 | `desktop_cleanup.yml` | `desktop-cleanup` | from `developer/` (was always-run) | Hide Nautilus from menus + dedupe Flatpak/apt versions. |
 | `gnome.yml` | `gnome-extensions` | from `developer/` (was always-run) | GNOME extensions (Astra Monitor etc.). |
-| ❌ `bitwarden_gui.yml` | — | **REMOVED** | User decision 2026-05-01 — see open question on whether to keep |
+| ❌ `bitwarden_gui.yml` | — | **REMOVED** | User decision 2026-05-01 (confirmed) |
 | ❌ `browser_policies.yml` | — | **DELETED** | Privacy policies. Drop entirely. |
 
 ---
@@ -324,18 +326,54 @@ Lightweight, no surprises, no org-imposing. macOS users still get a working mode
 
 ---
 
+## `--corporate` flag composition (discussion)
+
+Single shortcut for "HyperI staff member's typical workstation". Avoids forcing a kitchen-sink install but gets all the org-relevant stuff in one switch.
+
+**Proposed default mapping:**
+
+```bash
+--corporate ≡ --tags developer,developer-gui,hyperi,hyperi-gui,cosmetic
+```
+
+That gives a HyperI staffer:
+- Generic CLI dev base + GUI editor/terminal/DBeaver
+- HyperI auto-updates, bash-history, claude code, gitleaks, openvpn, telemetry-disable, act
+- HyperI desktop opinions (Slack, OnlyOffice, Nemo file manager, GNOME extensions)
+- HyperI wallpaper + avatar
+
+**What `--corporate` does NOT include (deliberate):**
+- Languages — too personal. Add `--tags developer-rust` etc. as needed.
+- Infrastructure — only some HyperI staff are SRE/IaC. Add `--tags infrastructure,infrastructure-gui` as needed.
+- RDP / VM optimizer — only relevant if you're building a VM template.
+- macOS modern bash — opt-in by design.
+- Region — pass `--region au` explicitly.
+
+**Composability:**
+- HyperI Rust dev: `--corporate --tags developer-rust`
+- HyperI Python dev: `--corporate --tags developer-python`
+- HyperI SRE: `--corporate --tags infrastructure,infrastructure-gui`
+- HyperI Aussie staff: `--corporate --region au`
+
+**Open question:** should `--corporate` *default* include `infrastructure` (since most HyperI staff probably want at least some k8s/cloud tooling), or stay strictly persona-agnostic? Recommend: stay agnostic, force the SRE-leaning folks to add it explicitly. Avoids bloating the default.
+
+---
+
 ## Out-of-scope-but-tracked (separate work streams)
 
 These are bigger pieces that follow this refactor but aren't part of the role/tag work:
 
-### Repo rename: `dfe-developer` → `hyperi-developer`
+### Repo rename: `dfe-developer` → `hyperi-developer` (DONE on GitHub)
 
-- Update `package.json` `name` field
-- Update README + CHANGELOG headers
-- Update VERSION metadata
-- Update CI release config if it references the repo name
-- GitHub: `gh repo rename hyperi-developer` (must be run by user — safety hook blocks remote repo admin)
-- Update consumers — `hyperi-infra/packer/templates/ubuntu-desktop.pkr.hcl` references `https://github.com/hyperi-io/dfe-developer.git`; needs swap
+- ✅ GitHub repo renamed (`gh repo rename hyperi-developer`, run by user 2026-05-01)
+- ✅ GitHub repo description updated
+- ✅ Local git remote URL updated
+- ⏳ Update `package.json` `name` field
+- ⏳ Update README + CHANGELOG headers
+- ⏳ Update VERSION metadata if it embeds the name
+- ⏳ Update CI release config if it references the repo name
+- ⏳ Update consumers — `hyperi-infra/packer/templates/ubuntu-desktop.pkr.hcl` references `https://github.com/hyperi-io/dfe-developer.git`; needs swap (GitHub redirects so it still works, but should be cleaned up)
+- ⏳ User to rename the local checkout dir if desired (`mv /projects/dfe-developer /projects/hyperi-developer`) — git operations and IDE windows will need attention
 
 ### Submodule attachment in hyperi-infra
 
@@ -354,7 +392,7 @@ These are bigger pieces that follow this refactor but aren't part of the role/ta
 
 ## Open questions for you to amend before implementation
 
-- [ ] **Bitwarden GUI**: user said "remove bitwarden cli" — does that include the GUI in `hyperi-gui`, or keep that? Currently marked REMOVED-pending-confirmation.
+- [x] ~~Bitwarden GUI~~: confirmed remove both CLI and GUI 2026-05-01
 - [ ] **Languages**: confirmed rust, python, go, c, node, typescript. (Java? Ruby? — assume not unless added.)
 - [ ] **Vector** in `infrastructure`: keep, or drop entirely (niche)?
 - [ ] **`office.yml`** in `hyperi-gui`: I haven't read its contents yet — will check during implementation; might be redundant with `onlyoffice.yml`.

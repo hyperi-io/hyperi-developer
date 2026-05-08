@@ -185,14 +185,6 @@
   tags: ['brave']
   when: has_gnome | default(false)
 
-- name: Apply browser privacy policies (Chrome + Brave)
-  ansible.builtin.include_tasks:
-    file: browser_policies.yml
-    apply:
-      tags: ['browser_policies']
-  tags: ['browser_policies', 'chrome', 'brave']
-  when: has_gnome | default(false)
-
 - name: Apply GNOME configuration (winlike or maclike)
   ansible.builtin.include_tasks:
     file: gnome.yml

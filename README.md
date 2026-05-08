@@ -102,7 +102,6 @@ The installer detects your OS and installs the right packages. Run `./install.sh
 ## Project Structure
 
 - `ansible/` - Ansible-based multi-platform installer (Fedora, Ubuntu, macOS)
-- `fedora/` - Legacy Fedora Linux installation scripts (bug fixes only)
 - `windows/` - Windows 11 SOE setup scripts and documentation
 - `tools/` - Developer utilities and helper scripts
   - `tools/git/` - Git-related utilities

@@ -11,11 +11,6 @@
     file: c_tools.yml
   tags: ['c_tools', 'dev']
 
-- name: Install JFrog CLI
-  ansible.builtin.include_tasks:
-    file: jfrog.yml
-  tags: ['jfrog']
-
 - name: Install Azure CLI
   ansible.builtin.include_tasks:
     file: azure.yml
@@ -36,11 +31,6 @@
     file: rust.yml
   tags: ['rust']
 
-- name: Install Linear CLI
-  ansible.builtin.include_tasks:
-    file: linear.yml
-  tags: ['linear']
-
 - name: Install Slack
   ansible.builtin.include_tasks:
     file: slack.yml
@@ -51,20 +41,10 @@
     file: office.yml
   tags: ['office', 'email']
 
-- name: Install Bitwarden
-  ansible.builtin.include_tasks:
-    file: bitwarden.yml
-  tags: ['bitwarden', 'security']
-
 - name: Install OpenVPN 3
   ansible.builtin.include_tasks:
     file: openvpn.yml
   tags: ['openvpn', 'vpn']
-
-- name: Install NetBird CLI
-  ansible.builtin.include_tasks:
-    file: netbird.yml
-  tags: ['netbird', 'remote']
 
 - name: Install Claude Code CLI
   ansible.builtin.include_tasks:
@@ -93,7 +73,7 @@
 
 - name: Disable telemetry and advertising
   ansible.builtin.include_tasks:
-    file: telemetry.yml
+    file: telemetry-disable.yml
     apply:
-      tags: ['telemetry']
-  tags: ['telemetry']
+      tags: ['telemetry-disable']
+  tags: ['telemetry-disable']

@@ -1,5 +1,8 @@
 # DFE Developer Environment - Git Ignore
 
+# Worktrees for isolated feature workspaces
+.worktrees/
+
 # OS files
 .DS_Store
 Thumbs.db
