@@ -58,7 +58,7 @@ OPTIONS:
   --corporate          Shortcut: HyperI staff workstation defaults
                        (generic dev + HyperI org tools, no IaC, no langs)
                        Equivalent to:
-                       --tags developer,developer-gui,hyperi,hyperi-gui,cosmetic
+                       --tags developer,developer-gui,corporate,corporate-gui,cosmetic
   --help               Show this help message
 
 NOTE:
@@ -147,7 +147,7 @@ while [[ $# -gt 0 ]]; do
             # HyperI staff workstation default: generic dev + HyperI org tools.
             # Excludes infrastructure (SRE-leaning, opt-in via --tags) and
             # specific languages (too personal — add --tags developer-rust etc.).
-            CORPORATE_TAGS="developer,developer-gui,hyperi,hyperi-gui,cosmetic"
+            CORPORATE_TAGS="developer,developer-gui,corporate,corporate-gui,cosmetic"
             if [[ -n "$ANSIBLE_TAGS" ]]; then
                 CURRENT_TAGS="${ANSIBLE_TAGS#--tags }"
                 ANSIBLE_TAGS="--tags ${CURRENT_TAGS},${CORPORATE_TAGS}"
@@ -317,7 +317,7 @@ if [[ ! -d "ansible" ]]; then
     print_info "Cloning ansible directory from repository (branch: $GIT_BRANCH)..."
 
     # Download GitHub tarball (no git required)
-    TARBALL_URL="https://github.com/hyperi-io/dfe-developer/archive/refs/heads/${GIT_BRANCH}.tar.gz"
+    TARBALL_URL="https://github.com/hyperi-io/hyperi-developer/archive/refs/heads/${GIT_BRANCH}.tar.gz"
 
     print_info "Downloading from $TARBALL_URL..."
     curl -fsSL "$TARBALL_URL" -o /tmp/dfe-developer.tar.gz || {

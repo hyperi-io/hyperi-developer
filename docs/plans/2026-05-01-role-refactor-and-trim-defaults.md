@@ -9,19 +9,19 @@ The implementation must actually deliver on that — anyone (non-HyperI, contrac
 
 **Goal:** Restructure dfe-developer Ansible roles around three orthogonal axes:
 
-1. **Audience** — `developer` for anyone, `infrastructure` for IaC people, `hyperi` for org-specific
+1. **Audience** — `developer` for anyone, `infrastructure` for IaC people, `corporate` for org-specific
 2. **Specialisation** — `developer-<lang>` so a Python dev doesn't get a Cargo environment
 3. **CLI vs GUI** — every role split into `<role>` (CLI) and `<role>-gui` where GUI tools exist
 
 Plus: remove tools that don't belong in the auto-build (e.g. Docker Desktop).
 
-**HyperI-specific items confirmed for `hyperi` / `hyperi-gui` (not generic):**
-- VPN (NetBird CLI, OpenVPN client) — both in `hyperi`
-- Auto-updates configuration — moved out of always-run, into `hyperi`
-- Bash history auto-commit — moved out of always-run, into `hyperi`
-- Slack, Linear, JFrog, Bitwarden GUI, OnlyOffice, Claude Code — `hyperi-gui` / `hyperi`
+**HyperI-specific items confirmed for `corporate` / `corporate-gui` (not generic):**
+- VPN (NetBird CLI, OpenVPN client) — both in `corporate`
+- Auto-updates configuration — moved out of always-run, into `corporate`
+- Bash history auto-commit — moved out of always-run, into `corporate`
+- Slack, Linear, JFrog, Bitwarden GUI, OnlyOffice, Claude Code — `corporate-gui` / `corporate`
 - Browser privacy policies — **deleted entirely** (not migrated)
-- Nemo file manager swap, GNOME extensions, desktop cleanup — `hyperi-gui`
+- Nemo file manager swap, GNOME extensions, desktop cleanup — `corporate-gui`
 
 **Trigger:** Conversation 2026-05-01. Original proposal (themed groups within a single `developer` role) was rejected in favour of multi-role separation by audience + specialisation + GUI/CLI axis.
 
@@ -54,7 +54,7 @@ Desktop / GUI base, heavy tools (Docker, VS Code, Chrome, Brave, OnlyOffice, Gho
 | `developer-go` | Go dev only | go toolchain, gopls, dlv | (none) |
 | `developer-c` | C/C++ dev only | build-essential / @c-development / Xcode CLT, valgrind, gdb | (none) |
 | `infrastructure` | IaC operators / SREs — generic, not org-specific | terraform, kubectl, helm, k9s (TUI), aws-cli, azure-cli, gcloud, hashicorp tools, ansible, packer | Lens (K8s GUI), DBeaver |
-| `hyperi` | HyperI-specific stack | JFrog CLI, Linear CLI, NetBird CLI, Bitwarden CLI, Claude Code, gitleaks, act, OpenVPN, telemetry-config | Slack, Bitwarden GUI, OnlyOffice |
+| `corporate` | HyperI-specific stack | JFrog CLI, Linear CLI, NetBird CLI, Bitwarden CLI, Claude Code, gitleaks, act, OpenVPN, telemetry-config | Slack, Bitwarden GUI, OnlyOffice |
 | `rdp` | Targeted deployment (remote-desktop hosts) | (no CLI variant — single role) | n/a — already its own thing |
 | `vm_optimizer` | Targeted deployment (VMs only) | n/a | n/a |
 | (system-only) | Always runs | apparmor-userns fix, OS repo mirrors, auto-updates, locale, region, history, fastestmirror | (n/a) |
@@ -62,10 +62,10 @@ Desktop / GUI base, heavy tools (Docker, VS Code, Chrome, Brave, OnlyOffice, Gho
 ### What *moves out* of the auto-build (#5)
 
 - **Docker Desktop on macOS** — gone. Replace with `docker` CLI only via brew, or opt-in `colima` for the daemon. The user runs whatever container runtime they want.
-- **Browser privacy policies** — too opinionated for a generic `developer` role. Move to `hyperi` (it's an org policy enforcement).
+- **Browser privacy policies** — too opinionated for a generic `developer` role. Move to `corporate` (it's an org policy enforcement).
 - **Brave** — out of `developer-gui`. Available via opt-in tag `--tags brave` if anyone really wants it; not in the default kit.
 - **Wallpaper, avatar** — cosmetic. Single opt-in tag `--tags cosmetic`.
-- **OnlyOffice** — out of generic `developer-gui`, into `hyperi-gui` (this is HyperI's office suite choice; not everyone wants 1.5GB of office suite).
+- **OnlyOffice** — out of generic `developer-gui`, into `corporate-gui` (this is HyperI's office suite choice; not everyone wants 1.5GB of office suite).
 - **Vector** — niche tool, out of generic. Into `infrastructure` (it's a data-pipeline tool, not a developer tool).
 
 ### What *stays* in always-run (system-only, no role tag)
@@ -104,7 +104,7 @@ When work resumes:
 
 ### Stage 1 — Plumbing
 
-1. Add new top-level roles directories: `developer-rust`, `developer-python`, `developer-node`, `developer-go`, `developer-c`, `infrastructure`, `hyperi`. (Plus `-gui` companions where applicable per the table above.)
+1. Add new top-level roles directories: `developer-rust`, `developer-python`, `developer-node`, `developer-go`, `developer-c`, `infrastructure`, `corporate`. (Plus `-gui` companions where applicable per the table above.)
 2. Update `playbooks/main.yml` with the new role list and tag mapping.
 3. Update `install.sh` with the new tag taxonomy + helper flags (`--all`, `--minimal`, language shortcuts).
 4. Fix the no-flag bug — default `ANSIBLE_TAGS="--tags developer"`.
@@ -120,8 +120,8 @@ When work resumes:
    - `c_tools` → `developer-c`
    - `cloud` (HashiCorp + AWS), `k8s` (kubectl + minikube), `azure`, `gcloud`, `data_tools` (Vector) → `infrastructure`
    - (no Lens/DBeaver yet — add as new tasks in `infrastructure-gui`)
-   - `jfrog`, `linear`, `netbird`, `bitwarden` (CLI), `claude`, `gitleaks`, `act`, `openvpn`, `telemetry` → `hyperi`
-   - `slack`, `bitwarden` (GUI), `onlyoffice`, `office` → `hyperi-gui`
+   - `jfrog`, `linear`, `netbird`, `bitwarden` (CLI), `claude`, `gitleaks`, `act`, `openvpn`, `telemetry` → `corporate`
+   - `slack`, `bitwarden` (GUI), `onlyoffice`, `office` → `corporate-gui`
    - `desktop`, `gnome`, `nemo`, `desktop_cleanup`, `region`, `repository`, `security`, `browser_policies` → system-only (always-run, no tag)
    - `chrome`, `brave`, `wallpaper`, `avatar` → opt-in cosmetic tags
    - `docker.yml` → split: keep Linux Docker Engine in `developer` (or `infrastructure`?); remove Docker Desktop branch on macOS
@@ -155,7 +155,7 @@ That's it. Everything else above is design pending decisions.
 - [ ] **`-gui` variants**: which roles get a `-gui` companion? Recommended:
   - `developer-gui` (VS Code, Ghostty)
   - `infrastructure-gui` (Lens, DBeaver) — or skip if you don't want them
-  - `hyperi-gui` (Slack, Bitwarden GUI, OnlyOffice)
+  - `corporate-gui` (Slack, Bitwarden GUI, OnlyOffice)
   - Language roles: no GUI variants (no universal language-specific GUIs worth bundling)
 - [ ] **Where Docker lives** on Linux: `developer` (most devs use it) or `infrastructure` (it's container infra)? Recommended: `developer` (Linux Docker Engine is fine), `infrastructure` (separate `colima` opt-in for macOS)
 - [ ] **macOS Docker default**: drop entirely (BYO container runtime), or default to `colima` (CLI-only)? Recommended: drop entirely, document `colima` / `orbstack` / `podman` as alternatives.
