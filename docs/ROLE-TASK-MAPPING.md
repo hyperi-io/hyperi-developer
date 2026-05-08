@@ -22,16 +22,16 @@ This is the authoritative table for what every existing task migrates to and wha
   - Linear CLI
   - NetBird CLI
 - **Renamed**: `telemetry.yml` → `telemetry-disable.yml` (it disables telemetry/ads, doesn't add it — name was misleading)
-- **Auto-updates**: **moved to `hyperi`** — not forced on non-HyperI users.
-- **Bash history auto-commit**: **moved to `hyperi`** — opinionated workflow, not generic.
-- **VPN (NetBird, OpenVPN)**: HyperI-specific. NetBird removed entirely; OpenVPN stays in `hyperi`.
-- **Nemo + `desktop_cleanup.yml`**: **moved to `hyperi-gui`** — HyperI desktop opinions.
+- **Auto-updates**: **moved to `corporate`** — not forced on non-HyperI users.
+- **Bash history auto-commit**: **moved to `corporate`** — opinionated workflow, not generic.
+- **VPN (NetBird, OpenVPN)**: HyperI-specific. NetBird removed entirely; OpenVPN stays in `corporate`.
+- **Nemo + `desktop_cleanup.yml`**: **moved to `corporate-gui`** — HyperI desktop opinions.
 - **`--core` flag**: **removed** entirely.
 - **`--all` flag**: **removed** entirely. No kitchen-sink shortcut. Pick what you want via `--tags`.
 - **`--corporate` flag**: **NEW** — single shortcut for "what a HyperI staff member typically wants on their machine". See "—corporate flag composition" section below.
 - **No-flag default**: `--tags developer` (lightweight CLI base only).
 - **`/fedora/` directory**: **deleted** — deprecated bash-script installer, superseded by the Ansible playbook. (Fedora support stays in the Ansible tasks via `when: distribution == 'Fedora'`.)
-- **Tagging scheme**: two-level — primary group tags (`developer`, `hyperi-gui`, etc.) + per-app sub-tags (`slack`, `vscode`, etc.) on every task. See "Tagging mechanism" section below.
+- **Tagging scheme**: two-level — primary group tags (`developer`, `corporate-gui`, etc.) + per-app sub-tags (`slack`, `vscode`, etc.) on every task. See "Tagging mechanism" section below.
 
 ---
 
@@ -40,7 +40,7 @@ This is the authoritative table for what every existing task migrates to and wha
 To install a single app (e.g. just Slack, nothing else) without exploding the top-level tag list to a "bazillion entries", use **two-level tags**:
 
 **Every task gets two tags:**
-1. A **primary group tag** — the role/group the task belongs to (`developer`, `developer-gui`, `hyperi-gui`, etc.)
+1. A **primary group tag** — the role/group the task belongs to (`developer`, `developer-gui`, `corporate-gui`, etc.)
 2. A **per-app sub-tag** — the specific task name (`slack`, `vscode`, `ghostty`, `claude`, `cursor`, `lens`, `dbeaver`, etc.)
 
 **Implementation pattern in `playbooks/main.yml`:**
@@ -50,8 +50,8 @@ To install a single app (e.g. just Slack, nothing else) without exploding the to
   ansible.builtin.include_tasks:
     file: slack.yml
     apply:
-      tags: ['hyperi-gui', 'slack']
-  tags: ['hyperi-gui', 'slack']
+      tags: ['corporate-gui', 'slack']
+  tags: ['corporate-gui', 'slack']
 ```
 
 **User-facing behaviour:**
@@ -59,8 +59,8 @@ To install a single app (e.g. just Slack, nothing else) without exploding the to
 | Command | Result |
 |---|---|
 | `./install.sh` (no flags) | Just `developer` group |
-| `./install.sh --tags hyperi-gui` | All hyperi-gui apps (Slack, Bitwarden GUI, OnlyOffice, etc.) |
-| `./install.sh --tags slack` | **Only** Slack — skips everything else, including the rest of hyperi-gui |
+| `./install.sh --tags corporate-gui` | All corporate-gui apps (Slack, Bitwarden GUI, OnlyOffice, etc.) |
+| `./install.sh --tags slack` | **Only** Slack — skips everything else, including the rest of corporate-gui |
 | `./install.sh --tags slack,claude` | Just those two |
 | `./install.sh --tags developer,developer-rust,vscode` | Generic dev base + Rust + just VS Code (no other GUI tools) |
 | `./install.sh --all` | Everything (kitchen sink) |
@@ -87,8 +87,9 @@ developer                  Generic CLI dev base (any user)
 infrastructure             IaC + cloud CLIs (any IaC operator)
 └─ infrastructure-gui      Lens (no DBeaver — DBeaver is in developer-gui)
 
-hyperi                     HyperI org-specific tools (CLI)
-└─ hyperi-gui              HyperI org-specific tools (GUI)
+corporate                  Org-specific tools (CLI) — HyperI ships its
+                           own opinions; other orgs can fork/override
+└─ corporate-gui              Org-specific tools (GUI)
 
 rdp                        Remote desktop (single role, no -gui split)
 vm_optimizer               VM-only optimisations (single role, no -gui split)
@@ -211,7 +212,7 @@ Generic IaC + cloud — not HyperI-specific.
 
 ---
 
-## `hyperi` (CLI, opt-in — org-specific)
+## `corporate` (CLI, opt-in — org-specific)
 
 Things only HyperI users want imposed on their machine.
 
@@ -231,7 +232,7 @@ Things only HyperI users want imposed on their machine.
 
 ---
 
-## `hyperi-gui` (opt-in — org-specific GUI apps)
+## `corporate-gui` (opt-in — org-specific GUI apps)
 
 | Task | Per-app tag | Source | What it does |
 |---|---|---|---|
@@ -333,7 +334,7 @@ Single shortcut for "HyperI staff member's typical workstation". Avoids forcing 
 **Proposed default mapping:**
 
 ```bash
---corporate ≡ --tags developer,developer-gui,hyperi,hyperi-gui,cosmetic
+--corporate ≡ --tags developer,developer-gui,corporate,corporate-gui,cosmetic
 ```
 
 That gives a HyperI staffer:
@@ -395,8 +396,8 @@ These are bigger pieces that follow this refactor but aren't part of the role/ta
 - [x] ~~Bitwarden GUI~~: confirmed remove both CLI and GUI 2026-05-01
 - [ ] **Languages**: confirmed rust, python, go, c, node, typescript. (Java? Ruby? — assume not unless added.)
 - [ ] **Vector** in `infrastructure`: keep, or drop entirely (niche)?
-- [ ] **`office.yml`** in `hyperi-gui`: I haven't read its contents yet — will check during implementation; might be redundant with `onlyoffice.yml`.
-- [ ] **Auto-updates in hyperi**: actively configure auto-updates, or just ensure the package is present and let the user enable? (Currently configures.)
+- [ ] **`office.yml`** in `corporate-gui`: I haven't read its contents yet — will check during implementation; might be redundant with `onlyoffice.yml`.
+- [ ] **Auto-updates in `corporate`**: actively configure auto-updates, or just ensure the package is present and let the user enable? (Currently configures.)
 - [ ] **Cosmetic split**: should `wallpaper` and `avatar` be one tag (`cosmetic`) or two (`wallpaper`, `avatar`)? (Per-app tags exist either way; this is about the group label.)
 - [ ] **Always-run additions/removals**: anything you'd add or take off the "always-run" list of 2 items (apparmor + repository)?
 - [ ] **Submodule path**: where in hyperi-infra should hyperi-developer attach? `subprojects/hyperi-developer` (matches mail-migration / atlassian-decom pattern)?
