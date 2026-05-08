@@ -1,0 +1,71 @@
+---
+# Developer-GUI Role — GUI editors, terminal, DB GUI for general devs.
+# Requires a desktop environment (or installs one if missing — see desktop.yml).
+
+- name: Ensure desktop environment is installed
+  ansible.builtin.include_tasks:
+    file: desktop.yml
+    apply:
+      tags: ['developer-gui', 'desktop']
+  tags: ['developer-gui', 'desktop']
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# Re-detect GNOME after desktop.yml installs it. Critical for Packer headless
+# builds where GNOME wasn't installed at init.yml time.
+- name: Re-check if GNOME Shell is now installed (after desktop.yml)
+  ansible.builtin.stat:
+    path: /usr/bin/gnome-shell
+  register: gnome_shell_post_desktop
+  when: ansible_facts['distribution'] != 'MacOSX'
+  tags: ['developer-gui', 'desktop']
+
+- name: Update GNOME availability fact after desktop installation
+  ansible.builtin.set_fact:
+    has_gnome: "{{ gnome_shell_post_desktop.stat.exists | default(false) }}"
+  when:
+    - ansible_facts['distribution'] != 'MacOSX'
+    - gnome_shell_post_desktop is defined
+  tags: ['developer-gui', 'desktop']
+
+- name: Install psutil for dconf module (Fedora)
+  ansible.builtin.dnf:
+    name: python3-psutil
+    state: present
+  when:
+    - ansible_facts['distribution'] == 'Fedora'
+    - has_gnome | default(false)
+  tags: ['developer-gui', 'desktop']
+
+- name: Install psutil for dconf module (Ubuntu)
+  ansible.builtin.apt:
+    name: python3-psutil
+    state: present
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome | default(false)
+  tags: ['developer-gui', 'desktop']
+
+- name: Install VS Code
+  ansible.builtin.include_tasks:
+    file: vscode.yml
+    apply:
+      tags: ['developer-gui', 'vscode']
+  tags: ['developer-gui', 'vscode']
+  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install Ghostty terminal
+  ansible.builtin.include_tasks:
+    file: ghostty.yml
+    apply:
+      tags: ['developer-gui', 'ghostty']
+  tags: ['developer-gui', 'ghostty']
+  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
+
+# DBeaver — DB GUI client. Per spec, lives in developer-gui (not infrastructure-gui).
+- name: Install DBeaver Community
+  ansible.builtin.include_tasks:
+    file: dbeaver.yml
+    apply:
+      tags: ['developer-gui', 'dbeaver']
+  tags: ['developer-gui', 'dbeaver']
+  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'

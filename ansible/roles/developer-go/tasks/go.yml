@@ -1,0 +1,44 @@
+---
+# Go toolchain — installs Go + gopls + dlv.
+#
+# Linux: package-manager Go (or rely on official tarball if PM version lags)
+# macOS: Homebrew
+
+- name: Install Go (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - golang
+      - delve
+    state: present
+  become: true
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install Go (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - golang-go
+      - delve
+    state: present
+    update_cache: true
+  become: true
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install Go (macOS)
+  community.general.homebrew:
+    name:
+      - go
+      - delve
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# gopls (Go language server) is installed via go install — needs Go on PATH first.
+- name: Install gopls (Go language server)
+  ansible.builtin.command:
+    cmd: go install golang.org/x/tools/gopls@latest
+  environment:
+    GOPATH: "{{ user_home }}/go"
+  become: false
+  changed_when: true
+  failed_when: false

@@ -1,228 +1,96 @@
 ---
-# Developer Environment - Main Tasks
+# Developer Role — Generic CLI dev base (anyone)
+# Lightweight, low disruption to existing environment. No HyperI-specific
+# opinions. GUI tooling lives in developer-gui; languages in developer-<lang>;
+# IaC in infrastructure; org-specific in corporate / corporate-gui.
 
 - name: Initialize - Setup common variables
   ansible.builtin.include_tasks:
     file: init.yml
   tags: ['always']
 
-- name: Ensure desktop environment is installed
-  ansible.builtin.include_tasks:
-    file: desktop.yml
-    apply:
-      tags: ['desktop']
-  tags: ['desktop']
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-# Re-detect GNOME after desktop.yml installs it
-# This is critical for Packer headless builds where GNOME wasn't installed at init.yml time
-- name: Re-check if GNOME Shell is now installed (after desktop.yml)
-  ansible.builtin.stat:
-    path: /usr/bin/gnome-shell
-  register: gnome_shell_post_desktop
-  when: ansible_facts['distribution'] != 'MacOSX'
-  tags: ['desktop']
-
-- name: Update GNOME availability fact after desktop installation
-  ansible.builtin.set_fact:
-    has_gnome: "{{ gnome_shell_post_desktop.stat.exists | default(false) }}"
-  when:
-    - ansible_facts['distribution'] != 'MacOSX'
-    - gnome_shell_post_desktop is defined
-  tags: ['desktop']
-
-- name: Display updated GNOME status
-  ansible.builtin.debug:
-    msg: "GNOME desktop (post-install check): {{ 'Installed' if has_gnome else 'Not installed' }}"
-  tags: ['desktop']
-
-# Install psutil for dconf module (required for GNOME settings tasks)
-# This needs to run after GNOME is detected/installed, not in init.yml
-- name: Install psutil for dconf module (Fedora - post desktop install)
-  ansible.builtin.dnf:
-    name: python3-psutil
-    state: present
-  when:
-    - ansible_facts['distribution'] == 'Fedora'
-    - has_gnome | default(false)
-  tags: ['desktop']
-
-- name: Install psutil for dconf module (Ubuntu - post desktop install)
-  ansible.builtin.apt:
-    name: python3-psutil
-    state: present
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - has_gnome | default(false)
-  tags: ['desktop']
-
-# Deploy avatar after GNOME is installed (moved from init.yml)
-- name: Deploy user avatar for GDM login screen
-  ansible.builtin.include_tasks:
-    file: avatar.yml
-    apply:
-      tags: ['desktop', 'avatar']
-  tags: ['desktop', 'avatar']
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome | default(false)
-
-- name: Install Nemo file manager (replaces Nautilus as default)
-  ansible.builtin.include_tasks:
-    file: nemo.yml
-    apply:
-      tags: ['nemo', 'desktop']
-  tags: ['nemo', 'desktop']
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome | default(false)
-
-# Fix AppArmor user namespace restriction (Ubuntu 24.04+)
-# This allows Chromium-based apps (Chrome, Brave, VSCode, Electron) to work
-# Uses global sysctl: kernel.apparmor_restrict_unprivileged_userns = 0
-- name: Fix AppArmor user namespace restriction for desktop apps
+# Fix AppArmor user namespace restriction (Ubuntu 23.10+)
+# Generic Ubuntu bug fix — breaks Flatpak GUI apps for everyone, not opinionated.
+- name: Fix AppArmor user namespace restriction
   ansible.builtin.include_tasks:
     file: apparmor_userns.yml
     apply:
-      tags: ['security', 'apparmor']
-  tags: ['security', 'apparmor']
+      tags: ['developer', 'apparmor']
+  tags: ['developer', 'apparmor']
   when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Configure OS repositories (mirrors, performance)
+- name: Configure OS repositories (mirrors, fastestmirror)
   ansible.builtin.include_tasks:
     file: repository.yml
     apply:
-      tags: ['repository']
-  tags: ['repository']
-
-- name: Configure security (automatic updates)
-  ansible.builtin.include_tasks:
-    file: security.yml
-    apply:
-      tags: ['security']
-  tags: ['security']
+      tags: ['developer', 'repository']
+  tags: ['developer', 'repository']
 
 - name: Install Docker
   ansible.builtin.include_tasks:
     file: docker.yml
     apply:
-      tags: ['docker']
-  tags: ['docker']
+      tags: ['developer', 'docker']
+  tags: ['developer', 'docker']
 
 - name: Install development utilities
   ansible.builtin.include_tasks:
     file: utilities.yml
     apply:
-      tags: ['utilities']
-  tags: ['utilities']
-
-- name: Install Python development tools
-  ansible.builtin.include_tasks:
-    file: uv.yml
-    apply:
-      tags: ['python']
-  tags: ['python']
+      tags: ['developer', 'utilities']
+  tags: ['developer', 'utilities']
 
 - name: Install Git and version control tools
   ansible.builtin.include_tasks:
     file: git.yml
     apply:
-      tags: ['git']
-  tags: ['git']
-
-- name: Install cloud tools
-  ansible.builtin.include_tasks:
-    file: cloud.yml
-    apply:
-      tags: ['cloud']
-  tags: ['cloud']
-
-- name: Install Kubernetes tools
-  ansible.builtin.include_tasks:
-    file: k8s.yml
-    apply:
-      tags: ['k8s']
-  tags: ['k8s']
-
-- name: Install data platform tools
-  ansible.builtin.include_tasks:
-    file: data_tools.yml
-    apply:
-      tags: ['data']
-  tags: ['data']
-
-- name: Install OnlyOffice Desktop Editors
-  ansible.builtin.include_tasks:
-    file: onlyoffice.yml
-    apply:
-      tags: ['onlyoffice']
-  tags: ['onlyoffice']
-  when:
-    - has_gnome | default(false)
-    - install_onlyoffice | default(true)
-
-- name: Install VS Code
-  ansible.builtin.include_tasks:
-    file: vscode.yml
-    apply:
-      tags: ['vscode']
-  tags: ['vscode']
-  when: has_gnome | default(false)
-
-- name: Install Google Chrome
-  ansible.builtin.include_tasks:
-    file: chrome.yml
-    apply:
-      tags: ['chrome']
-  tags: ['chrome']
-  when: has_gnome | default(false)
-
-- name: Install Brave Browser
-  ansible.builtin.include_tasks:
-    file: brave.yml
-    apply:
-      tags: ['brave']
-  tags: ['brave']
-  when: has_gnome | default(false)
-
-- name: Apply GNOME configuration (winlike or maclike)
-  ansible.builtin.include_tasks:
-    file: gnome.yml
-    apply:
-      tags: ['winlike', 'maclike', 'never']
-  tags: ['winlike', 'maclike', 'never']
-  when:
-    - has_gnome | default(false)
-    - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
+      tags: ['developer', 'git']
+  tags: ['developer', 'git']
 
 - name: Apply regional settings (locale, formats, spell-check)
   ansible.builtin.include_tasks:
     file: region.yml
     apply:
-      tags: ['region']
-  tags: ['region']
+      tags: ['developer', 'region']
+  tags: ['developer', 'region']
   when:
     - desktop_region | default('') | length > 0
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Install Ghostty terminal
+# ============================================================================
+# Opt-in per-app tasks — gated with 'never' so default --tags developer skips
+# them. Run explicitly via --tags chrome / --tags brave / --tags avatar.
+# ============================================================================
+
+- name: Install Google Chrome (opt-in)
   ansible.builtin.include_tasks:
-    file: ghostty.yml
+    file: chrome.yml
     apply:
-      tags: ['ghostty']
-  tags: ['ghostty']
+      tags: ['chrome', 'never']
+  tags: ['chrome', 'never']
   when: has_gnome | default(false)
 
-- name: Configure shell (bash history auto-commit)
+- name: Install Brave Browser (opt-in)
   ansible.builtin.include_tasks:
-    file: shell_config.yml
+    file: brave.yml
     apply:
-      tags: ['shell']
-  tags: ['shell']
+      tags: ['brave', 'never']
+  tags: ['brave', 'never']
+  when: has_gnome | default(false)
+
+- name: Deploy user avatar (opt-in)
+  ansible.builtin.include_tasks:
+    file: avatar.yml
+    apply:
+      tags: ['avatar', 'never']
+  tags: ['avatar', 'never']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
 
 - name: Verify base tools installation
   ansible.builtin.include_tasks:
     file: verify.yml
     apply:
-      tags: ['verify']
-  tags: ['verify']
+      tags: ['developer', 'verify']
+  tags: ['developer', 'verify']

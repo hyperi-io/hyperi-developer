@@ -1,0 +1,58 @@
+---
+# Corporate-GUI Role — Org-specific GUI apps (opt-in).
+# Slack, OnlyOffice, the HyperI desktop opinions (Nemo replacing Nautilus,
+# GNOME extensions, desktop cleanup).
+
+- name: Install Nemo file manager (replaces Nautilus)
+  ansible.builtin.include_tasks:
+    file: nemo.yml
+    apply:
+      tags: ['corporate-gui', 'nemo']
+  tags: ['corporate-gui', 'nemo']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+
+- name: Hide duplicate apps and clean desktop
+  ansible.builtin.include_tasks:
+    file: desktop_cleanup.yml
+    apply:
+      tags: ['corporate-gui', 'desktop-cleanup']
+  tags: ['corporate-gui', 'desktop-cleanup']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+
+- name: Install GNOME extensions (Astra Monitor etc.)
+  ansible.builtin.include_tasks:
+    file: gnome.yml
+    apply:
+      tags: ['corporate-gui', 'gnome-extensions']
+  tags: ['corporate-gui', 'gnome-extensions']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+
+- name: Install Slack
+  ansible.builtin.include_tasks:
+    file: slack.yml
+    apply:
+      tags: ['corporate-gui', 'slack']
+  tags: ['corporate-gui', 'slack']
+  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install OnlyOffice Desktop Editors
+  ansible.builtin.include_tasks:
+    file: onlyoffice.yml
+    apply:
+      tags: ['corporate-gui', 'onlyoffice']
+  tags: ['corporate-gui', 'onlyoffice']
+  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install office suite tasks
+  ansible.builtin.include_tasks:
+    file: office.yml
+    apply:
+      tags: ['corporate-gui', 'office']
+  tags: ['corporate-gui', 'office']
+  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'

@@ -1,0 +1,69 @@
+---
+# Corporate Role — Org-specific CLI tools (opt-in)
+#
+# Things only HyperI users (or another org adopting hyperi-developer) want
+# imposed on their machine. Auto-updates configuration, bash history
+# auto-commit, Claude Code, gitleaks, OpenVPN, telemetry-disable, act.
+#
+# GUI counterparts live in corporate-gui (Slack, OnlyOffice, Nemo etc.).
+
+- name: Load macOS variables
+  ansible.builtin.include_vars:
+    file: macos.yml
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Configure auto-updates (unattended-upgrades / dnf-automatic)
+  ansible.builtin.include_tasks:
+    file: security.yml
+    apply:
+      tags: ['corporate', 'auto-updates']
+  tags: ['corporate', 'auto-updates']
+
+- name: Configure shell (bash history auto-commit)
+  ansible.builtin.include_tasks:
+    file: shell_config.yml
+    apply:
+      tags: ['corporate', 'bash-history']
+  tags: ['corporate', 'bash-history']
+
+- name: Install act (GitHub Actions runner)
+  ansible.builtin.include_tasks:
+    file: act.yml
+    apply:
+      tags: ['corporate', 'act']
+  tags: ['corporate', 'act']
+
+- name: Install Claude Code CLI
+  ansible.builtin.include_tasks:
+    file: claude.yml
+    apply:
+      tags: ['corporate', 'claude']
+  tags: ['corporate', 'claude']
+
+- name: Install Gitleaks (secret detection)
+  ansible.builtin.include_tasks:
+    file: gitleaks.yml
+    apply:
+      tags: ['corporate', 'gitleaks']
+  tags: ['corporate', 'gitleaks']
+
+- name: Install OpenVPN 3
+  ansible.builtin.include_tasks:
+    file: openvpn.yml
+    apply:
+      tags: ['corporate', 'openvpn']
+  tags: ['corporate', 'openvpn']
+
+- name: Disable telemetry and advertising
+  ansible.builtin.include_tasks:
+    file: telemetry-disable.yml
+    apply:
+      tags: ['corporate', 'telemetry-disable']
+  tags: ['corporate', 'telemetry-disable']
+
+- name: Verify corporate tools installation
+  ansible.builtin.include_tasks:
+    file: verify.yml
+    apply:
+      tags: ['corporate', 'verify']
+  tags: ['corporate', 'verify']

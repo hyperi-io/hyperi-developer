@@ -1,0 +1,11 @@
+---
+# Infrastructure-GUI Role — Lens (K8s desktop client).
+# DBeaver lives in developer-gui (DB GUI is a dev tool, not infra).
+
+- name: Install Lens (K8s desktop client)
+  ansible.builtin.include_tasks:
+    file: lens.yml
+    apply:
+      tags: ['infrastructure-gui', 'lens']
+  tags: ['infrastructure-gui', 'lens']
+  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'

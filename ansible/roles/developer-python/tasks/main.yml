@@ -1,0 +1,10 @@
+---
+# Developer-Python Role — Python toolchain (CLI only).
+# UV (Astral's Python package manager) handles interpreter + venv.
+
+- name: Install UV (Python package manager)
+  ansible.builtin.include_tasks:
+    file: uv.yml
+    apply:
+      tags: ['developer-python', 'uv']
+  tags: ['developer-python', 'uv']

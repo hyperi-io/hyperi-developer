@@ -1,0 +1,14 @@
+---
+# TypeScript toolchain — installs typescript + tsx + ts-node globally via pnpm.
+# Depends on developer-node having installed Node.js + pnpm first (declared
+# in meta/main.yml).
+
+- name: Install TypeScript and runners (typescript, tsx, ts-node)
+  ansible.builtin.command:
+    cmd: pnpm install -g typescript tsx ts-node
+  become: false
+  changed_when: true
+  register: pnpm_install_ts
+  failed_when:
+    - pnpm_install_ts.rc != 0
+    - "'already installed' not in pnpm_install_ts.stderr"

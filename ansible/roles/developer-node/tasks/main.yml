@@ -1,0 +1,9 @@
+---
+# Developer-Node Role — Node.js / npm / pnpm (CLI only).
+
+- name: Install Node.js and pnpm
+  ansible.builtin.include_tasks:
+    file: nodejs.yml
+    apply:
+      tags: ['developer-node', 'nodejs']
+  tags: ['developer-node', 'nodejs']

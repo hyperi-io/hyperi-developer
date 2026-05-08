@@ -1,0 +1,12 @@
+---
+# Developer-TypeScript-GUI Role — Cursor editor.
+# TS devs commonly want Cursor (cursor.sh — VS Code fork with AI built-in)
+# as their editor of choice.
+
+- name: Install Cursor editor
+  ansible.builtin.include_tasks:
+    file: cursor.yml
+    apply:
+      tags: ['developer-typescript-gui', 'cursor']
+  tags: ['developer-typescript-gui', 'cursor']
+  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'

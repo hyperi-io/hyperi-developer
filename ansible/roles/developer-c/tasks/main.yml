@@ -1,0 +1,9 @@
+---
+# Developer-C Role — C/C++ toolchain (CLI only).
+
+- name: Install C/C++ development tools
+  ansible.builtin.include_tasks:
+    file: c_tools.yml
+    apply:
+      tags: ['developer-c', 'c-tools']
+  tags: ['developer-c', 'c-tools']

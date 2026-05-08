@@ -1,0 +1,38 @@
+---
+# Infrastructure Role — Generic IaC + cloud CLIs (any IaC operator).
+# Not HyperI-specific. Org tooling lives in `corporate`.
+
+- name: Install HashiCorp + AWS cloud tools
+  ansible.builtin.include_tasks:
+    file: cloud.yml
+    apply:
+      tags: ['infrastructure', 'cloud']
+  tags: ['infrastructure', 'cloud']
+
+- name: Install Azure CLI
+  ansible.builtin.include_tasks:
+    file: azure.yml
+    apply:
+      tags: ['infrastructure', 'azure']
+  tags: ['infrastructure', 'azure']
+
+- name: Install Google Cloud CLI
+  ansible.builtin.include_tasks:
+    file: gcloud.yml
+    apply:
+      tags: ['infrastructure', 'gcloud']
+  tags: ['infrastructure', 'gcloud']
+
+- name: Install Kubernetes tools
+  ansible.builtin.include_tasks:
+    file: k8s.yml
+    apply:
+      tags: ['infrastructure', 'k8s']
+  tags: ['infrastructure', 'k8s']
+
+- name: Install data platform tools (Vector)
+  ansible.builtin.include_tasks:
+    file: data_tools.yml
+    apply:
+      tags: ['infrastructure', 'vector']
+  tags: ['infrastructure', 'vector']

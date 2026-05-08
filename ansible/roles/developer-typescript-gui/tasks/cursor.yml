@@ -1,0 +1,23 @@
+---
+# Cursor editor (cursor.sh) — VS Code fork with AI built-in.
+# Linux: AppImage from cursor.sh / Flatpak fallback. macOS: Homebrew cask.
+
+- name: Install Cursor (macOS)
+  community.general.homebrew_cask:
+    name: cursor
+    state: present
+  become: false
+  environment: "{{ homebrew_cask_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# Linux: Cursor doesn't ship official .deb/.rpm; standard distribution path is
+# AppImage. Place it under /opt and symlink for PATH.
+# TODO: revisit when official packages land — track https://www.cursor.com/downloads
+- name: Install Cursor via Flatpak (Linux fallback)
+  community.general.flatpak:
+    name: com.cursor.Cursor
+    state: present
+    method: system
+  become: true
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  failed_when: false  # Flatpak ID may not exist — install task is best-effort

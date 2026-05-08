@@ -1,0 +1,9 @@
+---
+# Developer-Rust Role — Rust toolchain (CLI only, no GUI).
+
+- name: Install Rust and cargo tools
+  ansible.builtin.include_tasks:
+    file: rust.yml
+    apply:
+      tags: ['developer-rust', 'rust']
+  tags: ['developer-rust', 'rust']

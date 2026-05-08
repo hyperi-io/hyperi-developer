@@ -1,0 +1,43 @@
+---
+# Bash-Modern Role — Install modern Bash on macOS without disturbing
+# Apple's /bin/bash 3.2 (frozen since 2007 due to GPLv3 licensing).
+#
+# Apple's /bin/bash stays untouched. /opt/homebrew/bin/bash (Apple Silicon)
+# or /usr/local/bin/bash (Intel) is added via Homebrew. Scripts using
+# `#!/bin/bash` continue to use the system 3.2; scripts using
+# `#!/usr/bin/env bash` resolve to whichever bash is first on PATH (normally
+# the Homebrew one once installed).
+#
+# DOES NOT chsh — that's a deliberate user choice. After install:
+#   chsh -s /opt/homebrew/bin/bash
+#
+# This role is a no-op on Linux (which already ships modern bash).
+
+- name: Install modern Bash via Homebrew (macOS)
+  community.general.homebrew:
+    name: bash
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Determine Homebrew bash path (Apple Silicon vs Intel)
+  ansible.builtin.set_fact:
+    brew_bash_path: "{{ '/opt/homebrew/bin/bash' if ansible_facts['architecture'] == 'arm64' else '/usr/local/bin/bash' }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Add modern bash to /etc/shells (macOS)
+  ansible.builtin.lineinfile:
+    path: /etc/shells
+    line: "{{ brew_bash_path }}"
+    state: present
+  become: true
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Display next-step hint
+  ansible.builtin.debug:
+    msg: |
+      Modern bash installed at {{ brew_bash_path }}.
+      To make it your login shell:  chsh -s {{ brew_bash_path }}
+      (Not done automatically — deliberate user choice.)
+  when: ansible_facts['distribution'] == 'MacOSX'

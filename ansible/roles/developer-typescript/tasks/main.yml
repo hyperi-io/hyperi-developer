@@ -1,0 +1,12 @@
+---
+# Developer-TypeScript Role — TypeScript toolchain.
+# Depends on developer-node (Node.js + npm/pnpm). The `meta/main.yml` declares
+# the dependency so `--tags developer-typescript` automatically pulls in
+# developer-node first.
+
+- name: Install TypeScript and tsx/ts-node
+  ansible.builtin.include_tasks:
+    file: typescript.yml
+    apply:
+      tags: ['developer-typescript', 'typescript']
+  tags: ['developer-typescript', 'typescript']

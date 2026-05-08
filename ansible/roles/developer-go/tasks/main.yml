@@ -1,0 +1,9 @@
+---
+# Developer-Go Role — Go toolchain (CLI only).
+
+- name: Install Go toolchain
+  ansible.builtin.include_tasks:
+    file: go.yml
+    apply:
+      tags: ['developer-go', 'go']
+  tags: ['developer-go', 'go']

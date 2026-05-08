@@ -146,22 +146,79 @@
       tags: ['always']
 
   roles:
+    # Generic dev base — runs by default (`./install.sh` with no flags).
     - role: developer
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['developer', 'base']
+      tags: ['developer']
 
-    - role: developer_core
+    # GUI editors + DB GUI + terminal (opt-in).
+    - role: developer-gui
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['core', 'advanced']
+      tags: ['developer-gui', 'never']
 
+    # Language toolchains (each opt-in via its own tag).
+    - role: developer-rust
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['developer-rust', 'never']
+
+    - role: developer-python
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['developer-python', 'never']
+
+    - role: developer-go
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['developer-go', 'never']
+
+    - role: developer-c
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['developer-c', 'never']
+
+    - role: developer-node
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['developer-node', 'never']
+
+    # TypeScript pulls in developer-node via meta/main.yml dependency.
+    - role: developer-typescript
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['developer-typescript', 'never']
+
+    - role: developer-typescript-gui
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['developer-typescript-gui', 'never']
+
+    # Generic IaC + cloud CLIs (opt-in).
+    - role: infrastructure
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['infrastructure', 'never']
+
+    - role: infrastructure-gui
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['infrastructure-gui', 'never']
+
+    # Org-specific (opt-in via --tags corporate or --corporate flag).
+    - role: corporate
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['corporate', 'never']
+
+    - role: corporate-gui
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['corporate-gui', 'never']
+
+    # macOS modern bash (opt-in, macOS-only).
+    - role: bash-modern
+      tags: ['bash-modern', 'never']
+      when: ansible_facts['distribution'] == 'MacOSX'
+
+    # Targeted deployment roles (opt-in).
     - role: vm_optimizer
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['vm', 'optimizer']
+      tags: ['vm', 'optimizer', 'never']
 
     - role: rdp
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['rdp']
+      tags: ['rdp', 'never']
 
+    # System cleanup — always runs at the end.
     - role: system_cleanup
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['always']
