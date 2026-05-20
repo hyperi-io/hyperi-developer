@@ -95,8 +95,12 @@
   become_user: "{{ actual_user }}"
 
 # Python tools
+# Use PATH-resolved `uv` instead of the hard-coded ~/.cargo/bin path:
+# on Linux uv is installed there, but on macOS it's at /opt/homebrew/bin/uv
+# (per uv.yml's macOS-via-brew branch). The PATH below already prepends
+# both locations.
 - name: Verify UV
-  ansible.builtin.command: "{{ user_home }}/.cargo/bin/uv --version"
+  ansible.builtin.command: uv --version
   register: verify_uv
   environment:
     PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
@@ -106,7 +110,7 @@
   become_user: "{{ actual_user }}"
 
 - name: Verify UV can list Python versions
-  ansible.builtin.command: "{{ user_home }}/.cargo/bin/uv python list"
+  ansible.builtin.command: uv python list
   register: verify_uv_python
   environment:
     PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
