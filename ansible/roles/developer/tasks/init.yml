@@ -53,7 +53,9 @@
     dest: /tmp/askpass.sh
     mode: '0700'
   become: false
-  when: ansible_facts['distribution'] == 'MacOSX'
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - ansible_become_password is defined
 
 - name: Install Homebrew (macOS)
   ansible.builtin.shell: |
