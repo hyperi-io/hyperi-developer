@@ -235,14 +235,17 @@
         name: helm
         state: present
 
-    - name: Install Terraform
-      community.general.homebrew:
-        name: terraform
-        state: present
-
+    # Terraform and Vault are no longer in homebrew-core
+    # (HashiCorp moved them to their own tap after the license change).
+    # Tap must happen BEFORE the install tasks reference tapped formulae.
     - name: Tap HashiCorp formulae
       community.general.homebrew_tap:
         name: hashicorp/tap
+        state: present
+
+    - name: Install Terraform
+      community.general.homebrew:
+        name: hashicorp/tap/terraform
         state: present
 
     - name: Install Vault
