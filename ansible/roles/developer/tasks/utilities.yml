@@ -73,6 +73,13 @@
     state: present
   when: ansible_facts['distribution'] == 'Ubuntu'
 
+# macOS utility list intentionally omits `ansible` and `python@3`:
+# - ansible: installed via uv as a tool (`uv tool install ansible-core
+#   --with ansible`) so it lives in its own isolated env and tracks uv's
+#   Python. A brew ansible would shadow it and create two ansibles on PATH.
+# - python@3: brew's keg-managed Python is unnecessary — uv-managed Python
+#   versions (via `uv python install`) are the corporate standard and
+#   self-contained per-tool.
 - name: Install CLI utilities (macOS)
   community.general.homebrew:
     name:
@@ -96,10 +103,8 @@
       - whois
       - shellcheck
       - postgresql@16
-      - ansible
       - yq
       - parallel
-      - python@3              # base interpreter
       - pytest                # testing framework
       - age                   # file encryption
     state: present
