@@ -53,20 +53,25 @@
     mode: '0644'
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Configure zsh history auto-commit system-wide (macOS)
-  ansible.builtin.copy:
-    dest: /etc/zshenv
-    content: |
-      # Zsh history auto-commit: Commands saved immediately
-      # System-wide configuration for all users
-
-      setopt APPEND_HISTORY                    # Append to history file
-      setopt INC_APPEND_HISTORY                # Write to history immediately
-      setopt HIST_IGNORE_DUPS                  # No duplicate entries
-      setopt HIST_FIND_NO_DUPS                 # Don't show duplicates in search
-      export HISTSIZE=10000                    # Commands in memory
-      export SAVEHIST=20000                    # Commands in file
-      export HISTFILE=~/.zsh_history           # History file location
+# macOS: scope zsh history settings to the USER's ~/.zshrc, not /etc/zshenv.
+# The original `/etc/zshenv` write affected every zsh session for every user
+# on the box and required root. ~/.zshrc is user-level, no sudo needed, and
+# uses a marked block so re-runs are idempotent and the change is easy to
+# spot or remove.
+- name: Configure zsh history settings (macOS — user-level ~/.zshrc)
+  ansible.builtin.blockinfile:
+    path: "{{ user_home }}/.zshrc"
+    create: true
     mode: '0644'
+    marker: "# {mark} HYPERI: zsh history settings"
+    block: |
+      setopt APPEND_HISTORY        # Append to history file (don't overwrite)
+      setopt INC_APPEND_HISTORY    # Write history immediately, not at shell exit
+      setopt HIST_IGNORE_DUPS      # Skip immediate duplicates
+      setopt HIST_FIND_NO_DUPS     # Don't show duplicates in search
+      export HISTSIZE=10000        # Commands in memory
+      export SAVEHIST=20000        # Commands in history file
+      export HISTFILE="$HOME/.zsh_history"
+  become: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
