@@ -9,17 +9,21 @@
   failed_when: verify_docker.rc != 0
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Verify Docker Desktop installed (macOS - CLI available after manual launch)
+- name: Verify OrbStack installed (macOS — provides docker socket + CLI)
   ansible.builtin.stat:
-    path: /Applications/Docker.app
+    path: /Applications/OrbStack.app
   register: verify_docker_app
-  failed_when: not verify_docker_app.stat.exists
+  # In check_mode the install task didn't actually run, so the app may not
+  # exist yet. Only treat absence as a real failure outside dry-runs.
+  failed_when:
+    - not verify_docker_app.stat.exists
+    - not ansible_check_mode
   when: ansible_facts['distribution'] == 'MacOSX'
 
 - name: Set Docker version fact for macOS
   ansible.builtin.set_fact:
     verify_docker:
-      stdout: "Docker Desktop installed (launch manually for CLI access)"
+      stdout: "OrbStack installed (launch once for first-time setup; docker CLI auto-configures)"
       rc: 0
   when: ansible_facts['distribution'] == 'MacOSX'
 
