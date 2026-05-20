@@ -1,5 +1,24 @@
 ---
 # Data platform tools (Vector, ClickHouse, Confluent CLI)
+#
+# macOS notes:
+# - Vector: skipped — removed from homebrew-core; would need an unofficial
+#   tap. If you need Vector on Mac, install manually with the tap that
+#   works for your current Vector version.
+# - ClickHouse: skipped — heavyweight, not part of standard Mac dev workflow.
+#   Manual install if needed: `brew install --cask clickhouse-client` or
+#   run via container.
+# - Confluent CLI: INSTALLED on macOS — needs the confluentinc/tap added
+#   first (which is done below).
+# Linux branches below are unchanged.
+
+- name: Skipped data platform tools notice (macOS)
+  ansible.builtin.debug:
+    msg: |
+      Vector and ClickHouse are intentionally skipped on macOS
+      (no clean homebrew formula). Install manually if needed.
+      Confluent CLI IS installed below via the confluentinc/tap.
+  when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================
 # VECTOR - Log aggregation and routing
@@ -68,13 +87,7 @@
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Install Vector via Homebrew (macOS)
-  community.general.homebrew:
-    name: vector
-    state: present
-  become: false
-  environment: "{{ homebrew_env }}"
-  when: ansible_facts['distribution'] == 'MacOSX'
+# Vector intentionally not installed on macOS — see header comment.
 
 # ============================================================================
 # CLICKHOUSE - Analytics database client
@@ -123,13 +136,7 @@
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Install ClickHouse via Homebrew (macOS)
-  community.general.homebrew:
-    name: clickhouse
-    state: present
-  become: false
-  environment: "{{ homebrew_env }}"
-  when: ansible_facts['distribution'] == 'MacOSX'
+# ClickHouse intentionally not installed on macOS — see header comment.
 
 # ============================================================================
 # CONFLUENT CLI - Kafka client tools
@@ -204,6 +211,14 @@
         update_cache: true
 
   when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Tap Confluent formulae (macOS)
+  community.general.homebrew_tap:
+    name: confluentinc/tap
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
 
 - name: Install Confluent CLI via Homebrew (macOS)
   community.general.homebrew:
