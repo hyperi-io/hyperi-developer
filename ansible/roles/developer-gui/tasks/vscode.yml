@@ -80,3 +80,125 @@
   become: false
   environment: "{{ homebrew_cask_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# LINUX - Raise inotify limits for VS Code file watcher
+# ============================================================================
+#
+# Large repos (ClickHouse, Linux kernel, monorepos) exceed the default inotify
+# watch limit, triggering VSCode's "Unable to watch for file changes" warning
+# and silently dropping file change notifications.
+#
+# Defaults vary by distro (Ubuntu/Fedora ship 8192-65536); 524288 is the value
+# VSCode docs recommend and what most large-repo dev setups use.
+#
+# We skip applying our config if either:
+#   (a) the operator already manages these keys via /etc/sysctl.conf or
+#       /etc/sysctl.d/ (don't fight existing intent), or
+#   (b) current live values already meet or exceed our targets
+#       (somebody already raised them — including via runtime sysctl).
+#
+# /usr/lib/sysctl.d/ is intentionally NOT treated as "operator-managed" since
+# that's where distro/package defaults live, not intentional overrides.
+#
+# macOS uses FSEvents/kqueue (no per-user watch ceiling) and does not need this.
+# Reference: https://code.visualstudio.com/docs/setup/linux#_visual-studio-code-is-unable-to-watch-for-file-changes-in-this-large-workspace-error-enospc
+
+- name: Configure inotify limits for VS Code file watcher (Linux)
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  vars:
+    inotify_targets:
+      fs.inotify.max_user_watches: 524288
+      fs.inotify.max_user_instances: 1024
+      fs.inotify.max_queued_events: 32768
+    inotify_managed_file: /etc/sysctl.d/90-inotify-vscode.conf
+  block:
+    - name: Check inotify is supported on this kernel
+      ansible.builtin.stat:
+        path: /proc/sys/fs/inotify/max_user_watches
+      register: inotify_proc
+
+    - name: Detect and apply inotify limits
+      when: inotify_proc.stat.exists
+      block:
+        - name: Read current effective inotify limits
+          ansible.builtin.command:
+            cmd: "sysctl -n {{ item }}"
+          register: inotify_current
+          changed_when: false
+          loop: "{{ inotify_targets.keys() | list }}"
+
+        - name: Map current inotify values
+          ansible.builtin.set_fact:
+            inotify_live: >-
+              {{
+                dict(inotify_current.results
+                     | map(attribute='item')
+                     | zip(inotify_current.results
+                           | map(attribute='stdout')
+                           | map('int')))
+              }}
+
+        - name: Find other sysctl files that configure inotify keys
+          # Search only operator-managed locations (/etc/), not distro defaults
+          # (/usr/lib/sysctl.d). Exclude our own managed file.
+          ansible.builtin.shell:
+            cmd: >
+              set -o pipefail;
+              grep -rlE '^[[:space:]]*fs\.inotify\.(max_user_watches|max_user_instances|max_queued_events)[[:space:]]*='
+              /etc/sysctl.conf /etc/sysctl.d 2>/dev/null
+              | grep -vFx '{{ inotify_managed_file }}' || true
+            executable: /bin/bash
+          register: inotify_other_owners
+          changed_when: false
+
+        - name: Decide whether to manage inotify limits
+          ansible.builtin.set_fact:
+            inotify_other_owned: "{{ (inotify_other_owners.stdout | trim) | length > 0 }}"
+            inotify_values_sufficient: >-
+              {{
+                inotify_live['fs.inotify.max_user_watches']    >= inotify_targets['fs.inotify.max_user_watches']
+                and inotify_live['fs.inotify.max_user_instances'] >= inotify_targets['fs.inotify.max_user_instances']
+                and inotify_live['fs.inotify.max_queued_events']  >= inotify_targets['fs.inotify.max_queued_events']
+              }}
+
+        - name: Report skip reason (existing operator-managed config)
+          ansible.builtin.debug:
+            msg: >-
+              Skipping inotify config — already managed by:
+              {{ inotify_other_owners.stdout_lines }} (current: {{ inotify_live }})
+          when: inotify_other_owned
+
+        - name: Report skip reason (current values already meet targets)
+          ansible.builtin.debug:
+            msg: "Skipping inotify config — current values already meet targets: {{ inotify_live }}"
+          when:
+            - not inotify_other_owned
+            - inotify_values_sufficient
+
+        - name: Install sysctl config for inotify limits
+          ansible.builtin.copy:
+            content: |
+              # Raise inotify limits for VS Code (and other file watchers) on
+              # large workspaces. Without this, VSCode shows "Unable to watch
+              # for file changes" (ENOSPC) and drops change notifications.
+              #
+              # See: https://code.visualstudio.com/docs/setup/linux
+              #      (search: "Visual Studio Code is unable to watch for file changes")
+              fs.inotify.max_user_watches = {{ inotify_targets['fs.inotify.max_user_watches'] }}
+              fs.inotify.max_user_instances = {{ inotify_targets['fs.inotify.max_user_instances'] }}
+              fs.inotify.max_queued_events = {{ inotify_targets['fs.inotify.max_queued_events'] }}
+            dest: "{{ inotify_managed_file }}"
+            mode: '0644'
+          register: inotify_sysctl_file
+          when:
+            - not inotify_other_owned
+            - not inotify_values_sufficient
+
+        - name: Apply inotify sysctl settings immediately
+          ansible.builtin.command:
+            cmd: "sysctl -p {{ inotify_managed_file }}"
+          when:
+            - inotify_sysctl_file is defined
+            - inotify_sysctl_file.changed | default(false)
+          changed_when: true
