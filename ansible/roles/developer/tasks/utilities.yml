@@ -19,6 +19,7 @@
       - tmux
       - htop
       - lsof
+      - needrestart           # flag daemons needing restart after upgrades (cf. dnf needs-restarting)
       - tree
       - wget
       - bind-utils
@@ -52,6 +53,7 @@
       - tmux
       - htop
       - lsof
+      - needrestart           # flag daemons needing restart after upgrades
       - tree
       - wget
       - dnsutils
