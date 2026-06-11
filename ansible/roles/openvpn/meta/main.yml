@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: openvpn
+  author: Derek Thoms
+  description: Legacy OpenVPN 3 stack (transitional)
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Fedora
+      versions: ['42']
+    - name: Ubuntu
+      versions: ['noble']
+dependencies: []

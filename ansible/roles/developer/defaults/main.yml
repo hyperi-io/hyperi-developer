@@ -26,19 +26,8 @@ docker_arch: "amd64"
 # ============================================================================
 # BRANDING / CUSTOMIZATION
 # ============================================================================
-# Master toggle to disable all branding (avatar, wallpaper)
-# Set to false for unbranded/generic installs
-branding_enabled: true
-
-# User avatar for GDM login screen (256x256 PNG recommended)
-# Set to empty string to skip avatar deployment
-# Only deployed if branding_enabled is true
-avatar_file: "user-avatar.png"
-
-# Desktop background wallpaper (SVG or PNG)
-# Set to empty string to skip background deployment
-# Only deployed if branding_enabled is true
-background_file: "default-background.svg"
+# Branding defaults (branding_enabled, avatar_file, background_file) now live
+# in the core role's defaults — they are only applied when the core tier runs.
 
 # ============================================================================
 # REGIONAL SETTINGS (opt-in)
@@ -52,7 +41,10 @@ desktop_region: ""
 # ============================================================================
 # OFFICE SUITE
 # ============================================================================
-# OnlyOffice is the default (better MS Office compatibility)
-# LibreOffice is opt-in for users who prefer it
-install_onlyoffice: true
+# OnlyOffice is the default (better MS Office compatibility) — opt-out via
+# `install_onlyoffice: false` in group_vars/all.yml (single source of truth).
+# LibreOffice is opt-in for users who prefer it.
 install_libreoffice: false
+
+# Note: managed browser policies (Chrome/Brave) are deployed by the core role
+# only. Developer tier does not impose any Chrome/Brave managed policy.

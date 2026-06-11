@@ -1,0 +1,67 @@
+---
+# Verification - Rust toolchain + cargo tools
+
+- name: Verify Rust (Linux)
+  ansible.builtin.command: "{{ user_home }}/.cargo/bin/rustc --version"
+  environment:
+    RUSTUP_HOME: "{{ user_home }}/.rustup"
+    CARGO_HOME: "{{ user_home }}/.cargo"
+  register: verify_rust
+  changed_when: false
+  failed_when: verify_rust.rc != 0
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify Rust (macOS)
+  ansible.builtin.command: rustc --version
+  environment: "{{ homebrew_env }}"
+  register: verify_rust
+  changed_when: false
+  failed_when: verify_rust.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Verify cargo-bacon
+  ansible.builtin.command: "{{ user_home }}/.cargo/bin/bacon --version"
+  register: verify_bacon
+  changed_when: false
+  failed_when: verify_bacon.rc != 0
+  become: false
+
+- name: Verify cargo-nextest
+  ansible.builtin.command: "{{ user_home }}/.cargo/bin/cargo-nextest --version"
+  register: verify_nextest
+  changed_when: false
+  failed_when: verify_nextest.rc != 0
+  become: false
+
+- name: Verify cargo-deny
+  ansible.builtin.command: "{{ user_home }}/.cargo/bin/cargo-deny --version"
+  register: verify_deny
+  changed_when: false
+  failed_when: verify_deny.rc != 0
+  become: false
+
+- name: Verify cargo-tarpaulin (Linux only)
+  ansible.builtin.command: "{{ user_home }}/.cargo/bin/cargo-tarpaulin --version"
+  register: verify_tarpaulin
+  changed_when: false
+  failed_when: verify_tarpaulin.rc != 0
+  become: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify cargo-chef
+  ansible.builtin.command: "{{ user_home }}/.cargo/bin/cargo-chef --version"
+  register: verify_chef
+  changed_when: false
+  failed_when: verify_chef.rc != 0
+  become: false
+
+- name: Display Rust toolchain verification
+  ansible.builtin.debug:
+    msg: |
+      Rust Toolchain Verified:
+      - Rust: {{ verify_rust.stdout | default('installed') }}
+      - cargo-bacon: {{ verify_bacon.stdout | default('installed') }}
+      - cargo-nextest: {{ verify_nextest.stdout | default('installed') }}
+      - cargo-deny: {{ verify_deny.stdout | default('installed') }}
+      - cargo-tarpaulin: {{ verify_tarpaulin.stdout | default('installed') if ansible_facts['distribution'] in ['Fedora', 'Ubuntu'] else 'N/A (Linux only)' }}
+      - cargo-chef: {{ verify_chef.stdout | default('installed') }}

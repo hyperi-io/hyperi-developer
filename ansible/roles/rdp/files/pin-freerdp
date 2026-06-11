@@ -1,0 +1,13 @@
+# Pin FreeRDP libs — prevent apt upgrade from installing broken versions
+# ubuntu0.3 confirmed broken (heap corruption in handover daemon)
+# ubuntu0.4 confirmed stable (2026-03-25)
+# Base 3.16.0+dfsg-2 is the known-good fallback
+# See ~/RDP-FREERDP-FIX.md for details
+#
+# To downgrade if current version breaks:
+#   sudo apt install libfreerdp3-3=3.16.0+dfsg-2 libwinpr3-3=3.16.0+dfsg-2 libfreerdp-server3-3=3.16.0+dfsg-2 libfreerdp-client3-3=3.16.0+dfsg-2 libfreerdp-shadow3-3=3.16.0+dfsg-2 libfreerdp-shadow-subsystem3-3=3.16.0+dfsg-2 libfreerdp-server-proxy3-3=3.16.0+dfsg-2
+#   Then update Pin: version below to 3.16.0+dfsg-2
+
+Package: libfreerdp3-3 libwinpr3-3 libfreerdp-server3-3 libfreerdp-client3-3 libfreerdp-shadow3-3 libfreerdp-shadow-subsystem3-3 libfreerdp-server-proxy3-3 freerdp3-dev
+Pin: version {{ freerdp_pin_version }}
+Pin-Priority: 1001

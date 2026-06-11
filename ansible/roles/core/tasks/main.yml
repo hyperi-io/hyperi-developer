@@ -1,0 +1,59 @@
+---
+# Core — Hyperi internal tier (implies developer)
+
+- name: Load macOS variables
+  ansible.builtin.include_vars:
+    file: macos.yml
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install Slack
+  ansible.builtin.include_tasks:
+    file: slack.yml
+  when: install_slack | default(true)
+  tags: ['slack']
+
+- name: Install Linear CLI
+  ansible.builtin.include_tasks:
+    file: linear.yml
+  when: install_linear | default(true)
+  tags: ['linear']
+
+- name: Install JFrog CLI
+  ansible.builtin.include_tasks:
+    file: jfrog.yml
+  tags: ['jfrog']
+
+- name: Install rclone (Hyperi storage sync)
+  ansible.builtin.include_tasks:
+    file: rclone.yml
+  tags: ['rclone']
+
+- name: Install WireGuard (default Hyperi VPN)
+  ansible.builtin.include_tasks:
+    file: wireguard.yml
+  tags: ['wireguard', 'vpn']
+
+- name: Deploy Hyperi-branded wallpaper
+  ansible.builtin.include_tasks:
+    file: wallpaper.yml
+  when: has_gnome | default(false)
+  tags: ['wallpaper']
+
+- name: Deploy user avatar (Hyperi default)
+  ansible.builtin.include_tasks:
+    file: avatar.yml
+  when: has_gnome | default(false)
+  tags: ['avatar']
+
+- name: Apply managed browser privacy policies (Chrome + Brave)
+  ansible.builtin.include_tasks:
+    file: browser_policies.yml
+    apply:
+      tags: ['browser_policies']
+  tags: ['browser_policies', 'chrome', 'brave']
+  when: has_gnome | default(false)
+
+- name: Verify core tier tools
+  ansible.builtin.include_tasks:
+    file: verify.yml
+  tags: ['verify']

@@ -12,11 +12,12 @@
 #
 # OPTIONS:
 #   --check              Run in check mode (dry-run, no changes)
-#   --tags TAGS          Include specific tags (alias for --tags-include)
-#   --tags-include TAGS  Include specific tags to run (comma-separated)
+#   --profile PROFILE    Profiles to install (comma-separated: developer, core,
+#                        rust, iac, gui_extras, openvpn, all). See --help for details.
+#   --tags TAGS          Ad-hoc Ansible tags (overrides --profile if both given)
 #   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
-#   --core               Install core developer tools (JFrog, Azure, Node.js, etc.)
-#   --all                Install everything (base + core + VM + RDP + winlike)
+#   --core               DEPRECATED — alias for --profile core,rust,iac
+#   --all                DEPRECATED — alias for --profile core,all
 #   --help               Show this help message
 #
 # SUPPORTED PLATFORMS:
@@ -44,84 +45,97 @@ print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 print_info() { echo -e "[INFO] $1"; }
 print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
+# ----- Profile definitions -----
+declare -A VALID_PROFILES=(
+    [developer]="developer"
+    [core]="core"
+    [rust]="rust"
+    [iac]="iac"
+    [gui_extras]="gui_extras"
+    [openvpn]="openvpn"
+    [all]="rust,iac,gui_extras"
+)
+
+parse_profile() {
+    local input="$1"
+    local -A selected
+    local p
+    IFS=',' read -ra profiles <<< "$input"
+    for p in "${profiles[@]}"; do
+        p="${p//[[:space:]]/}"
+        [[ -z "$p" ]] && continue
+        if [[ -z "${VALID_PROFILES[$p]+x}" ]]; then
+            print_error "Unknown profile: $p"
+            echo "Valid profiles: developer, core, rust, iac, gui_extras, openvpn, all"
+            exit 1
+        fi
+        if [[ "$p" == "all" ]]; then
+            local expanded
+            IFS=',' read -ra expanded <<< "${VALID_PROFILES[all]}"
+            local e
+            for e in "${expanded[@]}"; do selected[$e]=1; done
+        else
+            selected[$p]=1
+        fi
+    done
+
+    if [[ -n "${selected[openvpn]:-}" && -z "${selected[core]:-}" ]]; then
+        print_error "--profile openvpn requires --profile core (OpenVPN config is Hyperi-specific)"
+        exit 1
+    fi
+
+    # Always ensure a base tier is present. "core" implies "developer";
+    # any other selection (or empty) defaults the base tier to "developer".
+    selected[developer]=1
+
+    local -a ordered=()
+    local name
+    for name in developer core rust iac gui_extras openvpn; do
+        [[ -n "${selected[$name]:-}" ]] && ordered+=("$name")
+    done
+    RESOLVED_TAGS=$(IFS=','; echo "${ordered[*]}")
+}
+
 show_help() {
     cat << 'EOF'
 Usage: ./install.sh [OPTIONS]
 
 OPTIONS:
   --check              Run in check mode (dry-run, no changes)
-  --tags TAGS          Include specific tags (alias for --tags-include)
-  --tags-include TAGS  Include specific tags to run (comma-separated)
-  --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
+  --profile PROFILE    Profiles to install (comma-separated). See below.
+  --tags TAGS          Ad-hoc Ansible tags (overrides --profile if both given)
+  --tags-exclude TAGS  Exclude specific tags (comma-separated)
   --branch BRANCH      Git branch to use (default: main)
-  --core               Shortcut for: --tags developer,base,core,advanced
-  --all                Shortcut for: --tags developer,base,core,advanced,vm,optimizer,rdp,winlike
   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
   --help               Show this help message
 
-AVAILABLE TAGS:
+  DEPRECATED (still works, will be removed in next release):
+    --core             Alias for --profile core,rust,iac
+    --all              Alias for --profile core,all
 
-  Base Tags (included by default):
-    developer       Base DFE developer role
-    base            Base tools (Docker, Git, K8s, Python, VS Code, Chrome)
-
-  Feature Tags (opt-in, require explicit --tags or --all):
-    winlike         Windows-style GNOME taskbar (Dash to Panel, bottom panel)
-    maclike         macOS-style GNOME dock (Dash to Dock, Logo Menu, Magic Lamp)
-    core            Core developer tools (JFrog, Azure CLI, Node.js, Linear CLI)
-    advanced        Advanced tools (included with --core)
-    vm              VM guest optimizations (QEMU guest agent, SPICE agent)
-    optimizer       VM optimizer role (included with --vm)
-    rdp             GNOME Remote Desktop configuration (RDP server on port 3389)
-
-  Regional Tags (opt-in via --region):
-    region          Regional locale, formats, spell-check (opt-in)
-
-  Optional Tags (included by default, can be excluded):
-    ghostty         Ghostty terminal emulator (included by default)
-    fastestmirror   DNF/APT performance optimizations (included by default)
-    wallpaper       Custom DFE wallpaper (included by default)
+PROFILES:
+  developer       OSS-safe base for external contributors on DFE/ESH.
+                  Installs: git, docker, Python (uv), aws/azure/gcloud/gh,
+                  vscode, browsers, utilities, CI tooling.
+  core            Hyperi internal tier (implies developer). Adds:
+                  Slack, Linear CLI, JFrog CLI, rclone, WireGuard,
+                  Hyperi branding.
+  rust            Rust toolchain + cargo-installed dev tools.
+  iac             Infrastructure-as-code (Terraform, Vault, Helm, k8s).
+  gui_extras      Optional GUI/TUI extras: Freelens, Bruno, Podman Desktop,
+                  DBeaver Community, lazygit.
+  openvpn         Transitional legacy VPN (requires core). Scheduled for
+                  removal once WireGuard migration completes.
+  all             Shortcut for rust,iac,gui_extras (applied to whichever
+                  base tier you selected; defaults to developer)
 
 EXAMPLES:
-
-  Default installation (base tools only):
-    ./install.sh
-
-  Include Windows-style GNOME desktop:
-    ./install.sh --tags developer,base,winlike
-
-  Include macOS-style GNOME desktop:
-    ./install.sh --tags developer,base,maclike
-
-  Install core tools + winlike desktop:
-    ./install.sh --tags developer,base,core,advanced,winlike
-
-  Exclude Ghostty terminal (use system terminal):
-    ./install.sh --tags-exclude ghostty
-
-  Exclude fastestmirror (use default OS mirrors):
-    ./install.sh --tags-exclude fastestmirror
-
-  Install everything with Australian region (locale, formats, spell-check):
-    ./install.sh --all --region au
-
-  Install everything except wallpaper:
-    ./install.sh --all --tags-exclude wallpaper
-
-  Install everything with macOS-style (maclike overrides default winlike):
-    ./install.sh --all --tags maclike
-
-  Install RDP support for remote desktop access:
-    ./install.sh --tags developer,base,rdp
-
-  Dry-run to see what would change:
-    ./install.sh --check
-
-NOTES:
-  - If both winlike and maclike are included, maclike takes precedence (overrides default)
-  - RDP configures GNOME Remote Desktop with default credentials (dfe/dfe)
-  - ghostty, fastestmirror, and wallpaper are included by default
-  - Use --tags-exclude to disable default features without specifying all tags
+  ./install.sh --profile developer          # external contributor
+  ./install.sh --profile core               # Hyperi dev (minimal)
+  ./install.sh --profile core,rust          # Hyperi + Rust
+  ./install.sh --profile core,all           # Hyperi + everything (no openvpn)
+  ./install.sh --profile core,openvpn       # Hyperi + legacy VPN
+  ./install.sh --profile core --extra-vars install_slack=false
 EOF
     exit 0
 }
@@ -132,6 +146,7 @@ ANSIBLE_TAGS=""
 ANSIBLE_SKIP_TAGS=""
 ANSIBLE_EXTRA_VARS=""
 GIT_BRANCH="main"
+RESOLVED_TAGS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -161,12 +176,18 @@ while [[ $# -gt 0 ]]; do
             GIT_BRANCH="$2"
             shift 2
             ;;
+        --profile)
+            PROFILE_INPUT="$2"
+            shift 2
+            ;;
         --core)
-            ANSIBLE_TAGS="--tags developer,base,core,advanced"
+            print_warning "--core is deprecated; use --profile core,rust,iac instead"
+            PROFILE_INPUT="core,rust,iac"
             shift
             ;;
         --all)
-            ANSIBLE_TAGS="--tags developer,base,core,advanced,vm,optimizer,rdp,winlike"
+            print_warning "--all is deprecated; use --profile core,all instead"
+            PROFILE_INPUT="core,all"
             shift
             ;;
         --region)
@@ -183,6 +204,25 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# ---- Resolve --profile input into Ansible tags ----
+# (Must run before winlike/maclike and region blocks — both append to ANSIBLE_TAGS.)
+if [[ -n "${PROFILE_INPUT:-}" ]]; then
+    parse_profile "$PROFILE_INPUT"
+    if [[ -n "$ANSIBLE_TAGS" ]]; then
+        print_warning "Both --profile and --tags given; --profile wins"
+    fi
+    ANSIBLE_TAGS="--tags $RESOLVED_TAGS"
+elif [[ -z "$ANSIBLE_TAGS" ]]; then
+    parse_profile "developer"
+    ANSIBLE_TAGS="--tags $RESOLVED_TAGS"
+fi
+
+# Short-circuit for bats tests
+if [[ "${DFE_PROFILE_TEST:-}" == "1" ]]; then
+    echo "RESOLVED_TAGS=${RESOLVED_TAGS}"
+    exit 0
+fi
 
 # Handle winlike/maclike priority: maclike overrides winlike (since winlike is default in --all)
 # If both are specified, remove winlike from tags

@@ -1,0 +1,23 @@
+---
+# rclone — multi-backend cloud storage sync CLI
+# Upstream: https://rclone.org
+
+- name: Install rclone (Fedora)
+  ansible.builtin.dnf:
+    name: rclone
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install rclone (Ubuntu)
+  ansible.builtin.apt:
+    name: rclone
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install rclone (macOS via Homebrew)
+  community.general.homebrew:
+    name: rclone
+    state: present
+  environment: "{{ homebrew_env }}"
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'

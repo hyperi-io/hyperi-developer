@@ -1,0 +1,11 @@
+---
+# Rust toolchain + cargo tools
+
+- name: Install Rust and cargo tools
+  ansible.builtin.include_tasks:
+    file: rust.yml
+
+- name: Verify Rust toolchain
+  ansible.builtin.include_tasks:
+    file: verify.yml
+  tags: ['verify']

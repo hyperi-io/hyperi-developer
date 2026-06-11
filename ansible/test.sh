@@ -58,9 +58,24 @@ EOF
 
 # Parse arguments
 WINLIKE_OVERRIDE=false
+MATRIX_MODE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --matrix)
+            MATRIX_MODE=true
+            shift
+            ;;
+        --profile)
+            TAGS="$2"
+            case "$2" in
+                *all*) TAGS="${TAGS//all/rust,iac,gui_extras}" ;;
+            esac
+            if [[ "$TAGS" == *core* && "$TAGS" != *developer* ]]; then
+                TAGS="developer,$TAGS"
+            fi
+            shift 2
+            ;;
         --all)
             TAGS="developer,base,core,advanced,vm,optimizer,rdp,maclike"
             shift
@@ -122,6 +137,17 @@ if $WINLIKE_OVERRIDE && [[ "$TAGS" == *"maclike"* ]]; then
     TAGS="${TAGS//,maclike/}"
     TAGS="${TAGS//maclike,/}"
     TAGS="${TAGS//maclike/}"
+fi
+
+# Matrix mode: run each profile combination in --check mode and exit
+# Pass through --limit and -i so invocations like `./test.sh --matrix --limit ubuntu`
+# actually reach the intended host instead of silently running against the default.
+if $MATRIX_MODE; then
+    for profile in developer core "core,rust" "core,iac" "core,gui_extras" "core,all" "core,openvpn" "developer,rust"; do
+        echo "=== Matrix: --profile $profile ==="
+        "$0" --profile "$profile" --check -i "$INVENTORY" $LIMIT $EXTRA_ARGS
+    done
+    exit 0
 fi
 
 # Default tags if none specified

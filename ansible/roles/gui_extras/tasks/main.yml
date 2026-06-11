@@ -1,0 +1,26 @@
+---
+# Optional GUI/TUI developer extras
+
+- name: Install Freelens (k8s cluster GUI)
+  ansible.builtin.include_tasks:
+    file: freelens.yml
+  when: has_gnome | default(false)
+
+- name: Install Bruno (API client)
+  ansible.builtin.include_tasks:
+    file: bruno.yml
+  when: has_gnome | default(false)
+
+- name: Install Podman Desktop
+  ansible.builtin.include_tasks:
+    file: podman_desktop.yml
+  when: has_gnome | default(false)
+
+- name: Install DBeaver Community
+  ansible.builtin.include_tasks:
+    file: dbeaver.yml
+  when: has_gnome | default(false)
+
+- name: Install lazygit
+  ansible.builtin.include_tasks:
+    file: lazygit.yml

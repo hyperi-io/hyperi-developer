@@ -150,9 +150,25 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['developer', 'base']
 
-    - role: developer_core
+    - role: core
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['core', 'advanced']
+      tags: ['core']
+
+    - role: rust
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['rust']
+
+    - role: iac
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['iac']
+
+    - role: gui_extras
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['gui_extras']
+
+    - role: openvpn
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['openvpn']
 
     - role: vm_optimizer
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"

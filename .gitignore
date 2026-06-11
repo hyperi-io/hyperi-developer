@@ -53,6 +53,9 @@ installers/
 *.local.sh
 local-config/
 
+# Git worktrees (isolated workspaces for parallel feature work)
+.worktrees/
+
 # AI assistant work files - never commit (local only, public repo)
 ai/
 STATE.md

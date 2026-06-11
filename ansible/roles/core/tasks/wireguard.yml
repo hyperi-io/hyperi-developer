@@ -1,0 +1,42 @@
+---
+# WireGuard — default Hyperi VPN (replaces legacy OpenVPN in BASE)
+# Peer configuration is deployed if available; otherwise just the package.
+
+- name: Install WireGuard (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - wireguard-tools
+      - systemd-resolved
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install WireGuard (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - wireguard
+      - wireguard-tools
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install WireGuard (macOS via Homebrew)
+  community.general.homebrew:
+    name: wireguard-tools
+    state: present
+  environment: "{{ homebrew_env }}"
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# Hyperi peer config deployment is deliberately opt-in via variable.
+# The config file itself is NOT bundled in this repo (would be a secrets leak);
+# operators provide it out-of-band (OpenBao, manual install, etc.).
+- name: Deploy Hyperi WireGuard peer config (if provided)
+  ansible.builtin.copy:
+    src: "{{ wireguard_peer_config }}"
+    dest: "/etc/wireguard/hyperi.conf"
+    owner: root
+    group: root
+    mode: '0600'
+  when:
+    - wireguard_peer_config is defined
+    - wireguard_peer_config | length > 0
+  become: true

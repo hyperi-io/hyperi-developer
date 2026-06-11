@@ -56,17 +56,6 @@
     - has_gnome | default(false)
   tags: ['desktop']
 
-# Deploy avatar after GNOME is installed (moved from init.yml)
-- name: Deploy user avatar for GDM login screen
-  ansible.builtin.include_tasks:
-    file: avatar.yml
-    apply:
-      tags: ['desktop', 'avatar']
-  tags: ['desktop', 'avatar']
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome | default(false)
-
 - name: Install Nemo file manager (replaces Nautilus as default)
   ansible.builtin.include_tasks:
     file: nemo.yml
@@ -137,12 +126,15 @@
       tags: ['cloud']
   tags: ['cloud']
 
-- name: Install Kubernetes tools
+- name: Install Azure CLI
   ansible.builtin.include_tasks:
-    file: k8s.yml
-    apply:
-      tags: ['k8s']
-  tags: ['k8s']
+    file: azure.yml
+  tags: ['azure', 'cloud']
+
+- name: Install Google Cloud CLI
+  ansible.builtin.include_tasks:
+    file: gcloud.yml
+  tags: ['gcloud', 'cloud']
 
 - name: Install data platform tools
   ansible.builtin.include_tasks:
@@ -150,6 +142,16 @@
     apply:
       tags: ['data']
   tags: ['data']
+
+- name: Install C development tools
+  ansible.builtin.include_tasks:
+    file: c_tools.yml
+  tags: ['c_tools', 'dev']
+
+- name: Install Node.js and semantic-release
+  ansible.builtin.include_tasks:
+    file: nodejs.yml
+  tags: ['nodejs']
 
 - name: Install OnlyOffice Desktop Editors
   ansible.builtin.include_tasks:
@@ -183,15 +185,35 @@
     apply:
       tags: ['brave']
   tags: ['brave']
-  when: has_gnome | default(false)
+  when:
+    - has_gnome | default(false)
+    - install_brave | default(true)
 
-- name: Apply browser privacy policies (Chrome + Brave)
+- name: Install Bitwarden
   ansible.builtin.include_tasks:
-    file: browser_policies.yml
-    apply:
-      tags: ['browser_policies']
-  tags: ['browser_policies', 'chrome', 'brave']
-  when: has_gnome | default(false)
+    file: bitwarden.yml
+  when: install_bitwarden | default(true)
+  tags: ['bitwarden']
+
+- name: Install Claude Code CLI
+  ansible.builtin.include_tasks:
+    file: claude.yml
+  tags: ['claude']
+
+- name: Install Gitleaks
+  ansible.builtin.include_tasks:
+    file: gitleaks.yml
+  tags: ['gitleaks']
+
+- name: Install act (local GitHub Actions)
+  ansible.builtin.include_tasks:
+    file: act.yml
+  tags: ['act', 'ci']
+
+- name: Disable telemetry and advertising
+  ansible.builtin.include_tasks:
+    file: telemetry.yml
+  tags: ['telemetry']
 
 - name: Apply GNOME configuration (winlike or maclike)
   ansible.builtin.include_tasks:

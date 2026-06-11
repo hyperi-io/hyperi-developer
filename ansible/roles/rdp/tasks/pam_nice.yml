@@ -1,0 +1,12 @@
+---
+# Deploy PAM nice limits so the GRD handover daemon can run at Nice=-10
+# Without this, the systemd user service drop-in for Nice=-10 is silently ignored
+
+- name: Deploy PAM nice limits for GRD priority
+  ansible.builtin.copy:
+    src: rdp-nice-limits.conf
+    dest: /etc/security/limits.d/50-rdp-nice.conf
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome

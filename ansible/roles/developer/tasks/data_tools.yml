@@ -200,3 +200,30 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# ============================================================================
+# kcat (kafkacat) — FOSS Kafka CLI
+# ============================================================================
+# NOTE: package availability varies by distro. The failed_when: false on Linux
+# is intentional — Chunk 4 smoke tests will verify real-VM availability.
+# If absent, the task logs a message but does not break the install.
+- name: Install kcat (Fedora)
+  ansible.builtin.dnf:
+    name: kcat          # verify with `dnf search kcat` — may live in a COPR
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+  failed_when: false
+
+- name: Install kcat (Ubuntu)
+  ansible.builtin.apt:
+    name: kafkacat      # verify with `apt-cache search`; may be kcat on 26.04
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  failed_when: false
+
+- name: Install kcat (macOS via Homebrew)
+  community.general.homebrew:
+    name: kcat
+    state: present
+  environment: "{{ homebrew_env }}"
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'

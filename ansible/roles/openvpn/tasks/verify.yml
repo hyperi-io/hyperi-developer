@@ -1,0 +1,24 @@
+---
+# Verification - OpenVPN 3 client
+
+- name: Verify OpenVPN 3 (Linux)
+  ansible.builtin.command: openvpn3 version
+  register: verify_openvpn
+  changed_when: false
+  failed_when: verify_openvpn.rc != 0
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - not (openvpn3_install_failed | default(false))
+
+- name: Verify OpenVPN 3 (macOS)
+  ansible.builtin.command: openvpn --version
+  environment: "{{ homebrew_env }}"
+  register: verify_openvpn
+  changed_when: false
+  failed_when: verify_openvpn.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Display OpenVPN verification
+  ansible.builtin.debug:
+    msg: |
+      OpenVPN: {{ verify_openvpn.stdout | default('skipped (install failed - manual install required)') }}

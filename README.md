@@ -18,77 +18,38 @@ Standardised developer environment for HyperSec DFE teams. One command gets you 
 | **macOS Sequoia** | Fully tested | Homebrew-based |
 | **Windows 11** | Productivity host | Hyper-V for Linux VMs |
 
-## Quick Start
+## Installation
 
-```bash
-git clone https://github.com/hyperi-io/dfe-developer
-cd dfe-developer
+The DFE developer environment installs as a set of composable profiles.
 
-# Base install (Docker, Git, K8s tools, VS Code, Chrome)
-./install.sh
+### Profiles
 
-# Full install with everything
-./install.sh --all
+- **`developer`** — OSS-safe base for external contributors on DFE/ESH. No Hyperi internals.
+- **`core`** — Hyperi internal tier (implies `developer`). Adds Slack, Linear, JFrog, rclone, WireGuard, branding.
+- **`rust`** — Rust toolchain + cargo tooling.
+- **`iac`** — Terraform, Vault, Helm, Kubernetes CLI set.
+- **`gui_extras`** — Freelens, Bruno, Podman Desktop, DBeaver Community, lazygit.
+- **`openvpn`** — Transitional legacy VPN (requires `core`). Scheduled for removal once WireGuard migration completes.
 
-# Check what would change first
-./install.sh --check
-```
+### Common invocations
 
-The installer detects your OS and installs the right packages. Run `./install.sh --help` for all options.
+    ./install.sh --profile developer          # External contributor (minimal)
+    ./install.sh --profile core               # Hyperi dev (minimal)
+    ./install.sh --profile core,all           # Hyperi + rust + iac + gui_extras
+    ./install.sh --profile core,openvpn       # Hyperi + legacy VPN (transition)
 
-### Installation Options
+### Opt-out individual tools
 
-```bash
-# Windows-style taskbar (Dash to Panel)
-./install.sh --tags developer,base,winlike
+    ./install.sh --profile core --extra-vars "install_slack=false"
 
-# macOS-style dock
-./install.sh --tags developer,base,maclike
+See [docs/TOOLS.md](docs/TOOLS.md) for the full tool list and rationale.
 
-# Core tools (JFrog, Azure CLI, Node.js, Linear CLI)
-./install.sh --core
+### Deprecations
 
-# Full install without wallpaper
-./install.sh --all --tags-exclude wallpaper
-```
-
-### Available Tags
-
-| Tag | Description |
-|-----|-------------|
-| `winlike` | Windows-style taskbar with transparent panel |
-| `maclike` | macOS-style dock (overrides winlike if both specified) |
-| `core` | JFrog CLI, Azure CLI, Node.js, Linear CLI, OpenVPN |
-| `rdp` | GNOME Remote Desktop on port 3389 |
-| `vm` | VM guest optimizations (QEMU/SPICE agents) |
-| `ghostty` | Ghostty terminal (included by default) |
-| `wallpaper` | Custom wallpaper (included by default) |
-
-## What Gets Installed
-
-**Base install** (`./install.sh`):
-
-- Docker CE + Docker Desktop
-- Git, GitHub CLI, Git LFS
-- kubectl, k9s, kubectx, minikube, ArgoCD, dive, Freelens
-- AWS CLI, Helm, Terraform, Vault
-- UV (Python manager)
-- VS Code, Chrome
-- Ghostty terminal (Solarized theme)
-- Development utilities (jq, yq, bat, fzf, ripgrep, htop)
-
-**Core tools** (`./install.sh --core`):
-
-- JFrog CLI, Azure CLI
-- Node.js, semantic-release, Linear CLI
-- OpenVPN 3, Claude Code CLI
-- Slack, Gitleaks, act (GitHub Actions runner)
-
-**Desktop** (`winlike` or `maclike` tag):
-
-- GNOME extensions from extensions.gnome.org
-- Transparent taskbar (winlike) or dock (maclike)
-- Custom wallpaper
+- `--core` and `--all` are aliased (with a warning) for one release, then removed.
+  Replace with `--profile core,rust,iac` and `--profile core,all` respectively.
+- `--tags developer_core` is **not** aliased — scripts/CI using this tag must be
+  updated to `--profile core,rust,iac`.
 
 ## Requirements
 

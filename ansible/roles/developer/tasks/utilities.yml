@@ -35,6 +35,7 @@
       - python3               # base interpreter
       - python3-pytest        # testing framework
       - age                   # file encryption
+      - wl-clipboard          # Wayland screenshot→clipboard bridge
     state: present
   when: ansible_facts['distribution'] == 'Fedora'
 
@@ -70,6 +71,7 @@
       - python3               # base interpreter
       - python3-pytest        # testing framework
       - age                   # file encryption
+      - wl-clipboard          # Wayland screenshot→clipboard bridge
     state: present
   when: ansible_facts['distribution'] == 'Ubuntu'
 

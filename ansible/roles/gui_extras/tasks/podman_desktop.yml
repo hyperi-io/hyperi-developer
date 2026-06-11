@@ -1,0 +1,10 @@
+---
+# Podman Desktop — FOSS container GUI (Docker Desktop alternative, no licence concerns)
+# Upstream: https://podman-desktop.io
+
+- name: Install Podman Desktop (flatpak — cross-distro)
+  ansible.builtin.command: flatpak install -y flathub io.podman_desktop.PodmanDesktop
+  register: pd_flatpak
+  changed_when: "'already installed' not in pd_flatpak.stdout | default('')"
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  become: false

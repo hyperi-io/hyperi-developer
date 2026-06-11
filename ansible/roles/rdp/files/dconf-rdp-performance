@@ -4,3 +4,8 @@
 
 [org/gnome/desktop/interface]
 enable-animations=false
+
+[org/gnome/desktop/remote-desktop/rdp]
+# Cap PipeWire screencast framerate to reduce software encoding load.
+# Requires patched GRD with max-framerate gsettings key.
+max-framerate=uint32 30

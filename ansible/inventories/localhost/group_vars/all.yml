@@ -1,0 +1,16 @@
+---
+# Opt-out defaults for user-facing applications.
+# Override via inventory, group_vars, or --extra-vars "install_slack=false"
+
+# --- developer tier (OSS) ---
+install_bitwarden: true
+install_onlyoffice: true
+install_brave: true
+
+# --- core tier (Hyperi internal) ---
+install_slack: true
+install_linear: true
+
+# WireGuard peer config path (deliberately empty by default — operators set this)
+# If set, core/wireguard.yml will copy the file to /etc/wireguard/hyperi.conf.
+# wireguard_peer_config: /path/to/hyperi.conf

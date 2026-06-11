@@ -1,0 +1,67 @@
+---
+# Deploy patched GRD with configurable max-framerate
+# The stock GRD 49.0 hardcodes 60fps for the PipeWire screencast stream.
+# This patched build reads max-framerate from gsettings, halving software
+# encoding load on virtio-gpu VMs.
+
+- name: Check if patched GRD is already installed
+  ansible.builtin.command:
+    cmd: dpkg-query -W -f '${Version}' gnome-remote-desktop
+  register: grd_version
+  changed_when: false
+  failed_when: false
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome
+
+- name: Copy patched GRD deb to target
+  ansible.builtin.copy:
+    src: "gnome-remote-desktop_{{ grd_patched_version }}_amd64.deb"
+    dest: "/tmp/gnome-remote-desktop_{{ grd_patched_version }}_amd64.deb"
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome
+    - grd_version.stdout | default('') != grd_patched_version
+  register: grd_deb_copied
+
+- name: Install patched GRD deb
+  ansible.builtin.apt:
+    deb: "/tmp/gnome-remote-desktop_{{ grd_patched_version }}_amd64.deb"
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome
+    - grd_deb_copied.changed | default(false)
+  register: grd_installed
+
+- name: Pin patched GRD to prevent apt overwrite
+  ansible.builtin.copy:
+    content: |
+      Package: gnome-remote-desktop
+      Pin: version {{ grd_patched_version }}
+      Pin-Priority: 1001
+    dest: /etc/apt/preferences.d/pin-grd
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome
+
+- name: Clean up deb file
+  ansible.builtin.file:
+    path: "/tmp/gnome-remote-desktop_{{ grd_patched_version }}_amd64.deb"
+    state: absent
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome
+
+# NOTE: Do NOT restart gnome-remote-desktop here.
+# Changes take effect after reboot.
+- name: Notify about patched GRD
+  ansible.builtin.debug:
+    msg: >-
+      Patched GRD {{ grd_patched_version }} installed.
+      Reboot required for max-framerate setting to take effect.
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome
+    - grd_installed.changed | default(false)

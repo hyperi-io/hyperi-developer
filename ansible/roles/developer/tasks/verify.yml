@@ -31,31 +31,7 @@
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # Docker group membership requires logout/reboot - skip verification
-
-# Kubernetes tools
-- name: Verify kubectl
-  ansible.builtin.command: kubectl version --client
-  register: verify_kubectl
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_kubectl.rc != 0
-
-- name: Verify Helm
-  ansible.builtin.command: helm version --short
-  register: verify_helm
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_helm.rc != 0
-
-- name: Verify Terraform
-  ansible.builtin.command: terraform version
-  register: verify_terraform
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_terraform.rc != 0
+# kubectl/Helm/Terraform verification moved to iac role (installed there)
 
 # Git verification
 - name: Verify Git
@@ -120,6 +96,108 @@
   changed_when: false
   failed_when: verify_aws.rc != 0
 
+- name: Verify Azure CLI (Linux)
+  ansible.builtin.command: az version
+  register: verify_azure
+  changed_when: false
+  failed_when: verify_azure.rc != 0
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify Azure CLI (macOS)
+  ansible.builtin.command: az version
+  environment: "{{ homebrew_env }}"
+  register: verify_azure
+  changed_when: false
+  failed_when: verify_azure.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Verify Google Cloud CLI (Linux)
+  ansible.builtin.command: gcloud version --format=json
+  register: verify_gcloud
+  changed_when: false
+  failed_when: verify_gcloud.rc != 0
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify Google Cloud CLI (macOS)
+  ansible.builtin.command: gcloud version --format=json
+  environment: "{{ homebrew_env }}"
+  register: verify_gcloud
+  changed_when: false
+  failed_when: verify_gcloud.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# Node.js + semantic-release
+- name: Verify Node.js (Linux)
+  ansible.builtin.command: node --version
+  register: verify_node
+  changed_when: false
+  failed_when: verify_node.rc != 0
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify Node.js (macOS)
+  ansible.builtin.command: node --version
+  environment: "{{ homebrew_env }}"
+  register: verify_node
+  changed_when: false
+  failed_when: verify_node.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Verify semantic-release
+  ansible.builtin.command: "{{ user_home }}/.npm-global/bin/semantic-release --version"
+  register: verify_semrel
+  changed_when: false
+  failed_when: verify_semrel.rc != 0
+  become: false
+
+# Claude Code CLI
+- name: Verify Claude Code CLI (Linux)
+  ansible.builtin.command: "{{ user_home }}/.local/bin/claude --version"
+  register: verify_claude
+  changed_when: false
+  failed_when: verify_claude.rc != 0
+  become: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify Claude Code CLI (macOS)
+  ansible.builtin.command: claude --version
+  environment: "{{ homebrew_env }}"
+  register: verify_claude
+  changed_when: false
+  failed_when: verify_claude.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# Gitleaks
+- name: Verify Gitleaks (Linux)
+  ansible.builtin.command: gitleaks version
+  register: verify_gitleaks
+  changed_when: false
+  failed_when: verify_gitleaks.rc != 0
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify Gitleaks (macOS)
+  ansible.builtin.command: gitleaks version
+  environment: "{{ homebrew_env }}"
+  register: verify_gitleaks
+  changed_when: false
+  failed_when: verify_gitleaks.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# act — local GitHub Actions runner
+- name: Verify act (Linux)
+  ansible.builtin.command: act --version
+  register: verify_act
+  changed_when: false
+  failed_when: verify_act.rc != 0
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify act (macOS)
+  ansible.builtin.command: act --version
+  environment: "{{ homebrew_env }}"
+  register: verify_act
+  changed_when: false
+  failed_when: verify_act.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
 - name: Verify yq
   ansible.builtin.command: yq --version
   register: verify_yq
@@ -153,14 +231,18 @@
       ✅ Base Developer Tools Verified:
       - Docker: {{ verify_docker.stdout }} (service enabled ✅)
       - Docker group: User added (logout required for shell access)
-      - kubectl: {{ verify_kubectl.stdout | regex_search('v[0-9.]+') }}
-      - Helm: {{ verify_helm.stdout }}
-      - Terraform: {{ verify_terraform.stdout_lines[0] }}
       - Git: {{ verify_git.stdout }}
       - Git subtree: ✅
       - Git LFS: ✅ Filters installed
       - UV: {{ verify_uv.stdout }} (can list Python versions ✅)
       - AWS CLI: {{ verify_aws.stdout }}
+      - Azure CLI: {{ verify_azure.stdout | default('installed') }}
+      - Google Cloud CLI: {{ verify_gcloud.stdout | default('installed') }}
+      - Node.js: {{ verify_node.stdout | default('installed') }}
+      - semantic-release: {{ verify_semrel.stdout | default('installed') }}
+      - Claude Code CLI: {{ verify_claude.stdout | default('installed') }}
+      - Gitleaks: {{ verify_gitleaks.stdout | default('installed') }}
+      - act: {{ verify_act.stdout | default('installed') }}
       - yq: {{ verify_yq.stdout }}
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
@@ -169,13 +251,17 @@
     msg: |
       ✅ Base Developer Tools Verified:
       - Docker Desktop: Installed (launch manually for CLI access)
-      - kubectl: {{ verify_kubectl.stdout | regex_search('v[0-9.]+') }}
-      - Helm: {{ verify_helm.stdout }}
-      - Terraform: {{ verify_terraform.stdout_lines[0] }}
       - Git: {{ verify_git.stdout }}
       - Git subtree: ✅
       - Git LFS: ✅ Filters installed
       - UV: {{ verify_uv.stdout }} (can list Python versions ✅)
       - AWS CLI: {{ verify_aws.stdout }}
+      - Azure CLI: {{ verify_azure.stdout | default('installed') }}
+      - Google Cloud CLI: {{ verify_gcloud.stdout | default('installed') }}
+      - Node.js: {{ verify_node.stdout | default('installed') }}
+      - semantic-release: {{ verify_semrel.stdout | default('installed') }}
+      - Claude Code CLI: {{ verify_claude.stdout | default('installed') }}
+      - Gitleaks: {{ verify_gitleaks.stdout | default('installed') }}
+      - act: {{ verify_act.stdout | default('installed') }}
       - yq: {{ verify_yq.stdout }}
   when: ansible_facts['distribution'] == 'MacOSX'

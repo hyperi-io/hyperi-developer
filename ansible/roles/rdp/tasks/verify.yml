@@ -51,11 +51,17 @@
   failed_when: false
   changed_when: false
 
-- name: Verify refresh rate script deployed
+- name: Verify FreeRDP apt pin exists (Ubuntu)
   ansible.builtin.stat:
-    path: /usr/local/bin/rdp-set-refresh-rate
-  register: verify_refresh_rate
-  failed_when: not verify_refresh_rate.stat.exists
+    path: /etc/apt/preferences.d/pin-freerdp
+  register: verify_freerdp_pin
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Verify PAM nice limits deployed
+  ansible.builtin.stat:
+    path: /etc/security/limits.d/50-rdp-nice.conf
+  register: verify_pam_nice
+  failed_when: not verify_pam_nice.stat.exists
 
 - name: Display RDP optimizer verification
   ansible.builtin.debug:
@@ -67,6 +73,7 @@
       - TCP config: /etc/sysctl.d/99-rdp-optimization.conf
       - MTU config: /etc/sysctl.d/99-rdp-mtu.conf
       - GRD priority (Nice=-10): {{ 'CONFIGURED' if verify_grd_priority.stat.exists else 'MISSING' }}
+      - PAM nice limits: {{ 'CONFIGURED' if verify_pam_nice.stat.exists else 'MISSING' }}
       - mesa-va-drivers: {{ 'INSTALLED' if verify_mesa_va.rc == 0 else 'NOT INSTALLED' }}
-      - Refresh rate cap ({{ rdp_refresh_rate }}Hz): {{ 'CONFIGURED' if verify_refresh_rate.stat.exists else 'MISSING' }}
+      - FreeRDP pin: {{ 'CONFIGURED' if (verify_freerdp_pin.stat.exists | default(false)) else 'N/A (Fedora)' }}
       - Status: RDP with auto-resize will be active after reboot on port 3389

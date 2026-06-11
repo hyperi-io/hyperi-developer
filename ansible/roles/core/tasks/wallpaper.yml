@@ -1,0 +1,109 @@
+---
+# Default wallpaper installation
+# Uses branding/background.svg from role's files directory
+# Note: psutil is installed in developer/tasks/init.yml (consolidated there for all GNOME tasks)
+#
+# This runs with --tags wallpaper for standalone wallpaper deployment.
+# gnome.yml also deploys wallpaper with --tags winlike/maclike if background_file is set.
+# Using /usr/local/share/backgrounds/ (safe from package updates, consistent with gnome.yml)
+#
+# Controlled by branding_enabled variable (defaults to true)
+
+- name: Set wallpaper filename
+  ansible.builtin.set_fact:
+    wallpaper_src: "branding/background.svg"
+    wallpaper_name: "background.svg"
+
+# ============================================================================
+# LINUX - Copy wallpaper and set via dconf
+# ============================================================================
+
+- name: Create local backgrounds directory (safe from package updates)
+  ansible.builtin.file:
+    path: /usr/local/share/backgrounds
+    state: directory
+    mode: '0755'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - branding_enabled | default(true)
+
+- name: Copy wallpaper to local backgrounds directory (Linux)
+  ansible.builtin.copy:
+    src: "{{ wallpaper_src }}"
+    dest: "/usr/local/share/backgrounds/{{ wallpaper_name }}"
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - branding_enabled | default(true)
+
+- name: Set GNOME wallpaper (light mode)
+  community.general.dconf:
+    key: "/org/gnome/desktop/background/picture-uri"
+    value: "'file:///usr/local/share/backgrounds/{{ wallpaper_name }}'"
+    state: present
+  become: false
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - branding_enabled | default(true)
+
+- name: Set GNOME wallpaper (dark mode)
+  community.general.dconf:
+    key: "/org/gnome/desktop/background/picture-uri-dark"
+    value: "'file:///usr/local/share/backgrounds/{{ wallpaper_name }}'"
+    state: present
+  become: false
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - branding_enabled | default(true)
+
+- name: Display wallpaper status (Linux)
+  ansible.builtin.debug:
+    msg: "Wallpaper set: {{ wallpaper_name }}"
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - branding_enabled | default(true)
+
+# ============================================================================
+# macOS - Install desktoppr and set wallpaper
+# ============================================================================
+
+- name: Install desktoppr via Homebrew (macOS)
+  community.general.homebrew:
+    name: desktoppr
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - branding_enabled | default(true)
+
+- name: Copy wallpaper to user Pictures directory (macOS)
+  ansible.builtin.copy:
+    src: "{{ wallpaper_src }}"
+    dest: "{{ user_home }}/Pictures/{{ wallpaper_name }}"
+    mode: '0644'
+  become: false
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - branding_enabled | default(true)
+
+- name: Set macOS wallpaper using desktoppr
+  ansible.builtin.command:
+    cmd: desktoppr "{{ user_home }}/Pictures/{{ wallpaper_name }}"
+  environment: "{{ homebrew_env }}"
+  become: false
+  changed_when: false
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - branding_enabled | default(true)
+
+- name: Display wallpaper status (macOS)
+  ansible.builtin.debug:
+    msg: "Wallpaper set: {{ wallpaper_name }}"
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - branding_enabled | default(true)

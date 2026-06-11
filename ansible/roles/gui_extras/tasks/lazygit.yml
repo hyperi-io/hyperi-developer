@@ -1,0 +1,50 @@
+---
+# lazygit — TUI git helper (also serves as our GH GUI helper)
+
+- name: Install lazygit (Fedora)
+  ansible.builtin.dnf:
+    name: lazygit
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install lazygit (Ubuntu — upstream tarball, no apt package available)
+  block:
+    - name: Detect latest lazygit version from GitHub
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/jesseduffield/lazygit/releases/latest
+        return_content: true
+      register: lazygit_release
+      delegate_to: localhost
+      become: false
+
+    - name: Set lazygit version fact
+      ansible.builtin.set_fact:
+        lazygit_version: "{{ lazygit_release.json.tag_name | regex_replace('^v', '') }}"
+
+    - name: Download lazygit tarball
+      ansible.builtin.get_url:
+        url: "https://github.com/jesseduffield/lazygit/releases/download/v{{ lazygit_version }}/lazygit_{{ lazygit_version }}_Linux_x86_64.tar.gz"
+        dest: /tmp/lazygit.tar.gz
+        mode: '0644'
+
+    - name: Extract lazygit binary
+      ansible.builtin.unarchive:
+        src: /tmp/lazygit.tar.gz
+        dest: /usr/local/bin
+        include: ['lazygit']
+        remote_src: true
+        mode: '0755'
+
+    - name: Remove lazygit tarball
+      ansible.builtin.file:
+        path: /tmp/lazygit.tar.gz
+        state: absent
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install lazygit (macOS)
+  community.general.homebrew:
+    name: jesseduffield/lazygit/lazygit
+    state: present
+  environment: "{{ homebrew_env }}"
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'

@@ -657,18 +657,9 @@
     - branding_enabled | default(true)
     - background_file | default('') | length > 0
   block:
-    - name: Create local backgrounds directory (safe from package updates)
-      ansible.builtin.file:
-        path: /usr/local/share/backgrounds
-        state: directory
-        mode: '0755'
-
-    - name: Deploy background image
-      ansible.builtin.copy:
-        src: "{{ background_file }}"
-        dest: /usr/local/share/backgrounds/desktop-background.svg
-        mode: '0644'
-
+    # File placement is handled by core/tasks/wallpaper.yml (single source of
+    # truth for wallpaper deployment). The dconf calls below only set the
+    # GNOME desktop-background URIs; they assume the file already exists.
     - name: Set background as default (light mode)
       community.general.dconf:
         key: "/org/gnome/desktop/background/picture-uri"

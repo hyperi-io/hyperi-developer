@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=openvpn3-indicator
+# D-Bus warm-up shim — forces activation of net.openvpn.v3.sessions before
+# launching the indicator, otherwise the indicator starts against a dead proxy.
+# See DRAGONFLY.md 2026-04-18 07:00 AEST entry.
+Exec=sh -c 'openvpn3 sessions-list >/dev/null 2>&1; exec openvpn3-indicator'
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
+Terminal=false

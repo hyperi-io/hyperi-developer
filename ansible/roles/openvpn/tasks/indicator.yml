@@ -1,0 +1,43 @@
+---
+# openvpn3-indicator — GTK tray for OpenVPN 3
+# DRAGONFLY finding: stock autostart races the D-Bus-activated services,
+# producing a broken proxy with silent Connect failures. Fix with a user-level
+# autostart override that forces sessions-list before launching the indicator.
+
+- name: Install openvpn3-indicator (Ubuntu only — Fedora has native tray)
+  block:
+    - name: Add openvpn3-indicator PPA
+      ansible.builtin.apt_repository:
+        repo: "ppa:grzegorz-gutowski/openvpn3-indicator"
+        filename: openvpn3-indicator
+        state: present
+        update_cache: true
+
+    - name: Install openvpn3-indicator package
+      ansible.builtin.apt:
+        name: openvpn3-indicator
+        state: present
+
+    - name: Ensure user-level autostart directory exists
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/autostart"
+        state: directory
+        owner: "{{ actual_user }}"
+        mode: '0755'
+
+    - name: Deploy D-Bus warm-up autostart override
+      ansible.builtin.copy:
+        src: openvpn3-indicator.desktop
+        dest: "{{ user_home }}/.config/autostart/openvpn3-indicator.desktop"
+        owner: "{{ actual_user }}"
+        mode: '0644'
+
+    - name: Enable ubuntu-appindicators GNOME extension
+      ansible.builtin.command: >-
+        sudo -u {{ actual_user }}
+        gnome-extensions enable ubuntu-appindicators@ubuntu.com
+      register: appind_enable
+      changed_when: "'already enabled' not in appind_enable.stderr | default('')"
+      failed_when: false   # extension may not be installed on Fedora/headless
+
+  when: ansible_facts['distribution'] == 'Ubuntu'

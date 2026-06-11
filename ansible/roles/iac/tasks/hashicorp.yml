@@ -1,0 +1,167 @@
+---
+# HashiCorp tooling — Terraform, Vault, Helm
+# Split out of developer/cloud.yml so IaC is opt-in via the `iac` profile.
+
+# ============================================================================
+# HASHICORP REPOSITORY (for Terraform, Vault)
+# ============================================================================
+
+- name: Configure HashiCorp repository (Ubuntu)
+  block:
+    - name: Add HashiCorp GPG key
+      ansible.builtin.get_url:
+        url: https://apt.releases.hashicorp.com/gpg
+        dest: /usr/share/keyrings/hashicorp-archive-keyring.asc
+        mode: '0644'
+
+    # Map unsupported Ubuntu releases to nearest supported LTS
+    # HashiCorp only publishes repos for LTS releases (jammy, noble)
+    - name: Determine HashiCorp repo codename
+      ansible.builtin.set_fact:
+        hashicorp_codename: >-
+          {{ (ansible_facts['distribution_version'] is version('24.04', '>'))
+             | ternary('noble', ansible_facts['distribution_release']) }}
+
+    - name: Add HashiCorp repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.asc] https://apt.releases.hashicorp.com {{ hashicorp_codename }} main"
+        filename: hashicorp
+        state: present
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Configure HashiCorp repository (Fedora)
+  block:
+    - name: Import HashiCorp GPG key
+      ansible.builtin.rpm_key:
+        state: present
+        key: https://rpm.releases.hashicorp.com/gpg
+
+    - name: Add HashiCorp repository
+      ansible.builtin.yum_repository:
+        name: hashicorp
+        description: HashiCorp Stable
+        baseurl: https://rpm.releases.hashicorp.com/fedora/$releasever/$basearch/stable
+        enabled: true
+        gpgcheck: true
+        gpgkey: https://rpm.releases.hashicorp.com/gpg
+
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# ============================================================================
+# HELM (Linux binary install)
+# ============================================================================
+
+- name: Install Helm via binary download (Linux)
+  block:
+    - name: Get latest Helm version from GitHub API
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/helm/helm/releases/latest
+        return_content: true
+      register: helm_latest_release
+
+    - name: Set Helm version fact
+      ansible.builtin.set_fact:
+        helm_version: "{{ helm_latest_release.json.tag_name }}"
+
+    - name: Determine Helm binary architecture
+      ansible.builtin.set_fact:
+        helm_arch: >-
+          {%- if ansible_facts['architecture'] == 'x86_64' -%}
+          linux-amd64
+          {%- elif ansible_facts['architecture'] == 'aarch64' -%}
+          linux-arm64
+          {%- else -%}
+          unsupported
+          {%- endif -%}
+
+    - name: Download Helm binary tarball
+      ansible.builtin.get_url:
+        url: "https://get.helm.sh/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
+        dest: "/tmp/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract Helm binary
+      ansible.builtin.unarchive:
+        src: "/tmp/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
+        dest: /tmp
+        remote_src: true
+
+    - name: Install Helm binary
+      ansible.builtin.copy:
+        src: "/tmp/{{ helm_arch }}/helm"
+        dest: /usr/local/bin/helm
+        mode: '0755'
+        remote_src: true
+
+    - name: Remove Helm installation files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
+        - "/tmp/{{ helm_arch }}"
+
+    - name: Install Helm Dashboard plugin
+      ansible.builtin.command: helm plugin install https://github.com/komodorio/helm-dashboard.git
+      become: false
+      failed_when: false
+      changed_when: false
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# ============================================================================
+# TERRAFORM & VAULT (from HashiCorp repos)
+# ============================================================================
+
+- name: Install Terraform and Vault (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - terraform
+      - vault
+    state: present
+    update_cache: true
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install Terraform and Vault (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - terraform
+      - vault
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# ============================================================================
+# macOS - Install via Homebrew
+# ============================================================================
+
+- name: Install HashiCorp tooling via Homebrew (macOS)
+  block:
+    - name: Install Helm
+      community.general.homebrew:
+        name: helm
+        state: present
+
+    - name: Install Terraform
+      community.general.homebrew:
+        name: terraform
+        state: present
+
+    - name: Tap HashiCorp formulae
+      community.general.homebrew_tap:
+        name: hashicorp/tap
+        state: present
+
+    - name: Install Vault
+      community.general.homebrew:
+        name: hashicorp/tap/vault
+        state: present
+
+    - name: Install Helm Dashboard plugin
+      ansible.builtin.command: helm plugin install https://github.com/komodorio/helm-dashboard.git
+      failed_when: false
+      changed_when: false
+
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'

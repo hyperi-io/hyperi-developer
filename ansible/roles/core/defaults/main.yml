@@ -1,0 +1,42 @@
+---
+# Core role (internal tier) - Defaults
+
+# ============================================================================
+# BRANDING / CUSTOMIZATION
+# ============================================================================
+# Master toggle to disable all branding (avatar, wallpaper)
+# Set to false for unbranded/generic installs
+branding_enabled: true
+
+# User avatar for GDM login screen (256x256 recommended).
+# Role-relative path resolved from files/ via Ansible's file lookup.
+# Set to empty string to skip avatar deployment.
+avatar_file: "branding/avatar.svg"
+
+# Desktop background wallpaper (SVG or PNG)
+# Role-relative path resolved from files/.
+# Set to empty string to skip background deployment.
+background_file: "branding/background.svg"
+
+# ============================================================================
+# BROWSER POLICY ALLOWLISTS (internal-tier overrides)
+# ============================================================================
+# Populate the empty lists declared in developer/defaults/main.yml with the
+# internal-tier allowlists. Chromium's managed policy consumer merges these
+# with the generic private-network / cloud-identity entries hardcoded in
+# developer/tasks/browser_policies.yml.
+browser_org_cookies_allowed:
+  - "[*.]hyperi.io"
+  - "[*.]devex.hyperi.io"
+  - "[*.]hypersec.io"
+  - "[*.]devex.hypersec.io"
+browser_org_third_party_cookies_allowed:
+  - "[*.]hyperi.io"
+  - "[*.]devex.hyperi.io"
+  - "[*.]hypersec.io"
+  - "[*.]devex.hypersec.io"
+browser_org_brave_shields_disabled:
+  - "[*.]hyperi.io"
+  - "[*.]devex.hyperi.io"
+  - "[*.]hypersec.io"
+  - "[*.]devex.hypersec.io"

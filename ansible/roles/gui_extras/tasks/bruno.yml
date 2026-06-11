@@ -1,0 +1,15 @@
+---
+# Bruno — Git-native, local-first API client
+# Upstream: https://www.usebruno.com
+
+- name: Install Bruno (Ubuntu — via snap; upstream apt repo deprecated)
+  community.general.snap:
+    name: bruno
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install Bruno (Fedora via flatpak)
+  ansible.builtin.command: flatpak install -y flathub com.usebruno.Bruno
+  register: bruno_flatpak
+  changed_when: "'already installed' not in bruno_flatpak.stdout | default('')"
+  when: ansible_facts['distribution'] == 'Fedora'

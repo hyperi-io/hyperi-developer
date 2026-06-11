@@ -1,0 +1,43 @@
+---
+# Verification - Core (internal tier) tools
+
+- name: Verify JFrog CLI (Linux)
+  ansible.builtin.command: jf --version
+  register: verify_jfrog
+  changed_when: false
+  failed_when: verify_jfrog.rc != 0
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Verify JFrog CLI (macOS)
+  ansible.builtin.command: jf --version
+  environment: "{{ homebrew_env }}"
+  register: verify_jfrog
+  changed_when: false
+  failed_when: verify_jfrog.rc != 0
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Verify Linear CLI (Linux)
+  ansible.builtin.command: linear --version
+  register: verify_linear
+  changed_when: false
+  failed_when: verify_linear.rc != 0
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - install_linear | default(true)
+
+- name: Verify Linear CLI (macOS)
+  ansible.builtin.command: linear --version
+  environment: "{{ homebrew_env }}"
+  register: verify_linear
+  changed_when: false
+  failed_when: verify_linear.rc != 0
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - install_linear | default(true)
+
+- name: Display core tier tools verification
+  ansible.builtin.debug:
+    msg: |
+      Core tier tools verified:
+      - JFrog CLI: {{ verify_jfrog.stdout | default('installed') }}
+      - Linear CLI: {{ verify_linear.stdout | default('skipped/installed') }}

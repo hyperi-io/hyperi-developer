@@ -1,0 +1,194 @@
+---
+# Kubernetes tools installation (kubectl, k9s, kubectx/kubens, Minikube, ArgoCD, dive)
+# Note: Freelens GUI moved to the `gui_extras` role.
+
+# ============================================================================
+# KUBECTL - Dynamic version detection
+# ============================================================================
+
+- name: Detect latest stable Kubernetes version
+  ansible.builtin.uri:
+    url: https://dl.k8s.io/release/stable.txt
+    return_content: true
+  register: k8s_stable_version
+  delegate_to: localhost
+  become: false
+
+- name: Extract Kubernetes minor version
+  ansible.builtin.set_fact:
+    k8s_version: "{{ k8s_stable_version.content | trim | regex_replace('^v([0-9]+\\.[0-9]+).*', '\\1') }}"
+
+- name: Display detected Kubernetes version
+  ansible.builtin.debug:
+    msg: "Using Kubernetes {{ k8s_version }}"
+
+# Fedora
+- name: Add Kubernetes repository (Fedora)
+  ansible.builtin.yum_repository:
+    name: kubernetes
+    description: Kubernetes
+    baseurl: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/"
+    enabled: true
+    gpgcheck: true
+    gpgkey: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/repodata/repomd.xml.key"
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install kubectl (Fedora)
+  ansible.builtin.dnf:
+    name: kubectl
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# Ubuntu
+- name: Add Kubernetes GPG key (Ubuntu)
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/Release.key"
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+    mode: '0644'
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Add Kubernetes repository (Ubuntu)
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/ /"
+    filename: kubernetes
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install kubectl (Ubuntu)
+  ansible.builtin.apt:
+    name: kubectl
+    state: present
+    update_cache: true
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+
+# ============================================================================
+# LINUX - Binary downloads for k9s, kubectx/kubens, Minikube, ArgoCD, dive
+# ============================================================================
+
+- name: Install Kubernetes CLI tools via binary download (Linux)
+  block:
+    # k9s
+    - name: Get latest k9s version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/derailed/k9s/releases/latest
+        return_content: true
+      register: k9s_latest
+
+    - name: Download and extract k9s
+      ansible.builtin.unarchive:
+        src: "https://github.com/derailed/k9s/releases/download/{{ k9s_latest.json.tag_name }}/k9s_Linux_amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: k9s
+        mode: '0755'
+
+    # kubectx and kubens
+    - name: Get latest kubectx version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/ahmetb/kubectx/releases/latest
+        return_content: true
+      register: kubectx_latest
+
+    - name: Download kubectx
+      ansible.builtin.get_url:
+        url: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_latest.json.tag_name }}/kubectx"
+        dest: /usr/local/bin/kubectx
+        mode: '0755'
+
+    - name: Download kubens
+      ansible.builtin.get_url:
+        url: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_latest.json.tag_name }}/kubens"
+        dest: /usr/local/bin/kubens
+        mode: '0755'
+
+    # Minikube
+    - name: Download Minikube
+      ansible.builtin.get_url:
+        url: https://github.com/kubernetes/minikube/releases/latest/download/minikube-linux-amd64
+        dest: /tmp/minikube-linux-amd64
+        mode: '0755'
+
+    - name: Install Minikube
+      ansible.builtin.copy:
+        src: /tmp/minikube-linux-amd64
+        dest: /usr/local/bin/minikube
+        mode: '0755'
+        remote_src: true
+
+    - name: Remove Minikube installer
+      ansible.builtin.file:
+        path: /tmp/minikube-linux-amd64
+        state: absent
+
+    # ArgoCD CLI
+    - name: Get latest ArgoCD version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/argoproj/argo-cd/releases/latest
+        return_content: true
+      register: argocd_latest
+
+    - name: Download ArgoCD CLI
+      ansible.builtin.get_url:
+        url: "https://github.com/argoproj/argo-cd/releases/download/{{ argocd_latest.json.tag_name }}/argocd-linux-amd64"
+        dest: /usr/local/bin/argocd
+        mode: '0755'
+
+    # dive
+    - name: Get latest dive version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/wagoodman/dive/releases/latest
+        return_content: true
+      register: dive_latest
+
+    - name: Download and extract dive
+      ansible.builtin.unarchive:
+        src: "https://github.com/wagoodman/dive/releases/download/{{ dive_latest.json.tag_name }}/dive_{{ dive_latest.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: dive
+        mode: '0755'
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# Freelens (flatpak GUI) moved to the `gui_extras` role.
+
+# ============================================================================
+# macOS - Install via Homebrew
+# ============================================================================
+
+- name: Install Kubernetes tools via Homebrew (macOS)
+  block:
+    - name: Install kubectl
+      community.general.homebrew:
+        name: kubernetes-cli
+        state: present
+
+    - name: Install k9s
+      community.general.homebrew:
+        name: k9s
+        state: present
+
+    - name: Install kubectx
+      community.general.homebrew:
+        name: kubectx
+        state: present
+
+    - name: Install minikube
+      community.general.homebrew:
+        name: minikube
+        state: present
+
+    - name: Install ArgoCD CLI
+      community.general.homebrew:
+        name: argocd
+        state: present
+
+    - name: Install dive
+      community.general.homebrew:
+        name: dive
+        state: present
+
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'

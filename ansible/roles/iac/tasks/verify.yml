@@ -1,0 +1,36 @@
+---
+# Verify iac-tier tooling (kubectl, Helm, Terraform).
+# Moved from developer/tasks/verify.yml — these tools now live in the iac role,
+# so the verify must be scoped to runs that include the iac profile.
+
+- name: Verify kubectl
+  ansible.builtin.command: kubectl version --client
+  register: verify_kubectl
+  environment:
+    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
+  changed_when: false
+  failed_when: verify_kubectl.rc != 0
+
+- name: Verify Helm
+  ansible.builtin.command: helm version --short
+  register: verify_helm
+  environment:
+    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
+  changed_when: false
+  failed_when: verify_helm.rc != 0
+
+- name: Verify Terraform
+  ansible.builtin.command: terraform version
+  register: verify_terraform
+  environment:
+    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
+  changed_when: false
+  failed_when: verify_terraform.rc != 0
+
+- name: Display iac tools verification
+  ansible.builtin.debug:
+    msg: |
+      ✅ IaC Tools Verified:
+      - kubectl: {{ verify_kubectl.stdout | regex_search('v[0-9.]+') }}
+      - Helm: {{ verify_helm.stdout }}
+      - Terraform: {{ verify_terraform.stdout_lines[0] }}

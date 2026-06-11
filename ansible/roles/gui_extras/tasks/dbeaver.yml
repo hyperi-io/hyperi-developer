@@ -1,0 +1,29 @@
+---
+# DBeaver Community — universal database client
+
+- name: Install DBeaver Community (Ubuntu)
+  block:
+    - name: Add DBeaver GPG key
+      ansible.builtin.get_url:
+        url: https://dbeaver.io/debs/dbeaver.gpg.key
+        dest: /usr/share/keyrings/dbeaver-archive-keyring.asc
+        mode: '0644'
+
+    - name: Add DBeaver APT repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/dbeaver-archive-keyring.asc] https://dbeaver.io/debs/dbeaver-ce /"
+        filename: dbeaver
+        state: present
+        update_cache: true
+
+    - name: Install DBeaver CE
+      ansible.builtin.apt:
+        name: dbeaver-ce
+        state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install DBeaver (Fedora via flatpak)
+  ansible.builtin.command: flatpak install -y flathub io.dbeaver.DBeaverCommunity
+  register: dbeaver_flatpak
+  changed_when: "'already installed' not in dbeaver_flatpak.stdout | default('')"
+  when: ansible_facts['distribution'] == 'Fedora'

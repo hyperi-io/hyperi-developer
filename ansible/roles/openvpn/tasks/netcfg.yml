@@ -1,0 +1,19 @@
+---
+# openvpn3-service-netcfg must be told to use systemd-resolved, or every
+# session silently drops pushed DNS with "No DNS resolver configured".
+# DRAGONFLY root cause: Exec line in
+# /usr/share/dbus-1/system-services/net.openvpn.v3.netcfg.service has no
+# --systemd-resolved flag, so netcfg starts with no DNS backend at all.
+# Fix is persistent: writes /var/lib/openvpn3/netcfg.json.
+
+- name: Configure openvpn3 netcfg to use systemd-resolved
+  ansible.builtin.command: openvpn3-admin netcfg-service --config-set systemd-resolved yes
+  register: netcfg_set
+  changed_when: "'already' not in netcfg_set.stdout | default('')"
+  become: true
+
+- name: Restart openvpn3-service-netcfg to pick up config
+  ansible.builtin.command: pkill -f openvpn3-service-netcfg
+  failed_when: false   # netcfg is D-Bus-activated — OK if not running
+  changed_when: true
+  become: true

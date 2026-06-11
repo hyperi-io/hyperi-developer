@@ -14,7 +14,7 @@
   become: true
   roles:
     - ../../roles/developer
-    - ../../roles/developer_core
+    - ../../roles/core
     - ../../roles/vm_optimizer
     - ../../roles/rdp
     - ../../roles/system_cleanup
@@ -24,7 +24,7 @@
   become: true
   roles:
     - ../../roles/developer
-    - ../../roles/developer_core
+    - ../../roles/core
     - ../../roles/vm_optimizer
     - ../../roles/rdp
     - ../../roles/system_cleanup

@@ -1,0 +1,15 @@
+---
+# Infrastructure-as-code + Kubernetes tooling
+
+- name: Install HashiCorp tooling (Terraform, Vault, Helm)
+  ansible.builtin.include_tasks:
+    file: hashicorp.yml
+
+- name: Install Kubernetes tooling
+  ansible.builtin.include_tasks:
+    file: k8s.yml
+
+- name: Verify IaC tooling
+  ansible.builtin.include_tasks:
+    file: verify.yml
+  tags: ['verify']

@@ -1,0 +1,11 @@
+---
+# Freelens — Kubernetes cluster GUI (flatpak, Linux only)
+
+- name: Install Freelens (system-wide)
+  community.general.flatpak:
+    name: app.freelens.Freelens
+    state: present
+    method: system
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)

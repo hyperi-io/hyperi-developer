@@ -1,0 +1,21 @@
+---
+# OpenVPN 3 legacy VPN stack (transitional — removal ~2026-06)
+
+- name: Install OpenVPN 3 CLI + config
+  ansible.builtin.include_tasks:
+    file: openvpn.yml
+
+- name: Configure openvpn3 netcfg for systemd-resolved (DNS fix)
+  ansible.builtin.include_tasks:
+    file: netcfg.yml
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Install openvpn3-indicator GTK tray (Ubuntu)
+  ansible.builtin.include_tasks:
+    file: indicator.yml
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Verify OpenVPN 3 installation
+  ansible.builtin.include_tasks:
+    file: verify.yml
+  tags: ['verify']

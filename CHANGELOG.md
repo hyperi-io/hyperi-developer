@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Role Structure Refactor
+
+### Added
+- Two-tier base split: `developer` (OSS-safe) and `core` (Hyperi internal, implies `developer`).
+- Profile-based installation via `./install.sh --profile`: `rust`, `iac`, `gui_extras`, `openvpn` add-on profiles, plus `--profile` validation in `install.sh`.
+- Opt-out variables centralised in `ansible/inventories/localhost/group_vars/all.yml`
+  (`install_bitwarden`, `install_onlyoffice`, `install_brave`, `install_slack`, `install_linear`).
+- New tools in the `developer` base: `wl-clipboard`, `kcat`.
+- New `gui_extras` profile: Freelens, Bruno, Podman Desktop, DBeaver Community, lazygit.
+- WireGuard as the default Hyperi VPN (now in `core`).
+- Per-tool rationale document at `docs/TOOLS.md`.
+- Bats tests for `install.sh --profile` validation (`tests/bats/install_profile.bats`).
+- URL/pin audit script (`tests/audit/urls_and_pins.py`).
+- OSS-safe post-install assertion script (`tests/assertions/oss_safe.sh`).
+
+### Changed
+- `developer_core` role dissolved — contents redistributed into `developer`, `core`, `rust`, `iac`, `openvpn`.
+- `playbooks/main.yml` restructured around the new tiered role layout.
+- Default install (`./install.sh` with no args) now runs `--profile developer` — a behaviour change for users expecting "install everything".
+
+### Deprecated
+- `--core` flag → use `--profile core,rust,iac`. Alias emits a deprecation warning; removed in next release.
+- `--all` flag → use `--profile core,all`. Alias emits a deprecation warning; removed in next release.
+
+### Removed
+- NetBird CLI (removed in earlier PR; reaffirmed here — no longer part of `core`).
+- `developer_core` role directory.
+- Mailspring desktop email client (no longer used).
+
 ## [2.23.14](https://github.com/hyperi-io/dfe-developer/compare/v2.23.13...v2.23.14) (2026-02-20)
 
 

@@ -1,0 +1,227 @@
+---
+# Browser Privacy Policies for Chrome and Brave
+# Applies enterprise policies to disable telemetry and enhance privacy
+# without breaking website functionality.
+#
+# Chrome policies: /etc/opt/chrome/policies/managed/
+# Brave policies: /etc/brave/policies/managed/
+#
+# Both browsers use the same Chromium policy format.
+#
+# DESIGN PHILOSOPHY:
+# - Chrome = "Testing browser" - minimal restrictions for web UI testing
+# - Brave = "Daily driver" - privacy-focused with telemetry disabled
+#
+# Key features:
+# - Australian English (en-AU) for UI and spell check
+# - Chrome: No cookie/privacy restrictions (full OAuth/SSO compatibility)
+# - Brave: Privacy protections enabled, shields disabled for internal sites
+
+# ============================================================================
+# CHROME MANAGED POLICIES (Testing Browser - Minimal Restrictions)
+# ============================================================================
+
+- name: Create Chrome managed policies directory
+  ansible.builtin.file:
+    path: /etc/opt/chrome/policies/managed
+    state: directory
+    mode: '0755'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Deploy Chrome policy (testing browser - minimal restrictions)
+  ansible.builtin.copy:
+    dest: /etc/opt/chrome/policies/managed/dfe.json
+    mode: '0644'
+    content: |
+      {
+        "_comment": "DFE Chrome Policy - Testing Browser (minimal restrictions)",
+        "_philosophy": "Chrome is our web UI testing browser - no privacy restrictions that could break OAuth/SSO/cookies",
+
+        "_section_locale": "=== LOCALE: Australian English ===",
+        "ApplicationLocaleValue": "en-AU",
+        "SpellcheckLanguage": ["en-AU"],
+        "SpellcheckEnabled": true,
+        "SpellCheckServiceEnabled": false,
+
+        "_section_telemetry": "=== TELEMETRY: Disabled (doesn't break functionality) ===",
+        "MetricsReportingEnabled": false,
+        "UrlKeyedAnonymizedDataCollectionEnabled": false,
+        "CloudReportingEnabled": false,
+
+        "_section_sync": "=== SYNC: Allowed for convenience ===",
+        "SyncDisabled": false,
+        "BrowserSignin": 1,
+
+        "_section_suggestions": "=== SUGGESTIONS: Enabled for developer convenience ===",
+        "SearchSuggestEnabled": true,
+        "NetworkPredictionOptions": 0,
+        "AlternateErrorPagesEnabled": true,
+
+        "_section_safebrowsing": "=== SAFE BROWSING: Standard (won't block localhost) ===",
+        "SafeBrowsingProtectionLevel": 1,
+        "SafeBrowsingExtendedReportingEnabled": false,
+
+        "_section_privacy_sandbox": "=== PRIVACY SANDBOX: Disabled (no ad tracking) ===",
+        "PrivacySandboxPromptEnabled": false,
+        "PrivacySandboxAdTopicsEnabled": false,
+        "PrivacySandboxSiteEnabledAdsEnabled": false,
+        "PrivacySandboxAdMeasurementEnabled": false,
+
+        "_section_misc": "=== MISC: Disable bloat features ===",
+        "ParcelTrackingEnabled": false,
+        "ShoppingListEnabled": false,
+        "TranslateEnabled": true,
+
+        "_section_permissions": "=== PERMISSIONS: Ask by default ===",
+        "DefaultGeolocationSetting": 3,
+        "DefaultNotificationsSetting": 3,
+
+        "_section_cookies": "=== COOKIES: No restrictions (full compatibility) ===",
+        "BlockThirdPartyCookies": false,
+        "SitePerProcess": true
+      }
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# ============================================================================
+# BRAVE MANAGED POLICIES (Daily Driver - Privacy Focused)
+# ============================================================================
+
+- name: Create Brave managed policies directory
+  ansible.builtin.file:
+    path: /etc/brave/policies/managed
+    state: directory
+    mode: '0755'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Deploy Brave privacy policy (daily driver - privacy focused)
+  ansible.builtin.copy:
+    dest: /etc/brave/policies/managed/dfe.json
+    mode: '0644'
+    content: |
+      {
+        "_comment": "DFE Brave Policy - Daily Driver (privacy focused)",
+        "_philosophy": "Brave is our privacy browser - block tracking, allow internal sites",
+
+        "_section_locale": "=== LOCALE: Australian English ===",
+        "ApplicationLocaleValue": "en-AU",
+        "SpellcheckLanguage": ["en-AU"],
+        "SpellcheckEnabled": true,
+        "SpellCheckServiceEnabled": false,
+
+        "_section_telemetry": "=== TELEMETRY: Disabled ===",
+        "MetricsReportingEnabled": false,
+        "UrlKeyedAnonymizedDataCollectionEnabled": false,
+        "CloudReportingEnabled": false,
+        "WebRtcEventLogCollectionAllowed": false,
+
+        "_section_sync": "=== SYNC: Brave Sync allowed (privacy-respecting) ===",
+        "SyncDisabled": false,
+        "BrowserSignin": 1,
+
+        "_section_suggestions": "=== SUGGESTIONS: Enabled (Brave doesn't send to Google) ===",
+        "SearchSuggestEnabled": true,
+        "NetworkPredictionOptions": 2,
+        "AlternateErrorPagesEnabled": false,
+
+        "_section_safebrowsing": "=== SAFE BROWSING: Standard (local lists) ===",
+        "SafeBrowsingProtectionLevel": 1,
+        "SafeBrowsingExtendedReportingEnabled": false,
+        "SafeBrowsingSurveysEnabled": false,
+        "SafeBrowsingDeepScanningEnabled": false,
+
+        "_section_privacy_sandbox": "=== PRIVACY SANDBOX: Disabled (no ad tracking) ===",
+        "PrivacySandboxPromptEnabled": false,
+        "PrivacySandboxAdTopicsEnabled": false,
+        "PrivacySandboxSiteEnabledAdsEnabled": false,
+        "PrivacySandboxAdMeasurementEnabled": false,
+        "RelatedWebsiteSetsEnabled": false,
+
+        "_section_misc": "=== MISC: Disable bloat features ===",
+        "PasswordLeakDetectionEnabled": false,
+        "ParcelTrackingEnabled": false,
+        "ShoppingListEnabled": false,
+        "BackgroundModeEnabled": false,
+        "TranslateEnabled": true,
+
+        "_section_permissions": "=== PERMISSIONS: Ask by default ===",
+        "DefaultGeolocationSetting": 3,
+        "DefaultNotificationsSetting": 2,
+
+        "_section_cookies": "=== COOKIES: Block 3rd party, allow private + org-approved ===",
+        "BlockThirdPartyCookies": true,
+        "SitePerProcess": true,
+        "CookiesAllowedForUrls": {{
+          (browser_org_cookies_allowed | default([])) + [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16"
+          ] | to_json
+        }},
+        "ThirdPartyCookiesAllowedForUrls": {{
+          (browser_org_third_party_cookies_allowed | default([])) + [
+            "[*.]google.com",
+            "[*.]googleapis.com",
+            "[*.]microsoftonline.com",
+            "[*.]microsoft.com",
+            "[*.]github.com"
+          ] | to_json
+        }},
+
+        "_section_brave_specific": "=== BRAVE: Disable monetization features ===",
+        "BraveRewardsDisabled": true,
+        "BraveWalletDisabled": true,
+        "BraveVPNDisabled": true,
+        "BraveSyncUrl": "",
+
+        "_section_brave_shields": "=== BRAVE SHIELDS: Disabled for private + org-approved ===",
+        "BraveShieldsDisabledForUrls": {{
+          (browser_org_brave_shields_disabled | default([])) + [
+            "10.*",
+            "172.16.*", "172.17.*", "172.18.*", "172.19.*",
+            "172.20.*", "172.21.*", "172.22.*", "172.23.*",
+            "172.24.*", "172.25.*", "172.26.*", "172.27.*",
+            "172.28.*", "172.29.*", "172.30.*", "172.31.*",
+            "192.168.*"
+          ] | to_json
+        }}
+      }
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# ============================================================================
+# macOS POLICIES (via defaults command)
+# ============================================================================
+
+# macOS Chrome policies via defaults (testing browser - minimal restrictions)
+- name: Set Chrome policies (macOS - testing browser)
+  ansible.builtin.command:
+    cmd: defaults write com.google.Chrome {{ item.key }} -{{ item.type }} {{ item.value }}
+  loop:
+    - { key: "ApplicationLocaleValue", type: "string", value: "en-AU" }
+    - { key: "MetricsReportingEnabled", type: "bool", value: "false" }
+    - { key: "SyncDisabled", type: "bool", value: "false" }
+    - { key: "BrowserSignin", type: "int", value: "1" }
+    - { key: "SearchSuggestEnabled", type: "bool", value: "true" }
+    - { key: "SafeBrowsingProtectionLevel", type: "int", value: "1" }
+    - { key: "BlockThirdPartyCookies", type: "bool", value: "false" }
+  become: false
+  changed_when: true
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false
+
+# macOS Brave policies via defaults (daily driver - privacy focused)
+- name: Set Brave policies (macOS - privacy focused)
+  ansible.builtin.command:
+    cmd: defaults write com.brave.Browser {{ item.key }} -{{ item.type }} {{ item.value }}
+  loop:
+    - { key: "ApplicationLocaleValue", type: "string", value: "en-AU" }
+    - { key: "MetricsReportingEnabled", type: "bool", value: "false" }
+    - { key: "SyncDisabled", type: "bool", value: "false" }
+    - { key: "SearchSuggestEnabled", type: "bool", value: "true" }
+    - { key: "SafeBrowsingProtectionLevel", type: "int", value: "1" }
+    - { key: "BlockThirdPartyCookies", type: "bool", value: "true" }
+    - { key: "BraveRewardsDisabled", type: "bool", value: "true" }
+    - { key: "BraveWalletDisabled", type: "bool", value: "true" }
+  become: false
+  changed_when: true
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false
