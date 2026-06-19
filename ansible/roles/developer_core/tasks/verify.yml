@@ -100,21 +100,6 @@
   failed_when: verify_openvpn.rc != 0
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Verify NetBird CLI (Linux)
-  ansible.builtin.command: netbird version
-  register: verify_netbird
-  changed_when: false
-  failed_when: verify_netbird.rc != 0
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Verify NetBird CLI (macOS)
-  ansible.builtin.command: netbird version
-  environment: "{{ homebrew_env }}"
-  register: verify_netbird
-  changed_when: false
-  failed_when: verify_netbird.rc != 0
-  when: ansible_facts['distribution'] == 'MacOSX'
-
 - name: Verify Claude Code CLI (Linux)
   ansible.builtin.command: "{{ user_home }}/.local/bin/claude --version"
   register: verify_claude
@@ -226,7 +211,6 @@
       - semantic-release: {{ verify_semrel.stdout | default('installed') }}
       - Linear CLI: {{ verify_linear.stdout | default('installed') }}
       - OpenVPN: {{ verify_openvpn.stdout | default('skipped (install failed - manual install required)') }}
-      - NetBird CLI: {{ verify_netbird.stdout | default('installed') }}
       - Claude Code CLI: {{ verify_claude.stdout | default('installed') }}
       - Gitleaks: {{ verify_gitleaks.stdout | default('installed') }}
       - act: {{ verify_act.stdout | default('installed') }}

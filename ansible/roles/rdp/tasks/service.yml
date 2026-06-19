@@ -122,16 +122,10 @@
   no_log: true  # Hide password from logs
 
 # ============================================================================
-# RESTART SERVICE TO APPLY CONFIGURATION
+# NOTE: DO NOT auto-restart gnome-remote-desktop.service
+# Restarting kills active RDP sessions and crashes GNOME.
+# Config changes take effect after reboot.
 # ============================================================================
-
-- name: Restart RDP service to apply configuration
-  ansible.builtin.systemd:
-    name: gnome-remote-desktop.service
-    state: restarted
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
 
 # ============================================================================
 # STATUS & USER INSTRUCTIONS

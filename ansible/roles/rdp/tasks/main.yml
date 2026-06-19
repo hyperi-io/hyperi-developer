@@ -57,10 +57,20 @@
     file: vaapi.yml
   tags: ['vaapi']
 
-- name: Configure display refresh rate
+- name: Pin FreeRDP libraries
   ansible.builtin.include_tasks:
-    file: display.yml
-  tags: ['display']
+    file: freerdp_pin.yml
+  tags: ['freerdp_pin']
+
+- name: Configure PAM nice limits for GRD priority
+  ansible.builtin.include_tasks:
+    file: pam_nice.yml
+  tags: ['pam_nice']
+
+- name: Deploy patched GRD with max-framerate support
+  ansible.builtin.include_tasks:
+    file: grd_patched.yml
+  tags: ['grd_patched']
 
 - name: Verify RDP optimizations
   ansible.builtin.include_tasks:

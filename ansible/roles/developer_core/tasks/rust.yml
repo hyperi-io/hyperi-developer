@@ -222,3 +222,81 @@
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+- name: Install sccache (shared compilation cache)
+  ansible.builtin.command:
+    cmd: cargo install sccache --locked
+    creates: "{{ user_home }}/.cargo/bin/sccache"
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+- name: Install cargo-sweep (build artifact cleanup)
+  ansible.builtin.command:
+    cmd: cargo install cargo-sweep --locked
+    creates: "{{ user_home }}/.cargo/bin/cargo-sweep"
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+# ============================================================
+# mold linker — 5-10x faster linking for incremental builds
+# Native x86_64 builds only. Cross-compilation uses BFD.
+# ============================================================
+
+- name: Install mold linker (Ubuntu)
+  ansible.builtin.apt:
+    name: mold
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install mold linker (Fedora)
+  ansible.builtin.dnf:
+    name: mold
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install mold linker via Homebrew (macOS)
+  community.general.homebrew:
+    name: mold
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================
+# Global Cargo configuration
+# Sets sccache as rustc-wrapper, mold as linker, jobs = 8
+# Per-project .cargo/config.toml files override where needed.
+# ============================================================
+
+- name: Create global Cargo config (Linux)
+  ansible.builtin.blockinfile:
+    path: "{{ user_home }}/.cargo/config.toml"
+    create: true
+    owner: "{{ actual_user }}"
+    group: "{{ actual_user }}"
+    mode: '0644'
+    marker: "# {mark} MANAGED BY DFE-DEVELOPER — build optimisation"
+    block: |
+      [build]
+      jobs = 8
+      rustc-wrapper = "sccache"
+
+      [target.x86_64-unknown-linux-gnu]
+      linker = "clang"
+      rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Create global Cargo config (macOS)
+  ansible.builtin.blockinfile:
+    path: "{{ user_home }}/.cargo/config.toml"
+    create: true
+    mode: '0644'
+    marker: "# {mark} MANAGED BY DFE-DEVELOPER — build optimisation"
+    block: |
+      [build]
+      jobs = 8
+      rustc-wrapper = "sccache"
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'

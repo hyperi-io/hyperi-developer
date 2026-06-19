@@ -1,0 +1,13 @@
+---
+# Pin FreeRDP libraries to prevent apt upgrades from breaking RDP handover
+# ubuntu0.3 caused heap corruption in gnome-remote-desktop-handover
+# See ~/RDP-FREERDP-FIX.md for details
+
+- name: Deploy FreeRDP apt pin (Ubuntu)
+  ansible.builtin.template:
+    src: ../files/pin-freerdp
+    dest: /etc/apt/preferences.d/pin-freerdp
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome

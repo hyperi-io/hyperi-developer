@@ -61,11 +61,6 @@
     file: openvpn.yml
   tags: ['openvpn', 'vpn']
 
-- name: Install NetBird CLI
-  ansible.builtin.include_tasks:
-    file: netbird.yml
-  tags: ['netbird', 'remote']
-
 - name: Install Claude Code CLI
   ansible.builtin.include_tasks:
     file: claude.yml
