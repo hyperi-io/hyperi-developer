@@ -6,7 +6,12 @@
   ansible.builtin.file:
     path: /var/lib/gnome-remote-desktop
     state: directory
-    mode: '0755'
+    owner: gnome-remote-desktop
+    group: gnome-remote-desktop
+    # 0700 matches what the gnome-remote-desktop daemon enforces on restart
+    # (avoids a perpetual "changed" tug-of-war) and keeps the TLS private key
+    # in this directory from being world-traversable.
+    mode: '0700'
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome

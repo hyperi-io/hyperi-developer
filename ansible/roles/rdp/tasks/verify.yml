@@ -12,6 +12,35 @@
   register: verify_grd_service
   failed_when: verify_grd_service.status.UnitFileState != 'enabled'
 
+# Functional check: confirm grdctl actually enabled the RDP backend.
+# The config tasks in service.yml use failed_when:false, so without this an
+# upstream grdctl syntax change or silent error would report success while
+# configuring nothing. This assertion is the authoritative gate.
+- name: Query RDP runtime configuration via grdctl
+  ansible.builtin.command:
+    cmd: grdctl --system status
+  register: verify_grd_status
+  changed_when: false
+  failed_when: false
+
+- name: Assert RDP backend is enabled
+  ansible.builtin.assert:
+    that:
+      - "'Status: enabled' in verify_grd_status.stdout"
+    fail_msg: >-
+      grdctl reports the RDP backend is NOT enabled. grdctl --system status output:
+      {{ verify_grd_status.stdout | default('(no output)') }}
+    success_msg: "RDP backend enabled via grdctl"
+
+# Informative (non-fatal): the system daemon binds 3389 once active. A reboot
+# may be required before the login greeter brings it up on some setups.
+- name: Check whether RDP port 3389 is listening
+  ansible.builtin.command:
+    cmd: ss -ltnH sport = :3389
+  register: verify_rdp_port
+  changed_when: false
+  failed_when: false
+
 # Check certificates exist
 - name: Verify RDP TLS certificate exists
   ansible.builtin.stat:
@@ -62,6 +91,8 @@
     msg: |
       RDP Optimizer Configured (reboot required):
       - gnome-remote-desktop: {{ verify_grd_service.status.UnitFileState }}
+      - RDP backend (grdctl): {{ 'ENABLED' if 'Status: enabled' in verify_grd_status.stdout else 'NOT ENABLED' }}
+      - Port 3389 listening: {{ 'YES' if verify_rdp_port.stdout | default('') | trim | length > 0 else 'not yet (may need reboot)' }}
       - TLS Cert: {{ verify_rdp_cert.stat.mode }}
       - TLS Key: {{ verify_rdp_key.stat.mode }}
       - TCP config: /etc/sysctl.d/99-rdp-optimization.conf

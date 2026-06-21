@@ -1,9 +1,18 @@
 ---
 # Polkit rules for RDP sessions
-# Allow wheel users to manage Flatpak without repeated auth prompts over RDP
+# Allow admin users to manage Flatpak without repeated auth prompts over RDP
 # See docs/POLKIT-RDP.md for details
+#
+# The administrator group differs per distro: Fedora uses "wheel", Ubuntu uses
+# "sudo". A "wheel" group does not exist on Ubuntu, so the rule must target the
+# correct group or it matches nobody.
 
-- name: Allow wheel users to manage Flatpak on remote sessions
+- name: Determine administrator group for polkit rule
+  ansible.builtin.set_fact:
+    rdp_admin_group: "{{ 'sudo' if ansible_facts['distribution'] == 'Ubuntu' else 'wheel' }}"
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Allow admin users to manage Flatpak on remote sessions
   ansible.builtin.copy:
     dest: /etc/polkit-1/rules.d/49-flatpak-wheel.rules
     owner: root
@@ -17,7 +26,7 @@
                action.id == "org.freedesktop.Flatpak.runtime-uninstall" ||
                action.id == "org.freedesktop.Flatpak.modify-repo") &&
               subject.active == true &&
-              subject.isInGroup("wheel")) {
+              subject.isInGroup("{{ rdp_admin_group }}")) {
                   return polkit.Result.YES;
           }
           return polkit.Result.NOT_HANDLED;
