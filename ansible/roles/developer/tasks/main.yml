@@ -193,15 +193,22 @@
   tags: ['browser_policies', 'chrome', 'brave']
   when: has_gnome | default(false)
 
+# The GNOME desktop (extensions, dock, theming) is opt-in: it must only be
+# configured when winlike or maclike is EXPLICITLY requested. The `never`
+# tag alone cannot enforce this here, because the role-level [developer,
+# base] tags are inherited by every task and override `never` whenever the
+# base install runs. So gate on ansible_run_tags (what the user actually
+# asked for) instead. Also do not use `apply: tags:` - with include_tasks
+# it unions the tags onto every inner task and breaks winlike/maclike
+# discrimination.
 - name: Apply GNOME configuration (winlike or maclike)
   ansible.builtin.include_tasks:
     file: gnome.yml
-    apply:
-      tags: ['winlike', 'maclike', 'never']
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
     - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
+    - "'winlike' in ansible_run_tags or 'maclike' in ansible_run_tags"
 
 - name: Apply regional settings (locale, formats, spell-check)
   ansible.builtin.include_tasks:
