@@ -185,14 +185,6 @@
   tags: ['brave']
   when: has_gnome | default(false)
 
-- name: Apply browser privacy policies (Chrome + Brave)
-  ansible.builtin.include_tasks:
-    file: browser_policies.yml
-    apply:
-      tags: ['browser_policies']
-  tags: ['browser_policies', 'chrome', 'brave']
-  when: has_gnome | default(false)
-
 # The GNOME desktop (extensions, dock, theming) is opt-in: it must only be
 # configured when winlike or maclike is EXPLICITLY requested. The `never`
 # tag alone cannot enforce this here, because the role-level [developer,
