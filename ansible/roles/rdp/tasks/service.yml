@@ -24,10 +24,12 @@
   changed_when: false
 
 # ============================================================================
-# GRD PROCESS PRIORITY (reduce lag from software encoding)
+# GRD PROCESS PRIORITY (software-encode band-aid only)
 # ============================================================================
-# Software RFX encoding on virtio-gpu VMs is CPU-intensive. Boosting the GRD
-# process priority prevents it from being starved by other workloads.
+# Software RFX encoding is CPU-intensive, so a Nice boost stops GRD being
+# starved. This is ONLY needed on the software/none-encode path; when hardware
+# VA encode is available (rdp_hw_encode_expected) the boost is unnecessary, so
+# it is deployed only then and actively removed otherwise.
 
 - name: Create GRD system service drop-in directory
   ansible.builtin.file:
@@ -47,7 +49,7 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
 
-- name: Deploy GRD priority override (system service)
+- name: Deploy/remove GRD priority override (system service)
   ansible.builtin.copy:
     src: grd-priority.conf
     dest: /etc/systemd/system/gnome-remote-desktop.service.d/priority.conf
@@ -55,8 +57,18 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - not (rdp_hw_encode_expected | default(false))
 
-- name: Deploy GRD priority override (user handover service)
+- name: Remove GRD priority override when hardware encode is available (system)
+  ansible.builtin.file:
+    path: /etc/systemd/system/gnome-remote-desktop.service.d/priority.conf
+    state: absent
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - rdp_hw_encode_expected | default(false)
+
+- name: Deploy/remove GRD priority override (user handover service)
   ansible.builtin.copy:
     src: grd-priority.conf
     dest: /etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf
@@ -64,6 +76,16 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - not (rdp_hw_encode_expected | default(false))
+
+- name: Remove GRD priority override when hardware encode is available (user)
+  ansible.builtin.file:
+    path: /etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf
+    state: absent
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - rdp_hw_encode_expected | default(false)
 
 # ============================================================================
 # ENABLE GNOME REMOTE DESKTOP SERVICE

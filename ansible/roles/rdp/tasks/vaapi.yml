@@ -5,16 +5,43 @@
 # 2. Runtime: Deploy service that auto-enables when VA-API becomes available later
 
 # ============================================================================
-# INSTALL VA-API DRIVERS AND DETECTION TOOLS
+# INSTALL VA-API DRIVERS AND DETECTION TOOLS (vendor-aware)
 # ============================================================================
-# mesa-va-drivers provides the Gallium VA-API state tracker for virtio-gpu
-# Without it, VA-API init fails system-wide causing errors in apps (VS Code, etc.)
+# The correct VA driver depends on the GPU detected in gpu_groups.yml:
+#   intel  (physical) -> intel-media-va-driver (iHD); Iris Xe etc.
+#   amd    (physical) -> mesa-va-drivers (radeonsi/RADV)
+#   virtio (VM)       -> mesa-va-drivers (Gallium VirGL state tracker)
+#   nvidia (physical) -> nvidia-vaapi-driver (VDPAU->VA bridge)
+#   none              -> tools only; software (CPU) encode
+# Plus the GStreamer VA encoder plugin (vah264enc) that grd 50 needs for HW
+# encode, wherever a hardware encoder is expected.
 
-- name: Install mesa-va-drivers (Fedora)
+- name: Install VA-API stack (Ubuntu)
+  ansible.builtin.apt:
+    name: "{{ ({
+              'intel':  ['intel-media-va-driver-non-free', 'gstreamer1.0-plugins-bad', 'vainfo'],
+              'amd':    ['mesa-va-drivers', 'gstreamer1.0-plugins-bad', 'vainfo'],
+              'virtio': ['mesa-va-drivers', 'gstreamer1.0-plugins-bad', 'vainfo'],
+              'nvidia': ['nvidia-vaapi-driver', 'gstreamer1.0-plugins-bad', 'vainfo'],
+              'none':   ['vainfo'],
+            }[rdp_gpu_vendor | default('none')]) }}"
+    state: present
+    update_cache: true
+  register: rdp_vaapi_ubuntu_install
+  ignore_errors: true
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome
+
+- name: Install VA-API stack (Fedora)
   ansible.builtin.dnf:
-    name:
-      - mesa-va-drivers
-      - libva-utils
+    name: "{{ ({
+              'intel':  ['intel-media-driver', 'gstreamer1-plugins-bad-free', 'libva-utils'],
+              'amd':    ['mesa-va-drivers', 'gstreamer1-plugins-bad-free', 'libva-utils'],
+              'virtio': ['mesa-va-drivers', 'gstreamer1-plugins-bad-free', 'libva-utils'],
+              'nvidia': ['libva-utils', 'gstreamer1-plugins-bad-free'],
+              'none':   ['libva-utils'],
+            }[rdp_gpu_vendor | default('none')]) }}"
     state: present
   register: rdp_vaapi_fedora_install
   ignore_errors: true
@@ -22,21 +49,13 @@
     - ansible_facts['distribution'] == 'Fedora'
     - has_gnome
 
-- name: Install mesa-va-drivers (Ubuntu)
-  ansible.builtin.apt:
-    name:
-      - mesa-va-drivers
-      - vainfo
-    state: present
-  register: rdp_vaapi_ubuntu_install
-  ignore_errors: true
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - has_gnome
-
-- name: Warn if VA-API driver install failed (Ubuntu)
+- name: Warn if VA-API stack install failed (Ubuntu)
   ansible.builtin.debug:
-    msg: "VA-API driver install failed ({{ rdp_vaapi_ubuntu_install.msg | default('unknown') }}). CPU encoding fallback will be used."
+    msg: >-
+      VA-API stack install for GPU '{{ rdp_gpu_vendor | default('none') }}' failed
+      ({{ rdp_vaapi_ubuntu_install.msg | default('unknown') }}). Software (CPU)
+      encoding fallback will be used. For NVIDIA, ensure the proprietary driver
+      and nvidia-vaapi-driver are available.
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
     - has_gnome

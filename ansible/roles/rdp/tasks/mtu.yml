@@ -1,7 +1,8 @@
 ---
-# MTU settings to prevent packet fragmentation
+# MTU settings to prevent packet fragmentation.
+# VM guests only - not applied to physical machines.
 
-- name: Configure MTU settings for RDP
+- name: Configure MTU settings for RDP (VM guests only)
   ansible.builtin.copy:
     dest: /etc/sysctl.d/99-rdp-mtu.conf
     content: |
@@ -14,3 +15,13 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - ansible_virtualization_role == 'guest'
+
+- name: Remove RDP MTU sysctls on physical machines
+  ansible.builtin.file:
+    path: /etc/sysctl.d/99-rdp-mtu.conf
+    state: absent
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - ansible_virtualization_role != 'guest'

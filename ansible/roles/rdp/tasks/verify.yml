@@ -54,31 +54,41 @@
   register: verify_rdp_key
   failed_when: not verify_rdp_key.stat.exists
 
-# Config file validation (network settings apply after reboot)
-- name: Verify RDP TCP config file exists
+# Networking sysctls: expected ONLY on VM guests; physical hosts must not have them.
+- name: Stat RDP TCP sysctl drop-in
   ansible.builtin.stat:
     path: /etc/sysctl.d/99-rdp-optimization.conf
   register: verify_rdp_tcp_conf
-  failed_when: not verify_rdp_tcp_conf.stat.exists
 
-- name: Verify RDP MTU config file exists
+- name: Stat RDP MTU sysctl drop-in
   ansible.builtin.stat:
     path: /etc/sysctl.d/99-rdp-mtu.conf
   register: verify_rdp_mtu_conf
-  failed_when: not verify_rdp_mtu_conf.stat.exists
 
-- name: Verify GRD priority override exists
+- name: Assert RDP networking sysctls match host class (guest only)
+  ansible.builtin.assert:
+    that:
+      - (ansible_virtualization_role == 'guest') == (verify_rdp_tcp_conf.stat.exists | default(false))
+      - (ansible_virtualization_role == 'guest') == (verify_rdp_mtu_conf.stat.exists | default(false))
+    fail_msg: >-
+      RDP networking sysctls present/absent does not match host class
+      ({{ 'VM guest' if ansible_virtualization_role == 'guest' else 'physical' }}).
+    success_msg: >-
+      RDP networking sysctls correctly
+      {{ 'present (VM guest)' if ansible_virtualization_role == 'guest' else 'absent (physical)' }}
+
+# GRD priority drop-in: only on the software-encode/none path.
+- name: Stat GRD priority override
   ansible.builtin.stat:
     path: /etc/systemd/system/gnome-remote-desktop.service.d/priority.conf
   register: verify_grd_priority
-  failed_when: not verify_grd_priority.stat.exists
 
-- name: Verify mesa-va-drivers installed
-  ansible.builtin.command:
-    cmd: "{{ 'rpm -q mesa-va-drivers' if ansible_facts['distribution'] == 'Fedora' else 'dpkg -l mesa-va-drivers' }}"
-  register: verify_mesa_va
-  failed_when: false
+- name: Check VA-API H.264 encode availability
+  ansible.builtin.shell:
+    cmd: vainfo --display drm 2>/dev/null | grep -q "VAProfileH264.*VAEntrypointEncSlice"
+  register: verify_vaapi_h264
   changed_when: false
+  failed_when: false
 
 - name: Verify refresh rate script deployed
   ansible.builtin.stat:
@@ -86,18 +96,17 @@
   register: verify_refresh_rate
   failed_when: not verify_refresh_rate.stat.exists
 
-- name: Display RDP optimizer verification
+- name: Display RDP verification
   ansible.builtin.debug:
     msg: |
-      RDP Optimizer Configured (reboot required):
+      RDP configured (reboot may be required):
       - gnome-remote-desktop: {{ verify_grd_service.status.UnitFileState }}
       - RDP backend (grdctl): {{ 'ENABLED' if 'Status: enabled' in verify_grd_status.stdout else 'NOT ENABLED' }}
       - Port 3389 listening: {{ 'YES' if verify_rdp_port.stdout | default('') | trim | length > 0 else 'not yet (may need reboot)' }}
-      - TLS Cert: {{ verify_rdp_cert.stat.mode }}
-      - TLS Key: {{ verify_rdp_key.stat.mode }}
-      - TCP config: /etc/sysctl.d/99-rdp-optimization.conf
-      - MTU config: /etc/sysctl.d/99-rdp-mtu.conf
-      - GRD priority (Nice=-10): {{ 'CONFIGURED' if verify_grd_priority.stat.exists else 'MISSING' }}
-      - mesa-va-drivers: {{ 'INSTALLED' if verify_mesa_va.rc == 0 else 'NOT INSTALLED' }}
+      - TLS Cert: {{ verify_rdp_cert.stat.mode }}  Key: {{ verify_rdp_key.stat.mode }}
+      - Host class: {{ 'VM guest' if ansible_virtualization_role == 'guest' else 'physical' }}
+      - GPU vendor: {{ rdp_gpu_vendor | default('unknown') }} (hw-encode expected: {{ rdp_hw_encode_expected | default(false) }})
+      - VA-API H.264 encode: {{ 'AVAILABLE' if verify_vaapi_h264.rc == 0 else 'not available (software/CPU)' }}
+      - RDP net sysctls: {{ 'present (VM)' if verify_rdp_tcp_conf.stat.exists else 'absent (physical)' }}
+      - GRD Nice=-10 priority: {{ 'configured (software path)' if verify_grd_priority.stat.exists else 'not set (hw-encode or n/a)' }}
       - Refresh rate cap ({{ rdp_refresh_rate }}Hz): {{ 'CONFIGURED' if verify_refresh_rate.stat.exists else 'MISSING' }}
-      - Status: RDP with auto-resize will be active after reboot on port 3389
