@@ -227,6 +227,15 @@
       tags: ['shell']
   tags: ['shell']
 
+# One-command "update everything" tool + clickable GUI app (Ubuntu/macOS only)
+- name: Install hyperi-update command and GUI launcher
+  ansible.builtin.include_tasks:
+    file: update_command.yml
+    apply:
+      tags: ['update_command']
+  tags: ['update_command']
+  when: ansible_facts['distribution'] in ['Ubuntu', 'MacOSX']
+
 - name: Verify base tools installation
   ansible.builtin.include_tasks:
     file: verify.yml

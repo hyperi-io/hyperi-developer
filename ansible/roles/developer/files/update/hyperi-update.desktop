@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Hyperi Update
+GenericName=System Updater
+Comment=Update everything the hyperi-developer installer set up (APT, Snap, Flatpak, firmware, uv, rustup, Claude Code)
+Exec=xdg-terminal-exec hyperi-update
+Icon=hyperi-update
+Terminal=false
+Categories=System;
+Keywords=update;upgrade;system;apt;flatpak;snap;firmware;rustup;uv;
+StartupNotify=true

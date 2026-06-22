@@ -1,0 +1,87 @@
+---
+# One-command "update everything" tool + clickable GUI launcher.
+# Installed for Ubuntu and macOS only (Fedora is intentionally excluded).
+# Command: hyperi-update   (GUI: "Hyperi Update")
+
+# ============================================================================
+# UBUNTU
+# ============================================================================
+- name: Install hyperi-update command (Ubuntu)
+  ansible.builtin.copy:
+    src: update/hyperi-update-linux.sh
+    dest: /usr/local/bin/hyperi-update
+    mode: '0755'
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install hyperi-update app icon (Ubuntu)
+  ansible.builtin.copy:
+    src: update/hyperi-update.svg
+    dest: /usr/share/icons/hicolor/scalable/apps/hyperi-update.svg
+    mode: '0644'
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install hyperi-update desktop launcher (Ubuntu)
+  ansible.builtin.copy:
+    src: update/hyperi-update.desktop
+    dest: /usr/share/applications/hyperi-update.desktop
+    mode: '0644'
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Refresh icon cache (Ubuntu)
+  ansible.builtin.command: gtk-update-icon-cache -f -t /usr/share/icons/hicolor
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Refresh desktop database (Ubuntu)
+  ansible.builtin.command: update-desktop-database /usr/share/applications
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# ============================================================================
+# macOS
+# ============================================================================
+- name: Install hyperi-update command (macOS)
+  ansible.builtin.copy:
+    src: update/hyperi-update-macos.sh
+    dest: /usr/local/bin/hyperi-update
+    mode: '0755'
+  become: true
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Create hyperi-update icon directory (macOS)
+  ansible.builtin.file:
+    path: "{{ user_home }}/.local/share/hyperi-update"
+    state: directory
+    mode: '0755'
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install hyperi-update app icon (macOS)
+  ansible.builtin.copy:
+    src: update/AppIcon.icns
+    dest: "{{ user_home }}/.local/share/hyperi-update/AppIcon.icns"
+    mode: '0644'
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Build clickable "Hyperi Update" app (macOS)
+  ansible.builtin.command:
+    cmd: /usr/local/bin/hyperi-update --install
+  become: false
+  changed_when: true
+  failed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# STATUS
+# ============================================================================
+- name: Display hyperi-update install status
+  ansible.builtin.debug:
+    msg: >-
+      Installed 'hyperi-update' to /usr/local/bin.
+      {{ "GUI app 'Hyperi Update' available in the app grid."
+         if ansible_facts['distribution'] == 'Ubuntu'
+         else "GUI app 'Hyperi Update' created in /Applications." }}
+  when: ansible_facts['distribution'] in ['Ubuntu', 'MacOSX']
