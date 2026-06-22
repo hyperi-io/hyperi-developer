@@ -1,6 +1,6 @@
 ---
-# OnlyOffice and Mailspring installation (Linux only)
-# macOS users use native apps (Apple Mail, Pages/Numbers/Keynote)
+# OnlyOffice installation (Linux only)
+# macOS users use native apps (Pages/Numbers/Keynote)
 #
 # Strategy: Prefer apt/dnf packages (faster, native), only use Flatpak as fallback
 # - If apt/dnf package exists: use it (developer/tasks/onlyoffice.yml handles this)
@@ -52,31 +52,6 @@
     - application/vnd.ms-powerpoint
     - application/vnd.openxmlformats-officedocument.presentationml.presentation
     - application/vnd.oasis.opendocument.presentation
-  become: true
-  become_user: "{{ actual_user }}"
-  changed_when: true
-  failed_when: false
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome | default(false)
-
-# ============================================================================
-# MAILSPRING EMAIL CLIENT
-# ============================================================================
-
-- name: Install Mailspring via Flatpak (system-wide)
-  community.general.flatpak:
-    name: com.getmailspring.Mailspring
-    state: present
-    method: system
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome | default(false)
-
-# Set Mailspring as default email client
-- name: Set Mailspring as default email client
-  ansible.builtin.command:
-    cmd: xdg-mime default com.getmailspring.Mailspring.desktop x-scheme-handler/mailto
   become: true
   become_user: "{{ actual_user }}"
   changed_when: true

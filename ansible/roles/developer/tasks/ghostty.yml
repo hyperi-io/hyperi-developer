@@ -126,6 +126,14 @@
     mode: '0644'
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
+# Vendored Solarized themes - always refreshed (managed files, not user-edited)
+- name: Deploy Ghostty themes (Linux skel)
+  ansible.builtin.copy:
+    src: ghostty/themes/
+    dest: "{{ ghostty_skel_dir }}/themes/"
+    mode: '0644'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
 # Deploy to current user as well (Linux)
 - name: Create Ghostty config directory for actual user (Linux)
   ansible.builtin.file:
@@ -156,6 +164,26 @@
     force: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
+- name: Deploy Ghostty themes for actual user (Linux)
+  ansible.builtin.copy:
+    src: ghostty/themes/
+    dest: "{{ user_home }}/.config/ghostty/themes/"
+    mode: '0644'
+    owner: "{{ actual_user }}"
+    group: "{{ actual_user }}"
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# Heal existing configs: the base config ships with force:false to preserve user
+# edits, so older installs keep their (broken) builtin Solarized theme line. This
+# rewrites just that line to the vendored themes without touching anything else.
+- name: Fix stale Ghostty Solarized theme line in existing user config (Linux)
+  ansible.builtin.replace:
+    path: "{{ user_home }}/.config/ghostty/config"
+    regexp: '^theme\s*=.*Solarized.*$'
+    replace: 'theme = light:solarized-light,dark:solarized-dark'
+  failed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
 # ============================================================
 # macOS Configuration Deployment
 # ============================================================
@@ -179,6 +207,14 @@
   ansible.builtin.copy:
     src: ghostty/platform-macos.conf
     dest: "{{ ghostty_macos_dir }}/platform-macos.conf"
+    mode: '0644'
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Deploy Ghostty themes (macOS)
+  ansible.builtin.copy:
+    src: ghostty/themes/
+    dest: "{{ ghostty_macos_dir }}/themes/"
     mode: '0644'
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'

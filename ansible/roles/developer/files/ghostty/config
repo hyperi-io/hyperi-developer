@@ -24,8 +24,9 @@ font-feature = +dlig
 # ============================================================
 # Theme - Auto-switches with system light/dark mode
 # ============================================================
-# Solarized: Classic developer theme with warm/cool variants
-theme = light:Builtin Solarized Light,dark:Builtin Solarized Dark
+# Solarized: vendored theme files in ./themes/ (self-contained - no reliance on
+# Ghostty builtin themes or OS packages). Auto-switches light/dark with the OS.
+theme = light:solarized-light,dark:solarized-dark
 
 # ============================================================
 # Terminal Compatibility
@@ -41,6 +42,16 @@ window-width = 140
 window-padding-x = 8
 window-padding-y = 8
 window-save-state = always
+
+# ============================================================
+# Visual Effects - all platforms
+# ============================================================
+# Subtle transparency + blur (defined here, after the platform includes above,
+# so it applies on Linux and macOS alike). NOTE: blur needs a compositor that
+# supports it; over RDP transparency can cause artifacts - set background-opacity
+# = 1.0 in ~/.config/ghostty/local.conf if that bites you.
+background-opacity = 0.95
+background-blur-radius = 20
 
 # ============================================================
 # Scrollback

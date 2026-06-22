@@ -46,10 +46,10 @@
     file: slack.yml
   tags: ['slack']
 
-- name: Install OnlyOffice and Mailspring
+- name: Install OnlyOffice
   ansible.builtin.include_tasks:
     file: office.yml
-  tags: ['office', 'email']
+  tags: ['office']
 
 - name: Install Bitwarden
   ansible.builtin.include_tasks:
