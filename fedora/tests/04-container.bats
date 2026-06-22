@@ -53,7 +53,7 @@ setup() {
 }
 
 # Test that scripts fail gracefully when not root
-@test "install-dfe-developer.sh requires root privileges" {
+@test "install-hyperi-developer.sh requires root privileges" {
     skip "Scripts currently don't check for root - may add later"
 }
 
@@ -98,13 +98,13 @@ setup() {
 }
 
 # Integration test - dry run to check early failures
-@test "install-dfe-developer.sh dry-run in container" {
+@test "install-hyperi-developer.sh dry-run in container" {
     skip "Full installation test would take too long and requires sudo"
     # This would be the full test:
     # run $CONTAINER_CMD run --rm \
     #     -v "$(pwd):/scripts:ro" \
     #     --privileged \
     #     fedora:latest \
-    #     bash -c "cd /scripts && sudo ./install-dfe-developer.sh --dry-run"
+    #     bash -c "cd /scripts && sudo ./install-hyperi-developer.sh --dry-run"
     # [ "$status" -eq 0 ]
 }

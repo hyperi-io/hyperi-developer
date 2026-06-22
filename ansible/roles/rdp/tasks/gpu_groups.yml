@@ -28,7 +28,7 @@
     mode: "0644"
     content: |
       # Allow all processes GPU access without render/video group membership
-      # Managed by Ansible (dfe-developer rdp role)
+      # Managed by Ansible (hyperi-developer rdp role)
       SUBSYSTEM=="drm", MODE="0666"
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

@@ -454,7 +454,7 @@ You're in a git repository and want to clean the default branch:
 Clean a specific repository's default branch:
 
 ```bash
-./tools/git/git-claude-contrib-fix.sh https://github.com/hyperi-io/dfe-developer.git
+./tools/git/git-claude-contrib-fix.sh https://github.com/hyperi-io/hyperi-developer.git
 ```
 
 ### Example 3: Specific Branch

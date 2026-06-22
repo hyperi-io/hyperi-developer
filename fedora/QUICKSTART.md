@@ -1,4 +1,4 @@
-# HyperSec Fedora DFE - Quick Start
+# HyperSec Fedora Hyperi - Quick Start
 
 Your Fedora Linux development environment configured in about 30 minutes.
 
@@ -16,25 +16,25 @@ What you'll need:
 ### Step 1: Clone Repository
 
 ```bash
-git clone https://github.com/hyperi-io/dfe-developer.git
-cd dfe-developer/fedora
+git clone https://github.com/hyperi-io/hyperi-developer.git
+cd hyperi-developer/fedora
 ```
 
 ### Step 2: Run Main Installer
 
 ```bash
 # Standard developer installation
-./install-dfe-developer.sh
+./install-hyperi-developer.sh
 
 # With passwordless sudo (optional)
-./install-dfe-developer.sh --sudoers
+./install-hyperi-developer.sh --sudoers
 ```
 
 ### Step 3: Optional Components
 
 ```bash
-# Core DFE contributor tools (JFrog, Azure CLI, Node.js, Claude Code CLI)
-./install-dfe-developer-core.sh
+# Core Hyperi contributor tools (JFrog, Azure CLI, Node.js, Claude Code CLI)
+./install-hyperi-developer-core.sh
 
 # VM/RDP optimizations (if running in VM)
 ./install-vm-optimizer.sh
@@ -55,7 +55,7 @@ cd dfe-developer/fedora
 - **Git Tools** - Git LFS, GitHub CLI (gh)
 - **VS Code** - Configured for development
 
-### DFE Core Developer Tools (Optional)
+### Hyperi Core Developer Tools (Optional)
 - **JFrog CLI** - Artifact repository management
 - **Azure CLI** - Azure cloud platform tools
 - **Node.js** - JavaScript runtime with semantic-release

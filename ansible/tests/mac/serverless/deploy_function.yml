@@ -159,6 +159,6 @@
           - Action: Delete Mac minis idle >23h (before 2nd billing cycle)
           - Checks: CPU usage, network activity
           - Watches: Any Mac with name prefix 'hypersec-test-mac-'
-          - Projects: hypersec-test-mac-dfe-developer, hypersec-test-mac-agent
+          - Projects: hypersec-test-mac-hyperi-developer, hypersec-test-mac-agent
 
           Your test Mac minis will auto-delete after 23h idle!

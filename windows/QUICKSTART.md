@@ -29,8 +29,8 @@ What you'll need:
 
 ### Step 1: Download
 ```powershell
-git clone https://github.com/hyperi-io/dfe-developer.git
-cd dfe-developer/windows
+git clone https://github.com/hyperi-io/hyperi-developer.git
+cd hyperi-developer/windows
 ```
 
 ### Step 2: Run the Script

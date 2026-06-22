@@ -15,12 +15,12 @@ fi
 
 # Remove any test containers
 echo "Removing test containers..."
-$CONTAINER_CMD ps -aq --filter "name=dfe-test" 2>/dev/null | xargs -r $CONTAINER_CMD rm -f 2>/dev/null || true
+$CONTAINER_CMD ps -aq --filter "name=hyperi-test" 2>/dev/null | xargs -r $CONTAINER_CMD rm -f 2>/dev/null || true
 $CONTAINER_CMD ps -aq --filter "name=bats-test" 2>/dev/null | xargs -r $CONTAINER_CMD rm -f 2>/dev/null || true
 
 # Remove any test images
 echo "Removing test images..."
-$CONTAINER_CMD images -q "dfe-test*" 2>/dev/null | xargs -r $CONTAINER_CMD rmi -f 2>/dev/null || true
+$CONTAINER_CMD images -q "hyperi-test*" 2>/dev/null | xargs -r $CONTAINER_CMD rmi -f 2>/dev/null || true
 
 # Clean up temp files
 echo "Cleaning temporary files..."

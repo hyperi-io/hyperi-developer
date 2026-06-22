@@ -154,7 +154,7 @@ fi
 # Check ui-mode exists
 if [[ ! -x "$UI_MODE_BIN" ]]; then
     print_error "ui-mode not found at $UI_MODE_BIN"
-    print_error "Run the DFE Developer installer first"
+    print_error "Run the Hyperi Developer installer first"
     exit 1
 fi
 

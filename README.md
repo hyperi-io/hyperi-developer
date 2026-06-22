@@ -1,13 +1,13 @@
-# DFE Developer Environment
+# Hyperi Developer Environment
 
-[![Latest Release](https://img.shields.io/github/v/release/hyperi-io/dfe-developer)](https://github.com/hyperi-io/dfe-developer/releases/latest)
-[![Release Date](https://img.shields.io/github/release-date/hyperi-io/dfe-developer)](https://github.com/hyperi-io/dfe-developer/releases/latest)
-[![License](https://img.shields.io/github/license/hyperi-io/dfe-developer)](LICENSE)
+[![Latest Release](https://img.shields.io/github/v/release/hyperi-io/hyperi-developer)](https://github.com/hyperi-io/hyperi-developer/releases/latest)
+[![Release Date](https://img.shields.io/github/release-date/hyperi-io/hyperi-developer)](https://github.com/hyperi-io/hyperi-developer/releases/latest)
+[![License](https://img.shields.io/github/license/hyperi-io/hyperi-developer)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Ubuntu%20%7C%20Fedora%20%7C%20macOS-blue)](#platform-support)
-[![Last Commit](https://img.shields.io/github/last-commit/hyperi-io/dfe-developer)](https://github.com/hyperi-io/dfe-developer/commits/main)
-[![Stars](https://img.shields.io/github/stars/hyperi-io/dfe-developer?style=social)](https://github.com/hyperi-io/dfe-developer/stargazers)
+[![Last Commit](https://img.shields.io/github/last-commit/hyperi-io/hyperi-developer)](https://github.com/hyperi-io/hyperi-developer/commits/main)
+[![Stars](https://img.shields.io/github/stars/hyperi-io/hyperi-developer?style=social)](https://github.com/hyperi-io/hyperi-developer/stargazers)
 
-Standardised developer environment for HyperSec DFE teams. One command gets you Docker, Kubernetes tools, cloud CLIs, and a properly configured desktop.
+Standardised developer environment for HyperSec Hyperi teams. One command gets you Docker, Kubernetes tools, cloud CLIs, and a properly configured desktop.
 
 ## Platform Support
 
@@ -21,8 +21,8 @@ Standardised developer environment for HyperSec DFE teams. One command gets you 
 ## Quick Start
 
 ```bash
-git clone https://github.com/hyperi-io/dfe-developer
-cd dfe-developer
+git clone https://github.com/hyperi-io/hyperi-developer
+cd hyperi-developer
 
 # Base install (Docker, Git, K8s tools, VS Code, Chrome)
 ./install.sh
@@ -162,7 +162,7 @@ The [git-claude-contrib-fix.sh](tools/git/git-claude-contrib-fix.sh) script remo
 
 ```bash
 # Use current repository with default branch
-cd dfe-developer
+cd hyperi-developer
 ./tools/git/git-claude-contrib-fix.sh
 
 # Specify repository URL
@@ -194,7 +194,7 @@ cd dfe-developer
 
 ## Windows 11 SOE
 
-Automated Windows 11 Standard Operating Environment setup for HyperSec DFE developers.
+Automated Windows 11 Standard Operating Environment setup for HyperSec Hyperi developers.
 
 ### Overview
 

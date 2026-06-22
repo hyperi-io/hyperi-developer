@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# install-all - Complete DFE Development Environment Installation
+# install-all - Complete Hyperi Development Environment Installation
 # ============================================================================
 # Runs all installation scripts in the recommended order
 # Assumes a clean Fedora desktop installation
@@ -27,7 +27,7 @@ else
 fi
 
 # Initialize script with common setup
-init_script "Complete DFE Development Environment Installation"
+init_script "Complete Hyperi Development Environment Installation"
 
 print_info "This will install all components in the recommended order"
 print_info "Installation order: developer -> core -> vm -> rdp -> ghostty"
@@ -63,13 +63,13 @@ run_installer() {
 }
 
 # 1. Main Developer Environment
-if ! run_installer "install-dfe-developer.sh"; then
+if ! run_installer "install-hyperi-developer.sh"; then
     print_error "Main developer installation failed - stopping"
     exit 1
 fi
 
 # 2. Core Development Tools
-if ! run_installer "install-dfe-developer-core.sh"; then
+if ! run_installer "install-hyperi-developer-core.sh"; then
     print_warning "Core tools installation failed - continuing"
 fi
 
@@ -103,8 +103,8 @@ else
 fi
 
 print_info "Completed installations:"
-echo "  [OK] DFE Developer Environment (includes Ghostty terminal)"
-[ -f "$SCRIPT_DIR/install-dfe-developer-core.sh" ] && echo "  [OK] Core Development Tools"
+echo "  [OK] Hyperi Developer Environment (includes Ghostty terminal)"
+[ -f "$SCRIPT_DIR/install-hyperi-developer-core.sh" ] && echo "  [OK] Core Development Tools"
 [ -n "$(systemd-detect-virt 2>/dev/null || echo '')" ] && [ "$(systemd-detect-virt)" != "none" ] && echo "  [OK] VM Optimizations"
 [ -n "${SSH_CONNECTION:-}${RDP_SESSION:-}${REMOTE_DESKTOP_SESSION:-}" ] && echo "  [OK] RDP Optimizations"
 
@@ -115,4 +115,4 @@ print_info "2. Run: source ~/.bashrc"
 print_info "3. Configure your tools (JFrog, Azure CLI, ArgoCD, etc.)"
 print_info "4. Check installed versions: docker --version, kubectl version, etc."
 
-print_success "Complete DFE Development Environment setup finished"
+print_success "Complete Hyperi Development Environment setup finished"

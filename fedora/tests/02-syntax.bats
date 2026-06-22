@@ -11,13 +11,13 @@ setup() {
     [ "$status" -eq 0 ]
 }
 
-@test "install-dfe-developer.sh has valid syntax" {
-    run bash -n install-dfe-developer.sh
+@test "install-hyperi-developer.sh has valid syntax" {
+    run bash -n install-hyperi-developer.sh
     [ "$status" -eq 0 ]
 }
 
-@test "install-dfe-developer-core.sh has valid syntax" {
-    run bash -n install-dfe-developer-core.sh
+@test "install-hyperi-developer-core.sh has valid syntax" {
+    run bash -n install-hyperi-developer-core.sh
     [ "$status" -eq 0 ]
 }
 

@@ -1,5 +1,5 @@
 ---
-# DFE VM Optimizer - Main Tasks
+# Hyperi VM Optimizer - Main Tasks
 # Maps to: fedora/install-vm-optimizer.sh
 
 # Skip on macOS (not applicable)

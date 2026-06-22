@@ -37,7 +37,7 @@ Run the remediation script:
 
 ```bash
 # Close all VSCode windows first, then run:
-/projects/dfe-developer/tools/vscode/vscode-wayland.sh
+/projects/hyperi-developer/tools/vscode/vscode-wayland.sh
 ```
 
 The script:

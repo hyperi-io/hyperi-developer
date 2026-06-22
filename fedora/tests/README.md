@@ -1,6 +1,6 @@
-# DFE Installation Scripts - Test Suite
+# Hyperi Installation Scripts - Test Suite
 
-Simple test suite for the DFE Fedora installation scripts.
+Simple test suite for the Hyperi Fedora installation scripts.
 
 ## Quick Start
 

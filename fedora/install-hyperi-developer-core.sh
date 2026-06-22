@@ -1,12 +1,12 @@
 #!/bin/bash
 # ============================================================================
-# install-dfe-developer-core - Core Development Tools Installation Script
+# install-hyperi-developer-core - Core Development Tools Installation Script
 # ============================================================================
-# Advanced tools for developers contributing TO the DFE platform itself
-# This script is for DFE core contributors and maintainers
+# Advanced tools for developers contributing TO the Hyperi platform itself
+# This script is for Hyperi core contributors and maintainers
 #
 # USAGE:
-#   sudo ./install-dfe-developer-core.sh
+#   sudo ./install-hyperi-developer-core.sh
 #
 # INSTALLS:
 #   - C Development Tools group and libraries
@@ -19,8 +19,8 @@
 #   - Slack (Flatpak)
 #
 # NOTE: Core developers should run BOTH scripts:
-#       1. First run install-dfe-developer.sh (base tools)
-#       2. Then run install-dfe-developer-core.sh (advanced tools)
+#       1. First run install-hyperi-developer.sh (base tools)
+#       2. Then run install-hyperi-developer-core.sh (advanced tools)
 #       OR use install-all.sh to run everything in the correct order
 #
 # LICENSE:

@@ -1,5 +1,5 @@
 #!/bin/bash
-# lib.sh - Common functions for DFE installation scripts
+# lib.sh - Common functions for Hyperi installation scripts
 # Licensed under Apache License 2.0
 
 # ============================================================================

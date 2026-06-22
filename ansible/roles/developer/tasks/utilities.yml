@@ -193,7 +193,7 @@
         - remmina_install is failed
 
 # ============================================================================
-# DFE ADMIN TOOLS
+# Hyperi ADMIN TOOLS
 # ============================================================================
 
 - name: Ensure /usr/local/sbin exists

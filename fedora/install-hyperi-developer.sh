@@ -1,12 +1,12 @@
 #!/bin/bash
 # ============================================================================
-# install-dfe-developer - DFE Developer Environment Setup Script
+# install-hyperi-developer - Hyperi Developer Environment Setup Script
 # ============================================================================
-# Default installer for developers building applications FOR the DFE platform
-# This is the main script for most developers using DFE
+# Default installer for developers building applications FOR the Hyperi platform
+# This is the main script for most developers using Hyperi
 #
 # USAGE:
-#   ./install-dfe-developer.sh [--sudoers]
+#   ./install-hyperi-developer.sh [--sudoers]
 #
 # INSTALLS:
 #   - Docker CE, Docker Desktop (GUI), Docker Compose Plugin
@@ -18,7 +18,7 @@
 #   - System tools: tmux, ansible, postgresql, ShellCheck
 #
 # NOTE: GUI tools are only installed if GNOME desktop is running
-#       For DFE core contributors, use install-dfe-developer-core.sh
+#       For Hyperi core contributors, use install-hyperi-developer-core.sh
 #
 # LICENSE:
 #   Licensed under the Apache License, Version 2.0
@@ -67,7 +67,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Initialize script with common setup
-init_script "DFE Developer Environment Setup"
+init_script "Hyperi Developer Environment Setup"
 
 # Detect if GNOME desktop is running
 if is_gnome; then
@@ -696,5 +696,5 @@ sudo dnf update -y || print_warning "Some packages failed to update, but continu
 echo ""
 print_info "IMPORTANT: A system reboot is recommended to ensure all changes take effect"
 print_info "This includes kernel updates, systemd services, and Docker group membership"
-print_success "DFE Developer Environment setup complete"
+print_success "Hyperi Developer Environment setup complete"
 print_info "Please reboot your system: sudo reboot"

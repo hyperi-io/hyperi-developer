@@ -1,7 +1,7 @@
 # VSCode Wayland Fullscreen Bug
 
 **Research Date:** 2026-01-06
-**Status:** UPSTREAM BUG - Cannot be fixed by dfe-developer installer
+**Status:** UPSTREAM BUG - Cannot be fixed by hyperi-developer installer
 
 ## Overview
 
@@ -206,7 +206,7 @@ To verify workaround effectiveness:
 - **Electron 35.1.0:** Wayland resize fix ([#46155](https://github.com/electron/electron/pull/46155)) included
 - **Electron 38+:** `--ozone-platform-hint` command-line flag no longer works; use environment variable instead
 
-## Recommendations for dfe-developer
+## Recommendations for hyperi-developer
 
 1. **Document the workaround** in user-facing documentation
 2. **Do not attempt to fix** - this is an upstream compositor bug
@@ -303,7 +303,7 @@ If upstream is slow, deploy local fix:
 | ID | Task | Dependencies |
 | -- | ---- | ------------ |
 | 5.1 | Package patched Mutter as COPR/PPA | 3.6 |
-| 5.2 | Add to dfe-developer installer as optional repo | 5.1 |
+| 5.2 | Add to hyperi-developer installer as optional repo | 5.1 |
 | 5.3 | Create auto-update mechanism for patch releases | 5.2 |
 | 5.4 | Document removal process when upstream merges | 5.3 |
 

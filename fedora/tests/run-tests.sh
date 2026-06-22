@@ -1,5 +1,5 @@
 #!/bin/bash
-# run-tests.sh - Main test runner for DFE installation scripts
+# run-tests.sh - Main test runner for Hyperi installation scripts
 # Runs ShellCheck, BATS tests, and container tests
 
 set -euo pipefail
@@ -9,7 +9,7 @@ TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$TEST_DIR"
 
 echo "============================================================================"
-echo "  DFE Installation Scripts - Test Suite"
+echo "  Hyperi Installation Scripts - Test Suite"
 echo "============================================================================"
 
 # Track overall results

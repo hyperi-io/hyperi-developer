@@ -20,7 +20,7 @@
 #   - Network buffer sizes and queue management
 #   - Compression with quality balance for bandwidth efficiency
 #
-# NOTE: Run after install-dfe-developer.sh for best results
+# NOTE: Run after install-hyperi-developer.sh for best results
 #       Requires GNOME desktop environment
 #
 # LICENSE:

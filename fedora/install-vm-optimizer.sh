@@ -17,7 +17,7 @@
 #   - Memory: Reduced usage and improved disk I/O performance
 #   - GNOME: Disabled unnecessary desktop services for VMs
 #
-# NOTE: Run after install-dfe-developer.sh for best results
+# NOTE: Run after install-hyperi-developer.sh for best results
 #       Auto-detects VM platform and applies appropriate optimizations
 #
 # LICENSE:
@@ -69,7 +69,7 @@ Examples:
   sudo $0 --force-type kvm  # Force KVM optimizations
 
 This script works alongside:
-  - install-dfe-fedora (development environment)
+  - install-hyperi-fedora (development environment)
   - install-rdp-optimizer (RDP optimizations)
 EOF
     exit 0

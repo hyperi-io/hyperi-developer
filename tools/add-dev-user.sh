@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# add-dev-user.sh - Add new developer user to DFE Developer SOE
+# add-dev-user.sh - Add new developer user to Hyperi Developer SOE
 # ============================================================================
 # Creates a new developer user with full access to the environment:
 # - Sudo access (passwordless)
@@ -48,7 +48,7 @@ fi
 show_help() {
     echo "Usage: add-dev-user [OPTIONS] <username> [password]"
     echo ""
-    echo "Creates a new developer user with full DFE environment access:"
+    echo "Creates a new developer user with full Hyperi environment access:"
     echo "  - Passwordless sudo"
     echo "  - Docker group membership"
     echo "  - RDP access (if gnome-remote-desktop installed)"
@@ -116,7 +116,7 @@ done
 if [[ $# -lt 1 ]]; then
     echo "Usage: add-dev-user <username> [password]"
     echo ""
-    echo "Creates a new user with full DFE developer environment access."
+    echo "Creates a new user with full Hyperi developer environment access."
     echo "If password is not provided, it defaults to the username."
     echo ""
     echo "Run 'add-dev-user --help' for more information."
@@ -298,10 +298,10 @@ fi
 
 # Add common paths to .bashrc if not already present
 BASHRC="$USER_HOME/.bashrc"
-if ! grep -q "# DFE Developer paths" "$BASHRC" 2>/dev/null; then
+if ! grep -q "# Hyperi Developer paths" "$BASHRC" 2>/dev/null; then
     cat >> "$BASHRC" << 'EOF'
 
-# DFE Developer paths
+# Hyperi Developer paths
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/bin:$PATH"
 
 # npm global packages (user-local, no sudo needed)
