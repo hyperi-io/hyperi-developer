@@ -12,6 +12,7 @@
   register: k8s_stable_version
   delegate_to: localhost
   become: false
+  check_mode: false
 
 - name: Extract Kubernetes minor version
   ansible.builtin.set_fact:
@@ -73,6 +74,7 @@
         url: https://api.github.com/repos/derailed/k9s/releases/latest
         return_content: true
       register: k9s_latest
+      check_mode: false
 
     - name: Download and extract k9s
       ansible.builtin.unarchive:
@@ -81,6 +83,7 @@
         remote_src: true
         include: k9s
         mode: '0755'
+      when: not ansible_check_mode
 
     # kubectx and kubens
     - name: Get latest kubectx version
@@ -88,6 +91,7 @@
         url: https://api.github.com/repos/ahmetb/kubectx/releases/latest
         return_content: true
       register: kubectx_latest
+      check_mode: false
 
     - name: Download kubectx
       ansible.builtin.get_url:
@@ -114,6 +118,7 @@
         dest: /usr/local/bin/minikube
         mode: '0755'
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Remove Minikube installer
       ansible.builtin.file:
@@ -126,6 +131,7 @@
         url: https://api.github.com/repos/argoproj/argo-cd/releases/latest
         return_content: true
       register: argocd_latest
+      check_mode: false
 
     - name: Download ArgoCD CLI
       ansible.builtin.get_url:
@@ -139,6 +145,7 @@
         url: https://api.github.com/repos/wagoodman/dive/releases/latest
         return_content: true
       register: dive_latest
+      check_mode: false
 
     - name: Download and extract dive
       ansible.builtin.unarchive:
@@ -147,6 +154,7 @@
         remote_src: true
         include: dive
         mode: '0755'
+      when: not ansible_check_mode
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 

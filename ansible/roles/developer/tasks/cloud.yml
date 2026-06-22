@@ -70,6 +70,7 @@
         src: /tmp/awscliv2.zip
         dest: /tmp/
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Install AWS CLI v2 system-wide
       ansible.builtin.command:
@@ -114,6 +115,7 @@
         url: https://api.github.com/repos/99designs/aws-vault/releases/latest
         return_content: true
       register: aws_vault_release
+      check_mode: false
 
     - name: Set aws-vault version fact
       ansible.builtin.set_fact:
@@ -138,6 +140,7 @@
         url: https://api.github.com/repos/helm/helm/releases/latest
         return_content: true
       register: helm_latest_release
+      check_mode: false
 
     - name: Set Helm version fact
       ansible.builtin.set_fact:
@@ -165,6 +168,7 @@
         src: "/tmp/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
         dest: /tmp
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Install Helm binary
       ansible.builtin.copy:
@@ -172,6 +176,7 @@
         dest: /usr/local/bin/helm
         mode: '0755'
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Remove Helm installation files
       ansible.builtin.file:

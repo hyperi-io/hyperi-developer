@@ -66,3 +66,4 @@
   ansible.builtin.include_tasks:
     file: verify.yml
   tags: ['verify']
+  when: not ansible_check_mode

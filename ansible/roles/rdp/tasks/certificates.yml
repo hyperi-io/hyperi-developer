@@ -37,6 +37,7 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - not ansible_check_mode
 
 - name: Configure grdctl to use TLS certificate
   ansible.builtin.command:

@@ -144,26 +144,59 @@
     - docker_install_desktop | default(true)
 
 # Ubuntu Docker Desktop
-- block:
-    - name: Download Docker Desktop DEB (Ubuntu)
-      ansible.builtin.get_url:
-        url: "{{ docker_desktop_url_ubuntu }}"
-        dest: /tmp/docker-desktop.deb
-        mode: '0644'
-
-    - name: Install Docker Desktop (Ubuntu)
-      ansible.builtin.apt:
-        deb: /tmp/docker-desktop.deb
-        state: present
-
-    - name: Remove Docker Desktop DEB (Ubuntu)
-      ansible.builtin.file:
-        path: /tmp/docker-desktop.deb
-        state: absent
+- name: Install Docker Desktop (Ubuntu)
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
     - has_gnome | default(false)
     - docker_install_desktop | default(true)
+  block:
+    - name: Install Docker Desktop, tolerating failure on unsupported releases (Ubuntu)
+      block:
+        - name: Download Docker Desktop DEB (Ubuntu)
+          ansible.builtin.get_url:
+            url: "{{ docker_desktop_url_ubuntu }}"
+            dest: /tmp/docker-desktop.deb
+            mode: '0644'
+          register: docker_desktop_download
+          retries: 3
+          delay: 5
+          until: docker_desktop_download is success
+
+        - name: Verify Docker Desktop DEB is present (Ubuntu)
+          ansible.builtin.stat:
+            path: /tmp/docker-desktop.deb
+          register: docker_desktop_deb
+
+        - name: Fail clearly if Docker Desktop DEB did not download (Ubuntu)
+          ansible.builtin.fail:
+            msg: >-
+              Docker Desktop download did not produce /tmp/docker-desktop.deb from
+              {{ docker_desktop_url_ubuntu }}. Check network access to desktop.docker.com.
+          when: not docker_desktop_deb.stat.exists
+
+        - name: Install Docker Desktop (Ubuntu)
+          ansible.builtin.apt:
+            deb: /tmp/docker-desktop.deb
+            state: present
+
+        - name: Remove Docker Desktop DEB (Ubuntu)
+          ansible.builtin.file:
+            path: /tmp/docker-desktop.deb
+            state: absent
+      rescue:
+        - name: Report Docker Desktop install failure as non-fatal (Ubuntu)
+          ansible.builtin.debug:
+            msg: >-
+              Docker Desktop install did not complete on Ubuntu
+              {{ ansible_facts['distribution_version'] }}
+              ({{ ansible_facts['distribution_release'] }}); Docker officially supports
+              22.04-24.04. Continuing anyway - docker-ce, the CLI and Compose are
+              installed regardless.
+
+        - name: Clean up Docker Desktop DEB after failure (Ubuntu)
+          ansible.builtin.file:
+            path: /tmp/docker-desktop.deb
+            state: absent
 
 # ============================================================================
 # CONFIGURE DOCKER

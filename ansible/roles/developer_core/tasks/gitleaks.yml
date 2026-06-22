@@ -23,6 +23,7 @@
         url: https://api.github.com/repos/gitleaks/gitleaks/releases/latest
         return_content: true
       register: gitleaks_release
+      check_mode: false
 
     - name: Set Gitleaks version fact
       ansible.builtin.set_fact:
@@ -39,6 +40,7 @@
         src: /tmp/gitleaks.tar.gz
         dest: /tmp
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Install Gitleaks binary
       ansible.builtin.copy:
@@ -46,6 +48,7 @@
         dest: /usr/local/bin/gitleaks
         mode: '0755'
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Remove Gitleaks installation files
       ansible.builtin.file:

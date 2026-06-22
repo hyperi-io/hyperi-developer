@@ -233,3 +233,4 @@
     apply:
       tags: ['verify']
   tags: ['verify']
+  when: not ansible_check_mode

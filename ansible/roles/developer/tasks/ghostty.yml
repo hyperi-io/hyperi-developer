@@ -57,6 +57,7 @@
     return_content: true
   register: ghostty_latest
   when: ansible_facts['distribution'] == 'Ubuntu'
+  check_mode: false
 
 - name: Find .deb file for detected Ubuntu version
   ansible.builtin.set_fact:
@@ -82,6 +83,7 @@
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
     - ghostty_deb_url is defined
+    - not ansible_check_mode
 
 - name: Remove Ghostty .deb
   ansible.builtin.file:

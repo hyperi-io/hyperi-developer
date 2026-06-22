@@ -27,6 +27,7 @@
         url: https://api.github.com/repos/bitwarden/clients/releases
         return_content: true
       register: bw_releases
+      check_mode: false
 
     - name: Set Bitwarden CLI version fact
       ansible.builtin.set_fact:
@@ -44,6 +45,7 @@
         dest: /usr/local/bin
         remote_src: true
         mode: '0755'
+      when: not ansible_check_mode
 
     - name: Remove Bitwarden CLI installation file
       ansible.builtin.file:

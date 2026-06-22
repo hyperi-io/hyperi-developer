@@ -167,6 +167,7 @@
         url: https://packages.confluent.io/deb/
         return_content: true
       register: confluent_page_ubuntu
+      check_mode: false
 
     - name: Extract Confluent version
       ansible.builtin.set_fact:

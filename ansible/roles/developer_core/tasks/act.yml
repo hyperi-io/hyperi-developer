@@ -31,6 +31,7 @@
         url: https://api.github.com/repos/nektos/act/releases/latest
         return_content: true
       register: act_release
+      check_mode: false
 
     - name: Set act version fact
       ansible.builtin.set_fact:
@@ -47,6 +48,7 @@
         src: /tmp/act.tar.gz
         dest: /tmp
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Install act binary
       ansible.builtin.copy:
@@ -54,6 +56,7 @@
         dest: /usr/local/bin/act
         mode: '0755'
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Remove act installation files
       ansible.builtin.file:

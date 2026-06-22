@@ -24,6 +24,7 @@
         url: https://api.github.com/repos/schpet/linear-cli/releases/latest
         return_content: true
       register: linear_release
+      check_mode: false
 
     - name: Set Linear CLI version and architecture facts
       ansible.builtin.set_fact:
@@ -41,6 +42,7 @@
         src: /tmp/linear.tar.xz
         dest: /tmp
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Install Linear CLI binary
       ansible.builtin.copy:
@@ -48,6 +50,7 @@
         dest: /usr/local/bin/linear
         mode: '0755'
         remote_src: true
+      when: not ansible_check_mode
 
     - name: Remove Linear CLI installation files
       ansible.builtin.file:
