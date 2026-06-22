@@ -51,9 +51,13 @@
         creates: /usr/share/keyrings/datadog-archive-keyring.gpg
 
     - name: Add Vector APT repository
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/datadog-archive-keyring.gpg] https://apt.vector.dev/ stable vector-0"
-        filename: vector
+      ansible.builtin.deb822_repository:
+        name: vector
+        types: deb
+        uris: "https://apt.vector.dev/"
+        suites: stable
+        components: vector-0
+        signed_by: /usr/share/keyrings/datadog-archive-keyring.gpg
         state: present
 
     - name: Install Vector
@@ -102,9 +106,13 @@
         mode: '0644'
 
     - name: Add ClickHouse APT repository
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/clickhouse.asc] https://packages.clickhouse.com/deb stable main"
-        filename: clickhouse
+      ansible.builtin.deb822_repository:
+        name: clickhouse
+        types: deb
+        uris: "https://packages.clickhouse.com/deb"
+        suites: stable
+        components: main
+        signed_by: /etc/apt/keyrings/clickhouse.asc
         state: present
 
     - name: Install ClickHouse client
@@ -180,9 +188,13 @@
         mode: '0644'
 
     - name: Add Confluent APT repository
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/confluent.asc] https://packages.confluent.io/deb/{{ confluent_version_ubuntu }} stable main"
-        filename: confluent
+      ansible.builtin.deb822_repository:
+        name: confluent
+        types: deb
+        uris: "https://packages.confluent.io/deb/{{ confluent_version_ubuntu }}"
+        suites: stable
+        components: main
+        signed_by: /etc/apt/keyrings/confluent.asc
         state: present
 
     - name: Install Confluent CLI

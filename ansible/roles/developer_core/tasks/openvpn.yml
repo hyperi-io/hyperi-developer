@@ -40,9 +40,13 @@
              | ternary('noble', ansible_facts['distribution_release']) }}
 
     - name: Add OpenVPN 3 repository
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/openvpn.asc] https://packages.openvpn.net/openvpn3/debian {{ openvpn_codename }} main"
-        filename: openvpn3
+      ansible.builtin.deb822_repository:
+        name: openvpn3
+        types: deb
+        uris: "https://packages.openvpn.net/openvpn3/debian"
+        suites: "{{ openvpn_codename }}"
+        components: main
+        signed_by: /etc/apt/keyrings/openvpn.asc
         state: present
 
     - name: Install OpenVPN 3

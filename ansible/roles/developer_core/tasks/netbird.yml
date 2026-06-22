@@ -49,9 +49,13 @@
         state: absent
 
     - name: Add NetBird repository
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main"
-        filename: netbird
+      ansible.builtin.deb822_repository:
+        name: netbird
+        types: deb
+        uris: "https://pkgs.netbird.io/debian"
+        suites: stable
+        components: main
+        signed_by: /usr/share/keyrings/netbird-archive-keyring.gpg
         state: present
 
     - name: Install NetBird CLI

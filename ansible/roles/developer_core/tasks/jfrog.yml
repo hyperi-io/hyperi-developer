@@ -38,9 +38,13 @@
         mode: '0644'
 
     - name: Add JFrog CLI repository
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/jfrog-cli.asc] https://releases.jfrog.io/artifactory/jfrog-debs xenial contrib"
-        filename: jfrog-cli
+      ansible.builtin.deb822_repository:
+        name: jfrog-cli
+        types: deb
+        uris: "https://releases.jfrog.io/artifactory/jfrog-debs"
+        suites: xenial
+        components: contrib
+        signed_by: /usr/share/keyrings/jfrog-cli.asc
         state: present
 
     - name: Install JFrog CLI

@@ -56,9 +56,14 @@
         mode: '0644'
 
     - name: Add VS Code repository
-      ansible.builtin.apt_repository:
-        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.asc] https://packages.microsoft.com/repos/code stable main"
-        filename: vscode
+      ansible.builtin.deb822_repository:
+        name: vscode
+        types: deb
+        uris: "https://packages.microsoft.com/repos/code"
+        suites: stable
+        components: main
+        signed_by: /etc/apt/keyrings/packages.microsoft.asc
+        architectures: amd64
         state: present
 
     - name: Install VS Code

@@ -40,9 +40,14 @@
              | ternary('noble', ansible_facts['distribution_release']) }}
 
     - name: Add Docker repository
-      ansible.builtin.apt_repository:
-        repo: "deb [arch={{ docker_arch }} signed-by=/etc/apt/keyrings/docker.asc] {{ docker_repo_url }} {{ docker_codename }} stable"
-        filename: docker
+      ansible.builtin.deb822_repository:
+        name: docker
+        types: deb
+        uris: "{{ docker_repo_url }}"
+        suites: "{{ docker_codename }}"
+        components: stable
+        signed_by: /etc/apt/keyrings/docker.asc
+        architectures: "{{ docker_arch }}"
         state: present
 
     - name: Update APT cache
