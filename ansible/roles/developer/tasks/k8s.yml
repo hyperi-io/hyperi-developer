@@ -161,15 +161,58 @@
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-# Freelens - Flatpak (GUI only)
+# Freelens (Kubernetes IDE) - native packages
+# Ubuntu: official APT repository (auto-updates via apt)
+# Fedora: direct .rpm from GitHub releases (no official dnf repo upstream)
 
-- name: Install Freelens (system-wide)
-  community.general.flatpak:
-    name: app.freelens.Freelens
-    state: present
-    method: system
+- name: Install Freelens (Ubuntu - official apt repo)
+  block:
+    - name: Add Freelens signing key
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/freelensapp/freelens/refs/heads/main/freelens/build/apt/freelens.asc
+        dest: /etc/apt/keyrings/freelens.asc
+        mode: '0644'
+
+    - name: Add Freelens apt repository (deb822)
+      ansible.builtin.get_url:
+        url: https://raw.githubusercontent.com/freelensapp/freelens/refs/heads/main/freelens/build/apt/freelens.sources
+        dest: /etc/apt/sources.list.d/freelens.sources
+        mode: '0644'
+
+    - name: Install Freelens
+      ansible.builtin.apt:
+        name: freelens
+        state: present
+        update_cache: true
   when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome | default(false)
+
+- name: Install Freelens (Fedora - .rpm from GitHub releases)
+  block:
+    - name: Get latest Freelens release
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/freelensapp/freelens/releases/latest
+        return_content: true
+      register: freelens_latest
+      check_mode: false
+
+    - name: Find Freelens .rpm asset (x86_64)
+      ansible.builtin.set_fact:
+        freelens_rpm_url: "{{ item.browser_download_url }}"
+      loop: "{{ freelens_latest.json.assets }}"
+      when: item.name is search('\\.x86_64\\.rpm$')
+
+    - name: Install Freelens from .rpm
+      ansible.builtin.dnf:
+        name: "{{ freelens_rpm_url }}"
+        state: present
+        disable_gpg_check: true
+      when:
+        - freelens_rpm_url is defined
+        - not ansible_check_mode
+  when:
+    - ansible_facts['distribution'] == 'Fedora'
     - has_gnome | default(false)
 
 # ============================================================================

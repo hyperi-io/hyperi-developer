@@ -6,7 +6,7 @@
 #   * APT      (system + 3rd-party repos: docker, vscode, chrome, brave,
 #              git, k8s, azure, gcloud, jfrog, ...)   — needs sudo
 #   * Snap     (snap packages)                        — needs sudo
-#   * Flatpak  (apps + runtimes: slack, bitwarden, onlyoffice, ...) — user
+#   * Flatpak  (any flatpak apps + runtimes, e.g. onlyoffice fallback) — user
 #   * Firmware (fwupd)                                — needs sudo
 #   * uv tools (gnome-extensions-cli, ...)            — user
 #   * rustup   (Rust toolchains)                      — user

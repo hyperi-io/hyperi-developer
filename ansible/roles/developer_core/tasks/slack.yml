@@ -1,18 +1,65 @@
 ---
-# Slack installation (Flatpak for Linux with GUI, Homebrew for macOS)
+# Slack installation
+# Linux: official packagecloud native repo (apt on Ubuntu, yum/dnf on Fedora)
+# macOS: Homebrew cask
 
-# Linux (Fedora/Ubuntu) - via Flatpak
+# ============================================================================
+# UBUNTU - official packagecloud APT repository
+# ============================================================================
+- name: Install Slack (Ubuntu)
+  block:
+    - name: Create apt keyrings directory (Slack)
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
 
-- name: Install Slack via Flatpak (system-wide)
-  community.general.flatpak:
-    name: com.slack.Slack
-    state: present
-    method: system
+    - name: Add Slack signing key
+      ansible.builtin.get_url:
+        url: https://packagecloud.io/slacktechnologies/slack/gpgkey
+        dest: /etc/apt/keyrings/slack.asc
+        mode: '0644'
+
+    - name: Add Slack apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/slack.asc] https://packagecloud.io/slacktechnologies/slack/debian/ jessie main"
+        filename: slack
+        state: present
+
+    - name: Install Slack desktop
+      ansible.builtin.apt:
+        name: slack-desktop
+        state: present
+        update_cache: true
   when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome | default(false)
 
-# macOS
+# ============================================================================
+# FEDORA - official packagecloud RPM repository
+# ============================================================================
+- name: Install Slack (Fedora)
+  block:
+    - name: Add Slack rpm repository
+      ansible.builtin.yum_repository:
+        name: slack
+        description: Slack
+        baseurl: https://packagecloud.io/slacktechnologies/slack/fedora/21/$basearch
+        gpgcheck: true
+        gpgkey: https://packagecloud.io/slacktechnologies/slack/gpgkey
+        enabled: true
+
+    - name: Install Slack
+      ansible.builtin.dnf:
+        name: slack
+        state: present
+  when:
+    - ansible_facts['distribution'] == 'Fedora'
+    - has_gnome | default(false)
+
+# ============================================================================
+# macOS - Homebrew cask
+# ============================================================================
 - name: Install Slack via Homebrew Cask (macOS)
   community.general.homebrew_cask:
     name: slack
