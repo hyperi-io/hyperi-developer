@@ -53,6 +53,7 @@
         url: "{{ claude_gcs_bucket }}/latest"
         return_content: true
       register: claude_latest_version
+      check_mode: false
 
     - name: Set Claude Code version fact
       ansible.builtin.set_fact:
@@ -79,6 +80,7 @@
         url: "{{ claude_gcs_bucket }}/{{ claude_version }}/manifest.json"
         return_content: true
       register: claude_manifest
+      check_mode: false
 
     - name: Set Claude Code checksum fact
       ansible.builtin.set_fact:
@@ -96,6 +98,7 @@
         dest: /tmp/claude-install/claude
         mode: '0755'
         checksum: "sha256:{{ claude_checksum }}"
+      when: not ansible_check_mode
 
     - name: Create ~/.local/bin directory
       ansible.builtin.file:

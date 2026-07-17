@@ -11,7 +11,7 @@
       - VM hosting: Hyper-V with full security stack (VBS, Credential Guard, HVCI)
       - Office automation and business tasks
 
-    Actual HyperSec code development happens in Linux VMs configured with the HyperSec Linux DFE
+    Actual HyperSec code development happens in Linux VMs configured with the HyperSec Linux Hyperi
     developer SOE - NOT natively on Windows. Windows is your comfortable office chair; Linux VMs
     are where you write code.
 
@@ -262,7 +262,7 @@ PURPOSE:
 
     IMPORTANT: This script configures Windows for productivity tools (Office, Slack, browsers)
     and VM hosting. Actual HyperSec code development happens in Linux VMs using the HyperSec
-    Linux DFE developer SOE - NOT natively on Windows.
+    Linux Hyperi developer SOE - NOT natively on Windows.
 
     Think of it this way:
       - Windows = Your office desk (productivity, communication, VM hosting)
@@ -340,7 +340,7 @@ DEVELOPMENT WORKFLOW:
       - VM hosting with Hyper-V
       - Office automation tasks
 
-    Linux VM (separate - HyperSec Linux DFE SOE):
+    Linux VM (separate - HyperSec Linux Hyperi SOE):
       - Actual code development and compilation
       - Development tools and IDEs
       - Testing and debugging
@@ -2412,7 +2412,7 @@ Write-Log ""
 Write-Log "DEVELOPMENT WORKFLOW REMINDER:" "Cyan"
 Write-Log "  This Windows machine is now configured as a VM host for productivity work." "White"
 Write-Log "  Actual HyperSec code development should be done in Linux VMs using the" "White"
-Write-Log "  HyperSec Linux DFE developer SOE - not natively on Windows." "White"
+Write-Log "  HyperSec Linux Hyperi developer SOE - not natively on Windows." "White"
 Write-Log ""
 Write-Log "  Windows: Productivity, office tasks, communication, VM hosting" "White"
 Write-Log "  Linux VM: Development, coding, testing, compilation" "White"

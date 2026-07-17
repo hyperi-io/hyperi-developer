@@ -1,19 +1,32 @@
 #!/bin/bash
-# dfe-vaapi-check - Auto-enable GRD hardware encoding when VA-API H.264 becomes available
-# Deployed by dfe-developer ansible role
-# Runs on system boot via systemd service
+# hyperi-vaapi-check - Auto-enable GRD hardware encoding when VA-API H.264
+# becomes available. Deployed by hyperi-developer ansible role; runs on boot.
+#
+# Writes the override to whichever gnome-remote-desktop unit is actually in use:
+#   - system "Remote Login" mode -> /etc/systemd/system/...   (system service)
+#   - per-user "Desktop Sharing" -> /etc/systemd/user/...     (user service)
+# Targeting the wrong unit (the old behaviour: always per-user) silently no-ops
+# on Remote Login hosts.
 
 set -euo pipefail
 
-OVERRIDE_DIR="/etc/systemd/user/gnome-remote-desktop.service.d"
+MARKER_FILE="/var/lib/hyperi-developer/vaapi-enabled"
+
+# Detect which GRD mode is active and set the matching override path + systemctl
+# invocation. Prefer the system service when it is enabled/active.
+if systemctl is-enabled gnome-remote-desktop.service &>/dev/null \
+   || systemctl is-active gnome-remote-desktop.service &>/dev/null; then
+    OVERRIDE_DIR="/etc/systemd/system/gnome-remote-desktop.service.d"
+    SCOPE="system"
+else
+    OVERRIDE_DIR="/etc/systemd/user/gnome-remote-desktop.service.d"
+    SCOPE="user"
+fi
 OVERRIDE_FILE="${OVERRIDE_DIR}/vaapi.conf"
-MARKER_FILE="/var/lib/dfe-developer/vaapi-enabled"
 
 # Check if VA-API H.264 encoding is available
 check_vaapi_h264() {
-    if ! command -v vainfo &>/dev/null; then
-        return 1
-    fi
+    command -v vainfo &>/dev/null || return 1
     vainfo --display drm 2>&1 | grep -q "VAProfileH264High.*VAEntrypointEncSlice"
 }
 
@@ -26,37 +39,43 @@ is_already_configured() {
 enable_hardware_encoding() {
     mkdir -p "$OVERRIDE_DIR"
     cat > "$OVERRIDE_FILE" << 'EOF'
-# Auto-enabled by dfe-vaapi-check when VA-API H.264 encoding detected
+# Auto-enabled by hyperi-vaapi-check when VA-API H.264 encoding detected.
+# Note: recent gnome-remote-desktop auto-selects the VA encoder (vah264enc)
+# when the driver + GStreamer VA plugin are present, so this override is a
+# belt-and-braces hint mainly relevant to the Vulkan-VA (virtio/VM) path.
 # See: https://gitlab.gnome.org/GNOME/gnome-remote-desktop/-/merge_requests/294
 [Service]
 Environment="GRD_DEBUG=vkva-renderer"
 EOF
     chmod 644 "$OVERRIDE_FILE"
 
-    # Create marker directory and file
     mkdir -p "$(dirname "$MARKER_FILE")"
     date -Iseconds > "$MARKER_FILE"
 
-    # Reload systemd to pick up changes
-    systemctl daemon-reload 2>/dev/null || true
-
-    return 0
+    if [[ "$SCOPE" == "system" ]]; then
+        systemctl daemon-reload 2>/dev/null || true
+    else
+        systemctl --user daemon-reload 2>/dev/null || true
+    fi
 }
 
 main() {
-    # Already configured - nothing to do (idempotent)
+    # Already configured for the active scope - nothing to do (idempotent)
     if is_already_configured; then
         exit 0
     fi
 
-    # Check if VA-API H.264 is available
     if check_vaapi_h264; then
         enable_hardware_encoding
-        logger -t dfe-developer "VA-API H.264 encoding detected - enabled GRD hardware encoding (GRD_DEBUG=vkva-renderer)"
+        logger -t hyperi-developer "VA-API H.264 detected - enabled GRD hardware encoding (${SCOPE} unit)"
 
-        # Restart grd if running to apply changes
-        if systemctl --user is-active gnome-remote-desktop.service &>/dev/null; then
-            systemctl --user restart gnome-remote-desktop.service 2>/dev/null || true
+        # Restart grd in the matching scope to apply the change
+        if [[ "$SCOPE" == "system" ]]; then
+            systemctl is-active gnome-remote-desktop.service &>/dev/null \
+                && systemctl restart gnome-remote-desktop.service 2>/dev/null || true
+        else
+            systemctl --user is-active gnome-remote-desktop.service &>/dev/null \
+                && systemctl --user restart gnome-remote-desktop.service 2>/dev/null || true
         fi
     fi
 }

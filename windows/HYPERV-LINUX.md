@@ -175,7 +175,7 @@ After creating the VM:
    - Remove or disconnect the ISO from DVD drive
    - Reboot the VM
    - Install Hyper-V Integration Services (usually automatic on modern Linux)
-4. **Configure Linux** - Use HyperSec Linux DFE SOE for development environment setup
+4. **Configure Linux** - Use HyperSec Linux Hyperi SOE for development environment setup
 
 ## VM Configuration Settings Summary
 
@@ -223,7 +223,7 @@ Once your Linux VM is running:
 1. **Complete OS installation** following your distribution's installer
 2. **Install guest additions/integration services** (usually automatic)
 3. **Update the system** - run distro updates
-4. **Install development tools** - use HyperSec Linux DFE SOE script
+4. **Install development tools** - use HyperSec Linux Hyperi SOE script
 5. **Configure git, SSH, and development environment**
 
 Remember: Windows is your office desk (productivity, Office, Slack, browsers). Linux VMs are your workshop (actual development, coding, testing).

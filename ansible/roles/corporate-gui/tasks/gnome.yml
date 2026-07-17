@@ -17,22 +17,20 @@
 # - Font installation
 
 # ============================================================================
-# DETERMINE UI MODE
+# DETERMINE UI MODE FROM EXPLICITLY REQUESTED TAGS
 # ============================================================================
-# Default to winlike. The maclike task below overrides it iff --tags maclike
-# is explicitly passed.
+# SSoT for mode selection. This file is only included when winlike or maclike
+# is in ansible_run_tags (see the include guard in corporate-gui/tasks/main.yml),
+# so here we just pick the mode: maclike wins if requested, otherwise winlike
+# (the documented default). We deliberately key off ansible_run_tags rather than
+# per-task tag selection: role-level tags are inherited by every task and would
+# otherwise cause BOTH set_facts to run (maclike, defined last, always winning)
+# on any tagged install.
 
-- name: Set default UI mode to winlike
+- name: Determine GNOME UI mode from explicitly requested tags
   ansible.builtin.set_fact:
-    ui_mode: "winlike"
-  when:
-    - has_gnome | default(false)
-    - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
-
-- name: Override UI mode to maclike (explicit opt-in)
-  ansible.builtin.set_fact:
-    ui_mode: "maclike"
-  tags: ['maclike', 'never']
+    ui_mode: "{{ 'maclike' if 'maclike' in ansible_run_tags else 'winlike' }}"
+  tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
     - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']

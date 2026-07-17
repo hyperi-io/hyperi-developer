@@ -23,15 +23,21 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
 
-- name: Install GNOME extensions (Astra Monitor etc.)
+# The GNOME desktop (extensions, dock, theming) is opt-in: it must only be
+# configured when winlike or maclike is EXPLICITLY requested. A `never` tag
+# alone cannot enforce that here, because the role-level tags are inherited by
+# every task and override `never` whenever the role runs at all. So gate on
+# ansible_run_tags (what the user actually asked for) instead. Also do NOT use
+# `apply: tags:` here - with include_tasks it unions the tags onto every inner
+# task and breaks the winlike/maclike discrimination that gnome.yml relies on.
+- name: Install GNOME extensions and apply UI mode (winlike or maclike)
   ansible.builtin.include_tasks:
     file: gnome.yml
-    apply:
-      tags: ['corporate-gui', 'gnome-extensions']
-  tags: ['corporate-gui', 'gnome-extensions']
+  tags: ['corporate-gui', 'gnome-extensions', 'winlike', 'maclike', 'never']
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
+    - "'winlike' in ansible_run_tags or 'maclike' in ansible_run_tags"
 
 - name: Install Slack
   ansible.builtin.include_tasks:

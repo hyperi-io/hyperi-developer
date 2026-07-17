@@ -16,9 +16,9 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
 
-- name: Ensure dfe-developer config directory exists
+- name: Ensure hyperi-developer config directory exists
   ansible.builtin.file:
-    path: /etc/dfe-developer
+    path: /etc/hyperi-developer
     state: directory
     mode: '0755'
   when:
@@ -28,7 +28,7 @@
 - name: Write configured refresh rate
   ansible.builtin.copy:
     content: "{{ rdp_refresh_rate }}"
-    dest: /etc/dfe-developer/rdp-refresh-rate
+    dest: /etc/hyperi-developer/rdp-refresh-rate
     mode: '0644'
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

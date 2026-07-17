@@ -1,4 +1,4 @@
-# Project:      DFE Developer
+# Project:      Hyperi Developer
 # File:         .github/workflows/semantic-release.yml
 # Purpose:      Create version tags using semantic-release
 # License:      MIT

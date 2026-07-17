@@ -9,7 +9,7 @@
 
 Standardised modern auto-updating developer environment with opt-in HyperI-specific sections.
 
-Anyone — HyperI staff, contractors, or external developers — can use it as a clean generic dev base, then opt into language-specific tooling (Rust, Python, Go, C, Node, TypeScript), infrastructure-as-code tools, GUI editors, or HyperI's org-specific stack (Slack, Linear, JFrog, NetBird VPN, etc.). The default install is lightweight and won't impose HyperI policies on your environment.
+Anyone — HyperI staff, contractors, or external developers — can use it as a clean generic dev base, then opt into language-specific tooling (Rust, Python, Go, C, Node, TypeScript), infrastructure-as-code tools, GUI editors, or HyperI's org-specific stack. The default install is lightweight and won't impose HyperI policies on your environment.
 
 ## Platform Support
 
@@ -24,7 +24,7 @@ Anyone — HyperI staff, contractors, or external developers — can use it as a
 
 ```bash
 git clone https://github.com/hyperi-io/hyperi-developer
-cd dfe-developer
+cd hyperi-developer
 
 # Base install (Docker, Git, K8s tools, VS Code, Chrome)
 ./install.sh
@@ -163,7 +163,7 @@ The [git-claude-contrib-fix.sh](tools/git/git-claude-contrib-fix.sh) script remo
 
 ```bash
 # Use current repository with default branch
-cd dfe-developer
+cd hyperi-developer
 ./tools/git/git-claude-contrib-fix.sh
 
 # Specify repository URL
@@ -195,7 +195,7 @@ cd dfe-developer
 
 ## Windows 11 SOE
 
-Automated Windows 11 Standard Operating Environment setup for HyperSec DFE developers.
+Automated Windows 11 Standard Operating Environment setup for HyperSec Hyperi developers.
 
 ### Overview
 

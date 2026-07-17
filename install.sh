@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================================
-# install.sh - DFE Developer Environment Bootstrap Script
+# install.sh - Hyperi Developer Environment Bootstrap Script
 # ============================================================================
-# This script bootstraps the DFE developer environment by:
+# This script bootstraps the Hyperi developer environment by:
 # 1. Detecting the operating system
 # 2. Installing Ansible using the native package manager
 # 3. Running the Ansible playbook to configure the system
@@ -100,7 +100,7 @@ EXAMPLES:
 NOTES:
   - winlike (Windows-style GNOME taskbar) is the default UI mode
   - If both winlike and maclike are specified, winlike wins
-  - RDP configures GNOME Remote Desktop with default credentials (dfe/dfe)
+  - RDP configures GNOME Remote Desktop with default credentials (hyperi/hyperi)
   - Use --tags-exclude to skip specific tags within a chosen group
   - Use --list-apps to see every per-app sub-tag for granular installs
 EOF
@@ -320,10 +320,24 @@ if ! sudo -n true 2>/dev/null; then
 fi
 print_success "Sudo access verified"
 
+# One-off migration: state directories were historically named "hyperi-developer".
+# Rename any legacy dirs to "hyperi-developer" so machines provisioned by older
+# versions transition cleanly. Idempotent: only moves a legacy dir when it
+# exists and the new name does not (Linux only; these paths don't exist on macOS).
+if [[ "$OS_FAMILY" != "macos" ]]; then
+    for _legacy in /etc/hyperi-developer /var/lib/hyperi-developer; do
+        _new="${_legacy/hyperi-developer/hyperi-developer}"
+        if [[ -d "$_legacy" && ! -e "$_new" ]]; then
+            print_info "Migrating legacy ${_legacy} -> ${_new}"
+            sudo mv "$_legacy" "$_new" || print_warning "Could not migrate ${_legacy}"
+        fi
+    done
+fi
+
 # Install latest Ansible in temporary Python venv (isolated from OS)
 # This avoids circular dependency if playbook updates system Ansible
 # The venv is created fresh each run and cleaned up after completion
-TEMP_ANSIBLE_DIR=$(mktemp -d -t dfe-ansible.XXXXXX)
+TEMP_ANSIBLE_DIR=$(mktemp -d -t hyperi-ansible.XXXXXX)
 ANSIBLE_BIN="$TEMP_ANSIBLE_DIR/bin/ansible-playbook"
 
 print_info "Creating temporary Ansible environment (isolated from OS)..."
@@ -395,23 +409,23 @@ if [[ ! -d "ansible" ]]; then
     TARBALL_URL="https://github.com/hyperi-io/hyperi-developer/archive/refs/heads/${GIT_BRANCH}.tar.gz"
 
     print_info "Downloading from $TARBALL_URL..."
-    curl -fsSL "$TARBALL_URL" -o /tmp/dfe-developer.tar.gz || {
+    curl -fsSL "$TARBALL_URL" -o /tmp/hyperi-developer.tar.gz || {
         print_error "Failed to download repository tarball from branch: $GIT_BRANCH"
         exit 1
     }
 
     # Extract only the ansible directory
     # Note: Branch name slashes become hyphens in tarball archive directory
-    ARCHIVE_DIR="dfe-developer-${GIT_BRANCH//\//-}"
+    ARCHIVE_DIR="hyperi-developer-${GIT_BRANCH//\//-}"
     print_info "Extracting ansible directory from ${ARCHIVE_DIR}..."
-    tar -xzf /tmp/dfe-developer.tar.gz --strip-components=1 "${ARCHIVE_DIR}/ansible" || {
+    tar -xzf /tmp/hyperi-developer.tar.gz --strip-components=1 "${ARCHIVE_DIR}/ansible" || {
         print_error "Failed to extract ansible directory from ${ARCHIVE_DIR}"
-        rm -f /tmp/dfe-developer.tar.gz
+        rm -f /tmp/hyperi-developer.tar.gz
         exit 1
     }
 
     # Cleanup
-    rm -f /tmp/dfe-developer.tar.gz
+    rm -f /tmp/hyperi-developer.tar.gz
 
     print_success "Ansible directory downloaded successfully"
 fi
@@ -447,7 +461,7 @@ if [[ $ANSIBLE_EXIT_CODE -ne 0 ]]; then
     exit 1
 fi
 
-print_success "DFE Developer Environment installation complete!"
+print_success "Hyperi Developer Environment installation complete!"
 print_info ""
 print_info "Next steps:"
 print_info "1. Log out and back in for group memberships to take effect (Docker)"

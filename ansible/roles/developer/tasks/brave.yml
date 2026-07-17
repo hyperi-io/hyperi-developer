@@ -38,7 +38,7 @@
     - name: Add Brave Browser repository
       ansible.builtin.copy:
         content: |
-          # Managed by DFE Developer Ansible - DO NOT EDIT
+          # Managed by Hyperi Developer Ansible - DO NOT EDIT
           deb [arch=amd64 signed-by=/etc/apt/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com/ stable main
         dest: /etc/apt/sources.list.d/brave-browser-release.list
         mode: '0644'

@@ -18,8 +18,8 @@ We welcome contributions from the community! This project follows standard Apach
 
 ```bash
 # Fork via GitHub UI, then clone your fork
-git clone https://github.com/YOUR-USERNAME/dfe-developer
-cd dfe-developer
+git clone https://github.com/YOUR-USERNAME/hyperi-developer
+cd hyperi-developer
 git remote add upstream https://github.com/hyperi-io/hyperi-developer
 ```
 
@@ -213,8 +213,8 @@ Include:
 
 ```bash
 # Clone and setup
-git clone https://github.com/YOUR-USERNAME/dfe-developer
-cd dfe-developer
+git clone https://github.com/YOUR-USERNAME/hyperi-developer
+cd hyperi-developer
 
 # Keep your fork synced
 git remote add upstream https://github.com/hyperi-io/hyperi-developer
@@ -340,10 +340,10 @@ ansible-playbook -i tests/mac/inventory_scaleway.yml playbooks/main.yml
 cd fedora
 
 # Standard installation
-./install-dfe-developer.sh
+./install-hyperi-developer.sh
 
 # Core developer tools
-./install-dfe-developer-core.sh
+./install-hyperi-developer-core.sh
 
 # VM optimizations
 ./install-vm-optimizer.sh
@@ -419,4 +419,4 @@ Report issues to project maintainers via GitHub Issues.
 - Check [STATE.md](STATE.md) for development context
 - Review existing PRs for examples
 
-Thank you for contributing to DFE Developer Environment!
+Thank you for contributing to Hyperi Developer Environment!

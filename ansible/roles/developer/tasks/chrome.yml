@@ -40,7 +40,7 @@
     - name: Write clean Chrome repository file (avoid duplicates)
       ansible.builtin.copy:
         content: |
-          # Managed by DFE Developer Ansible - DO NOT EDIT
+          # Managed by Hyperi Developer Ansible - DO NOT EDIT
           # Chrome's post-install script may add duplicates, this file is cleaned on each run
           deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb/ stable main
         dest: /etc/apt/sources.list.d/google-chrome.list

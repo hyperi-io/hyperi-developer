@@ -88,9 +88,21 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
 
+# One-command "update everything" tool + clickable GUI app (Ubuntu/macOS only)
+- name: Install hyperi-update command and GUI launcher
+  ansible.builtin.include_tasks:
+    file: update_command.yml
+    apply:
+      tags: ['update_command']
+  tags: ['update_command']
+  when: ansible_facts['distribution'] in ['Ubuntu', 'MacOSX']
+
 - name: Verify base tools installation
   ansible.builtin.include_tasks:
     file: verify.yml
     apply:
       tags: ['developer', 'verify']
   tags: ['developer', 'verify']
+  # Verify probes for installed binaries; in --check nothing has been
+  # installed yet, so the probes would fail a dry run that is otherwise fine.
+  when: not ansible_check_mode

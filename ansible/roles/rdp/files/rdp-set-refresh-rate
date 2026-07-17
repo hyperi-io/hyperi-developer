@@ -1,11 +1,11 @@
 #!/bin/bash
 # Set display refresh rate for RDP sessions
 # Reduces software encoding load on VMs without hardware video encoding
-# Deployed by dfe-developer ansible role
+# Deployed by hyperi-developer ansible role
 
 set -euo pipefail
 
-RATE_FILE="/etc/dfe-developer/rdp-refresh-rate"
+RATE_FILE="/etc/hyperi-developer/rdp-refresh-rate"
 
 # Read configured rate or default to 30
 RATE=30

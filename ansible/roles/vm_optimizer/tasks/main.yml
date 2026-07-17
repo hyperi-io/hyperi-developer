@@ -1,5 +1,5 @@
 ---
-# DFE VM Optimizer - Main Tasks
+# Hyperi VM Optimizer - Main Tasks
 # Maps to: fedora/install-vm-optimizer.sh
 
 # Skip on macOS (not applicable)
@@ -23,42 +23,55 @@
 
 - name: Skip if not a VM
   ansible.builtin.debug:
-    msg: "Not running in a VM - skipping optimizations"
+    msg: "Not running in a VM guest ({{ vm_role | default('host') }}) - skipping all VM optimizations"
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - vm_role != 'guest'
+    - vm_role | default('') != 'guest'
 
+# All VM optimizations and guest tools below are gated on the host actually
+# being a virtualization GUEST. On physical hardware (vm_role == 'host') or a
+# non-Linux host (vm_role undefined), none of this should run - even when the
+# 'vm'/'optimizer' tags are selected. Note: a KVM-capable physical machine
+# reports virtualization_type == 'kvm' while role == 'host', so gating on
+# role (not type) is what keeps guest agents off bare metal.
 - name: Optimize services
   ansible.builtin.include_tasks:
     file: services.yml
+  when: vm_role | default('') == 'guest'
   tags: ['services']
 
 - name: Optimize kernel parameters
   ansible.builtin.include_tasks:
     file: kernel.yml
+  when: vm_role | default('') == 'guest'
   tags: ['kernel']
 
 - name: Optimize GRUB configuration
   ansible.builtin.include_tasks:
     file: grub.yml
+  when: vm_role | default('') == 'guest'
   tags: ['grub']
 
 - name: Optimize disk I/O
   ansible.builtin.include_tasks:
     file: disk.yml
+  when: vm_role | default('') == 'guest'
   tags: ['disk']
 
 - name: Install VM platform tools
   ansible.builtin.include_tasks:
     file: vm_tools.yml
+  when: vm_role | default('') == 'guest'
   tags: ['vm_tools']
 
 - name: Optimize memory usage
   ansible.builtin.include_tasks:
     file: memory.yml
+  when: vm_role | default('') == 'guest'
   tags: ['memory']
 
 - name: Verify VM optimizations
   ansible.builtin.include_tasks:
     file: verify.yml
+  when: vm_role | default('') == 'guest'
   tags: ['verify']

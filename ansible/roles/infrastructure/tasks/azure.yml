@@ -59,9 +59,14 @@
              | ternary('noble', ansible_facts['distribution_release']) }}
 
     - name: Add Azure CLI repository
-      ansible.builtin.apt_repository:
-        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.asc] https://packages.microsoft.com/repos/azure-cli/ {{ azure_cli_codename }} main"
-        filename: azure-cli
+      ansible.builtin.deb822_repository:
+        name: azure-cli
+        types: deb
+        uris: "https://packages.microsoft.com/repos/azure-cli/"
+        suites: "{{ azure_cli_codename }}"
+        components: main
+        signed_by: /usr/share/keyrings/microsoft.asc
+        architectures: amd64
         state: present
 
     - name: Install Azure CLI

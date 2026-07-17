@@ -19,6 +19,7 @@
       - tmux
       - htop
       - lsof
+      - needrestart           # flag daemons needing restart after upgrades (cf. dnf needs-restarting)
       - tree
       - wget
       - bind-utils
@@ -52,6 +53,7 @@
       - tmux
       - htop
       - lsof
+      - needrestart           # flag daemons needing restart after upgrades
       - tree
       - wget
       - dnsutils
@@ -161,37 +163,25 @@
         method: system
       when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-    # Remmina - Remote Desktop Client
-    # Using Flatpak for latest version (PPA discontinued as of 2025)
-    # ignore_errors: Flathub can be slow/unreliable, don't fail build
-    - name: Install Remmina via Flatpak (system-wide)
-      community.general.flatpak:
-        name: org.remmina.Remmina
-        state: present
-        method: system
-      when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-      ignore_errors: true
-      register: remmina_install
-
-    - name: Install Remmina via apt (Ubuntu fallback)
+    # Remmina - Remote Desktop Client (native packages, incl. RDP plugin)
+    - name: Install Remmina + RDP plugin (Ubuntu)
       ansible.builtin.apt:
-        name: remmina
+        name:
+          - remmina
+          - remmina-plugin-rdp
         state: present
-      when:
-        - ansible_facts['distribution'] == 'Ubuntu'
-        - remmina_install is defined
-        - remmina_install is failed
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Warn if Remmina installation failed (Fedora only)
-      ansible.builtin.debug:
-        msg: "WARNING: Remmina Flatpak install failed (Flathub timeout). Install manually: flatpak install flathub org.remmina.Remmina"
-      when:
-        - ansible_facts['distribution'] == 'Fedora'
-        - remmina_install is defined
-        - remmina_install is failed
+    - name: Install Remmina + RDP plugin (Fedora)
+      ansible.builtin.dnf:
+        name:
+          - remmina
+          - remmina-plugins-rdp
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
-# DFE ADMIN TOOLS
+# Hyperi ADMIN TOOLS
 # ============================================================================
 
 - name: Ensure /usr/local/sbin exists

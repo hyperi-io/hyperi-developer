@@ -138,7 +138,7 @@ EXAMPLES:
 NOTES:
     - Requires GNOME Shell to be running
     - Changes take effect immediately (no logout required)
-    - Current mode is saved to ~/.config/dfe/ui-mode
+    - Current mode is saved to ~/.config/hyperi/ui-mode
 
 EOF
 }
@@ -268,7 +268,7 @@ check_gext_installed() {
         print_error "Install it with:"
         print_error "  uv tool install gnome-extensions-cli"
         print_error ""
-        print_error "Or run the full DFE developer setup which includes it."
+        print_error "Or run the full Hyperi developer setup which includes it."
         exit 1
     fi
 }

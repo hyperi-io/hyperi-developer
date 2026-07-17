@@ -1,15 +1,12 @@
 ---
-# GPU Access Configuration for VirGL/virtio-gl Acceleration
-# Uses udev rule to make /dev/dri/* world-readable (mode 0666).
-# Any process can access the GPU without needing render/video group membership.
-#
-# Conditional: only runs if /dev/dri exists (GPU present).
-# Works for both VirGL (VM) and physical GPUs (AMD/NVIDIA).
+# GPU detection + access for RDP hardware encoding.
+# Detects the GPU vendor (physical Intel/AMD/NVIDIA, virtio-gpu VM, or none) and
+# grants the gnome-remote-desktop service account GPU access via render/video
+# group membership (least privilege) instead of world-opening /dev/dri (0666).
 
 # ============================================================================
-# DETECT GPU PRESENCE
+# DETECT GPU PRESENCE + VENDOR
 # ============================================================================
-
 - name: Check if /dev/dri exists (GPU present)
   ansible.builtin.stat:
     path: /dev/dri
@@ -18,55 +15,83 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
 
-# ============================================================================
-# UDEV RULE FOR WORLD-READABLE GPU DEVICES
-# ============================================================================
-
-- name: Deploy udev rule for GPU device permissions
-  ansible.builtin.copy:
-    dest: /etc/udev/rules.d/99-gpu-open-access.rules
-    mode: "0644"
-    content: |
-      # Allow all processes GPU access without render/video group membership
-      # Managed by Ansible (dfe-developer rdp role)
-      SUBSYSTEM=="drm", MODE="0666"
+- name: Detect GPU PCI vendor IDs from DRM cards
+  ansible.builtin.shell:
+    cmd: "cat /sys/class/drm/card[0-9]*/device/vendor 2>/dev/null | sort -u"
+  register: rdp_gpu_vendor_ids
+  changed_when: false
+  failed_when: false
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
     - dri_device.stat.exists | default(false)
+
+# Vendor IDs: 0x8086 Intel, 0x1002 AMD, 0x10de NVIDIA, 0x1af4 virtio
+- name: Set GPU vendor fact
+  ansible.builtin.set_fact:
+    rdp_gpu_vendor: >-
+      {{ 'intel'  if '0x8086' in (rdp_gpu_vendor_ids.stdout | default(''))
+         else 'amd'    if '0x1002' in (rdp_gpu_vendor_ids.stdout | default(''))
+         else 'nvidia' if '0x10de' in (rdp_gpu_vendor_ids.stdout | default(''))
+         else 'virtio' if '0x1af4' in (rdp_gpu_vendor_ids.stdout | default(''))
+         else 'none' }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+- name: Set hardware-encode expectation fact
+  ansible.builtin.set_fact:
+    rdp_hw_encode_expected: "{{ (rdp_gpu_vendor | default('none')) in ['intel', 'amd', 'nvidia', 'virtio'] }}"
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+# ============================================================================
+# GPU ACCESS VIA GROUP MEMBERSHIP (least privilege, replaces world-open 0666)
+# ============================================================================
+- name: Check if gnome-remote-desktop user exists
+  ansible.builtin.getent:
+    database: passwd
+    key: gnome-remote-desktop
+  register: grd_user
+  failed_when: false
+  changed_when: false
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+- name: Grant gnome-remote-desktop GPU access via render/video groups
+  ansible.builtin.user:
+    name: gnome-remote-desktop
+    groups: render,video
+    append: true
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - dri_device.stat.exists | default(false)
+    - not (grd_user.failed | default(true))
+
+# Remove the legacy world-readable/writable rule (MODE=0666 on all of drm).
+- name: Remove legacy world-open GPU udev rule
+  ansible.builtin.file:
+    path: /etc/udev/rules.d/99-gpu-open-access.rules
+    state: absent
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
   notify: reload udev rules
 
 # ============================================================================
-# VERIFY GPU ACCESS
+# STATUS
 # ============================================================================
-
-- name: Check /dev/dri/renderD128 exists
-  ansible.builtin.stat:
-    path: /dev/dri/renderD128
-  register: render_device
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-    - dri_device.stat.exists | default(false)
-
-- name: Display GPU configuration status
+- name: Display GPU detection status
   ansible.builtin.debug:
     msg: |
-      GPU access configured via udev rule (world-readable):
-      - Rule: /etc/udev/rules.d/99-gpu-open-access.rules
-      - /dev/dri: PRESENT
-      - Render device (/dev/dri/renderD128): {{ 'PRESENT' if render_device.stat.exists | default(false) else 'NOT FOUND' }}
-
-      All processes can access GPU devices without group membership.
+      GPU vendor: {{ rdp_gpu_vendor | default('unknown') }}
+      Class: {{ 'VM (virtio)' if ansible_virtualization_role == 'guest' else 'physical' }}
+      /dev/dri: {{ 'PRESENT' if dri_device.stat.exists | default(false) else 'ABSENT (software encode)' }}
+      Hardware encode expected: {{ rdp_hw_encode_expected | default(false) }}
+      GPU access: gnome-remote-desktop in render/video groups (no world-open rule)
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-    - dri_device.stat.exists | default(false)
-
-- name: Display GPU skipped status
-  ansible.builtin.debug:
-    msg: "No GPU detected (/dev/dri not present) - skipping GPU configuration"
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-    - not (dri_device.stat.exists | default(false))

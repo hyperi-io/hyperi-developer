@@ -20,10 +20,14 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 - name: Add OnlyOffice apt repository (Ubuntu)
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/onlyoffice.asc] https://download.onlyoffice.com/repo/debian squeeze main"
+  ansible.builtin.deb822_repository:
+    name: onlyoffice
+    types: deb
+    uris: "https://download.onlyoffice.com/repo/debian"
+    suites: squeeze
+    components: main
+    signed_by: /etc/apt/keyrings/onlyoffice.asc
     state: present
-    filename: onlyoffice
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 - name: Install OnlyOffice Desktop Editors (Ubuntu)

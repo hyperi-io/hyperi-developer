@@ -39,7 +39,7 @@
 - name: Deploy system-wide region dconf defaults
   ansible.builtin.copy:
     content: |
-      # Regional settings - deployed by dfe-developer region tag
+      # Regional settings - deployed by hyperi-developer region tag
       # SSoT: desktop_region={{ desktop_region }}
 
       [org/gnome/system/locale]

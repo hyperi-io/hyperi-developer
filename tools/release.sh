@@ -11,7 +11,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}🚀 DFE Developer Environment - Automated Release${NC}"
+echo -e "${GREEN}🚀 Hyperi Developer Environment - Automated Release${NC}"
 echo ""
 
 # Check if npm dependencies are installed

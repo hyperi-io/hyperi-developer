@@ -6,6 +6,33 @@
 # Note: Most RDP settings are configured via grdctl in service.yml
 # This file handles GNOME desktop optimisations for RDP performance
 
+# The system-wide dconf "local" database and its keyfile directory are not
+# present by default on a fresh GNOME install (confirmed missing on Ubuntu
+# 26.04). Create the directory and ensure the user profile references the
+# local system-db, otherwise the deployed keyfile is never read.
+- name: Ensure system dconf keyfile directory exists
+  ansible.builtin.file:
+    path: /etc/dconf/db/local.d
+    state: directory
+    mode: '0755'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+- name: Ensure dconf user profile reads the local system-db
+  ansible.builtin.lineinfile:
+    path: /etc/dconf/profile/user
+    line: "{{ item }}"
+    create: true
+    mode: '0644'
+  loop:
+    - "user-db:user"
+    - "system-db:local"
+  register: rdp_dconf_profile
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
 - name: Deploy RDP performance dconf profile
   ansible.builtin.copy:
     src: dconf-rdp-performance
@@ -22,7 +49,7 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-    - rdp_dconf_deployed.changed | default(false)
+    - (rdp_dconf_deployed.changed | default(false)) or (rdp_dconf_profile.changed | default(false))
   changed_when: true
 
 - name: Display dconf status

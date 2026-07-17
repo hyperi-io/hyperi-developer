@@ -1,6 +1,6 @@
-# DFE Developer Tools
+# Hyperi Developer Tools
 
-Utility scripts for managing the DFE Developer Environment project.
+Utility scripts for managing the Hyperi Developer Environment project.
 
 ## Release Management
 

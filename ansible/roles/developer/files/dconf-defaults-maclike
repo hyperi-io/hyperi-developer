@@ -1,5 +1,5 @@
-# DFE Developer GNOME defaults - macOS-like style
-# Deployed to /etc/dconf/db/local.d/00-dfe-defaults
+# Hyperi Developer GNOME defaults - macOS-like style
+# Deployed to /etc/dconf/db/local.d/00-hyperi-defaults
 # Run 'dconf update' after modifying
 
 [org/gnome/shell]
@@ -62,7 +62,7 @@ button-layout=':minimize,maximize,close'
 color-scheme='prefer-dark'
 
 [org/gnome/desktop/background]
-# DFE background image (stored in /usr/local, safe from apt/dnf updates)
-picture-uri='file:///usr/local/share/backgrounds/dfe-background.svg'
-picture-uri-dark='file:///usr/local/share/backgrounds/dfe-background.svg'
+# Hyperi background image (stored in /usr/local, safe from apt/dnf updates)
+picture-uri='file:///usr/local/share/backgrounds/hyperi-background.svg'
+picture-uri-dark='file:///usr/local/share/backgrounds/hyperi-background.svg'
 picture-options='zoom'

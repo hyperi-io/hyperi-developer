@@ -1,7 +1,9 @@
 ---
-# TCP optimizations for RDP (low-latency, mobile-friendly)
+# TCP optimizations for RDP (low-latency, mobile-friendly).
+# VM guests only - these are VM-oriented network tunings and must NOT be
+# applied to physical machines (same gating idiom as the vm_optimizer role).
 
-- name: Configure TCP BBR congestion control for RDP
+- name: Configure TCP BBR congestion control for RDP (VM guests only)
   ansible.builtin.copy:
     dest: /etc/sysctl.d/99-rdp-optimization.conf
     content: |
@@ -21,3 +23,14 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - ansible_virtualization_role == 'guest'
+
+# Physical machines: remove the drop-in if a previous run (or older role) left it.
+- name: Remove RDP TCP sysctls on physical machines
+  ansible.builtin.file:
+    path: /etc/sysctl.d/99-rdp-optimization.conf
+    state: absent
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - ansible_virtualization_role != 'guest'
