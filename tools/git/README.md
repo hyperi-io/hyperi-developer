@@ -625,7 +625,7 @@ Both utilities complement each other:
 
 ## License
 
-(c) HyperSec 2025
+(c) 2026 HYPERI PTY LIMITED
 
 Licensed under the Apache License, Version 2.0. See [../../LICENSE](../../LICENSE) file for details.
 
