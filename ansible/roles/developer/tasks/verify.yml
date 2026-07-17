@@ -9,21 +9,26 @@
   failed_when: verify_docker.rc != 0
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Verify OrbStack installed (macOS — provides docker socket + CLI)
-  ansible.builtin.stat:
-    path: /Applications/OrbStack.app
-  register: verify_docker_app
-  # In check_mode the install task didn't actually run, so the app may not
-  # exist yet. Only treat absence as a real failure outside dry-runs.
+# macOS: we install the Docker CLI only and leave the daemon to the user
+# (colima / podman / orbstack — see docker.yml). So verify the CLI is present
+# and do NOT require a running daemon: having no daemon yet is the expected
+# state straight after an install, not a failure.
+- name: Verify Docker CLI installed (macOS — daemon is the user's choice)
+  ansible.builtin.command: docker --version
+  environment:
+    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+  register: verify_docker_cli
+  changed_when: false
+  # In check_mode nothing was installed yet, so absence is expected.
   failed_when:
-    - not verify_docker_app.stat.exists
+    - verify_docker_cli.rc != 0
     - not ansible_check_mode
   when: ansible_facts['distribution'] == 'MacOSX'
 
 - name: Set Docker version fact for macOS
   ansible.builtin.set_fact:
     verify_docker:
-      stdout: "OrbStack installed (launch once for first-time setup; docker CLI auto-configures)"
+      stdout: "{{ verify_docker_cli.stdout | default('docker CLI not detected') }} (daemon not bundled — start colima/podman/orbstack)"
       rc: 0
   when: ansible_facts['distribution'] == 'MacOSX'
 
