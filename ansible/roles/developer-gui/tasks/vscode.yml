@@ -55,10 +55,22 @@
         dest: /etc/apt/keyrings/packages.microsoft.asc
         mode: '0644'
 
+    # Older runs of this playbook wrote vscode.list via apt_repository. Remove it
+    # or apt sees the repo twice (.list + .sources) and warns about duplicates.
+    - name: Remove legacy VS Code .list repo file (superseded by deb822)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/vscode.list
+        state: absent
+
     - name: Add VS Code repository
-      ansible.builtin.apt_repository:
-        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.asc] https://packages.microsoft.com/repos/code stable main"
-        filename: vscode
+      ansible.builtin.deb822_repository:
+        name: vscode
+        types: deb
+        uris: https://packages.microsoft.com/repos/code
+        suites: stable
+        components: main
+        signed_by: /etc/apt/keyrings/packages.microsoft.asc
+        architectures: amd64
         state: present
 
     - name: Install VS Code

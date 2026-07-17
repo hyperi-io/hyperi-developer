@@ -20,10 +20,21 @@
         dest: /etc/apt/keyrings/slack.asc
         mode: '0644'
 
+    # Older runs of this playbook wrote slack.list via apt_repository. Remove it
+    # or apt sees the repo twice (.list + .sources) and warns about duplicates.
+    - name: Remove legacy Slack .list repo file (superseded by deb822)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/slack.list
+        state: absent
+
     - name: Add Slack apt repository
-      ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/slack.asc] https://packagecloud.io/slacktechnologies/slack/debian/ jessie main"
-        filename: slack
+      ansible.builtin.deb822_repository:
+        name: slack
+        types: deb
+        uris: https://packagecloud.io/slacktechnologies/slack/debian/
+        suites: jessie
+        components: main
+        signed_by: /etc/apt/keyrings/slack.asc
         state: present
 
     - name: Install Slack desktop
