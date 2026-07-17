@@ -44,14 +44,17 @@ EXAMPLES:
 
 INVENTORY:
   Default: /tmp/inventory_test.yml
-  Create with:
+  Create with your own hosts (never commit real ones -- this repo is public):
     cat > /tmp/inventory_test.yml << 'INV'
     [fedora]
-    dfe-dev.tyrell.com.au ansible_user=dfe ansible_password=dfe ansible_become_password=dfe
+    fedora-box.example.internal ansible_user=YOU
 
     [ubuntu]
-    dfe-dev-u.tyrell.com.au ansible_user=dfe ansible_password=dfe ansible_become_password=dfe
+    ubuntu-box.example.internal ansible_user=YOU
     INV
+
+  Prefer SSH keys. If a host genuinely needs a password, pass --ask-pass
+  rather than writing one into the inventory.
 EOF
     exit 0
 }
@@ -132,14 +135,16 @@ fi
 # Check inventory exists
 if [[ ! -f "$INVENTORY" ]]; then
     echo "[ERROR] Inventory file not found: $INVENTORY"
-    echo "Create it with:"
+    echo "Create it with your own hosts:"
     echo "  cat > /tmp/inventory_test.yml << 'EOF'"
     echo "  [fedora]"
-    echo "  dfe-dev.tyrell.com.au ansible_user=dfe ansible_password=dfe ansible_become_password=dfe"
+    echo "  fedora-box.example.internal ansible_user=YOU"
     echo ""
     echo "  [ubuntu]"
-    echo "  dfe-dev-u.tyrell.com.au ansible_user=dfe ansible_password=dfe ansible_become_password=dfe"
+    echo "  ubuntu-box.example.internal ansible_user=YOU"
     echo "  EOF"
+    echo ""
+    echo "Prefer SSH keys; use --ask-pass rather than passwords in the file."
     exit 1
 fi
 

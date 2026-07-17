@@ -1,18 +1,21 @@
 ---
-# Delegated scenario — runs against the REAL desktop-derek VM.
+# Delegated scenario -- runs against a REAL, already-existing host.
+#
+# Set MOLECULE_TARGET_HOST and MOLECULE_TARGET_USER (see inventory.yml). This
+# repo is public, so no host is named here.
 #
 # SAFETY: `create` and `destroy` are deliberately ABSENT from test_sequence.
-# The default molecule sequence ends in `destroy`, which against a real
+# The default molecule sequence ends in `destroy`, which against someone's real
 # workstation would be catastrophic. There is nothing to create (the host
-# exists) and nothing may be destroyed. `molecule test -s desktop-derek` is
+# exists) and nothing may be destroyed. `molecule test -s existing-host` is
 # therefore intentionally NOT a full create/destroy cycle.
 #
-# SNAPSHOT THE VM BEFORE RUNNING. `converge` genuinely changes the host — that
-# is the entire point of the scenario.
+# SNAPSHOT THE HOST BEFORE RUNNING. `converge` genuinely changes it -- that is
+# the entire point of the scenario.
 #
-# Preview first, always (the Puppet `noop` habit — tombstones are the
+# Preview first, always (the Puppet `noop` habit -- tombstones are the
 # destructive part of this playbook):
-#     molecule converge -s desktop-derek -- --check --diff
+#     molecule converge -s existing-host -- --check --diff
 
 dependency:
   name: galaxy
@@ -39,7 +42,7 @@ ansible:
     verify: verify.yml
 
 scenario:
-  name: desktop-derek
+  name: existing-host
   # No create / destroy / cleanup: this is a real machine.
   test_sequence:
     - dependency

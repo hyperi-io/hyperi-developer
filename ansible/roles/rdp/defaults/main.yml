@@ -1,12 +1,9 @@
 ---
 # RDP Optimizer - Default Configuration
 
-# RDP credentials for GNOME Remote Desktop
-# These are the default credentials that will be set for RDP access
-# Change these in your inventory or playbook vars to customize
+# RDP credentials for GNOME Remote Desktop.
+#
+# WARNING: these defaults are well-known and this daemon listens on 3389.
+# Override them in your inventory or playbook vars. See the role README.
 rdp_username: "hyperi"
 rdp_password: "hyperi"
-
-# Display refresh rate (Hz) - lower values reduce software encoding CPU load
-# Only relevant for VMs using software RFX encoding (no VA-API H.264)
-rdp_refresh_rate: 30

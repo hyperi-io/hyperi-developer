@@ -1,0 +1,21 @@
+---
+# The Nice=-10 drop-in that service.yml puts on the GRD *user* handover service
+# is silently ignored without this. A user service is spawned by the per-user
+# systemd manager, which is unprivileged, and an unprivileged process cannot
+# lower its own niceness without RLIMIT_NICE headroom. systemd does not warn --
+# the unit just runs at Nice=0 and the drop-in looks like it worked.
+#
+# Only the software-encode path needs the boost, so service.yml gates the
+# drop-in on rdp_hw_encode_expected. The limit here is harmless when unused:
+# it raises a ceiling, it does not renice anything.
+
+- name: Deploy PAM nice limits for GRD priority
+  ansible.builtin.copy:
+    src: rdp-nice-limits.conf
+    dest: /etc/security/limits.d/50-rdp-nice.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome

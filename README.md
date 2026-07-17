@@ -47,7 +47,7 @@ The installer detects your OS and installs the right packages. Run `./install.sh
 # macOS-style dock
 ./install.sh --tags developer,base,maclike
 
-# Core tools (JFrog, Azure CLI, Node.js, Linear CLI)
+# Core tools (Azure CLI, Node.js, OpenVPN, Claude Code)
 ./install.sh --core
 
 # Full install without wallpaper
@@ -60,7 +60,7 @@ The installer detects your OS and installs the right packages. Run `./install.sh
 |-----|-------------|
 | `winlike` | Windows-style taskbar with transparent panel |
 | `maclike` | macOS-style dock (overrides winlike if both specified) |
-| `core` | JFrog CLI, Azure CLI, Node.js, Linear CLI, OpenVPN |
+| `core` | Azure CLI, Node.js, OpenVPN, Claude Code, Gitleaks |
 | `rdp` | GNOME Remote Desktop on port 3389 |
 | `vm` | VM guest optimizations (QEMU/SPICE agents) |
 | `ghostty` | Ghostty terminal (included by default) |
@@ -81,8 +81,8 @@ The installer detects your OS and installs the right packages. Run `./install.sh
 
 **Core tools** (`./install.sh --core`):
 
-- JFrog CLI, Azure CLI
-- Node.js, semantic-release, Linear CLI
+- Azure CLI
+- Node.js, semantic-release
 - OpenVPN 3, Claude Code CLI
 - Slack, Gitleaks, act (GitHub Actions runner)
 

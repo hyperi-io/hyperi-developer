@@ -1,0 +1,496 @@
+#!/usr/bin/env python3
+"""Set up a fast Rust build environment: sccache, mold, and a global Cargo config.
+
+Run it yourself:
+
+    hyperi-rust-setup            # show what it would do, then ask
+    hyperi-rust-setup --check    # show what it would do, change nothing
+    hyperi-rust-setup --yes      # no prompt (this is how Ansible calls it)
+
+Not just for provisioning -- a developer on a machine we do not manage should
+be able to get the same build environment with one command.
+
+What it sets up
+---------------
+sccache caches compiled crates, so a rebuild after `cargo clean`, a branch
+switch, or a dependency bump reuses work instead of redoing it. mold links
+several times faster than the default linker, which dominates the edit-build
+-test loop where linking is most of the wall clock.
+
+Neither is exotic; both come from the distro where the distro has them, so
+they update with everything else.
+
+What it does NOT do
+-------------------
+It does not move target/ directories onto another disk. That was in the
+predecessor to this script, and it is deliberately gone: it is site-specific
+(it assumed a particular machine's disk layout) and its implementation lost
+data. Cargo supports `build.target-dir` per project if you want it back --
+that is the supported route, and it needs no symlinks.
+
+It does not install Rust. Use rustup.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import tomllib
+from datetime import datetime, timezone
+from pathlib import Path
+
+MANAGED_HEADER = "# MANAGED BY hyperi-rust-setup"
+
+# Anything we put in the config must be proven present first -- naming a tool
+# that is not installed breaks every cargo command on the box, which is worse
+# than not configuring it at all.
+LINUX_PACKAGES = ("sccache", "mold", "clang")
+MACOS_PACKAGES = ("sccache",)  # mold is ELF-only; it cannot link Mach-O.
+
+
+class Reporter:
+    """Collects what happened so the run can end with an honest summary."""
+
+    def __init__(self) -> None:
+        self.changed = False
+        self.warnings: list[str] = []
+
+    def info(self, msg: str) -> None:
+        print(f"  {msg}")
+
+    def step(self, msg: str) -> None:
+        print(f"\n== {msg}")
+
+    def change(self, msg: str) -> None:
+        self.changed = True
+        print(f"  CHANGED: {msg}")
+
+    def warn(self, msg: str) -> None:
+        self.warnings.append(msg)
+        print(f"  WARNING: {msg}")
+
+
+def run(
+    cmd: list[str], *, check: bool = False, timeout: int = 600
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        check=check,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+    )
+
+
+def detect_platform() -> str:
+    """Return 'macos', or the Linux distro family we know how to install on."""
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform != "linux":
+        return "unsupported"
+
+    os_release = Path("/etc/os-release")
+    if not os_release.is_file():
+        return "unsupported"
+
+    fields: dict[str, str] = {}
+    for line in os_release.read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        fields[key] = value.strip('"')
+
+    ids = {fields.get("ID", "")} | set(fields.get("ID_LIKE", "").split())
+    if ids & {"fedora", "rhel", "centos"}:
+        return "fedora"
+    if ids & {"debian", "ubuntu"}:
+        return "debian"
+    return "unsupported"
+
+
+def cargo_home() -> Path:
+    """Cargo reads $CARGO_HOME/config.toml, which is NOT always ~/.cargo.
+
+    Getting this wrong writes a file cargo silently ignores.
+    """
+    env = os.environ.get("CARGO_HOME")
+    return Path(env) if env else Path.home() / ".cargo"
+
+
+def _cargo_bin_dirs() -> tuple[Path, ...]:
+    return (cargo_home() / "bin", Path.home() / ".cargo" / "bin")
+
+
+def _on_path(name: str) -> list[Path]:
+    candidates = [Path(d) / name for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+    return [p for p in candidates if p.is_file() and os.access(p, os.X_OK)]
+
+
+def packaged_tool(name: str) -> str | None:
+    """Find a tool EXCLUDING cargo-installed copies.
+
+    Kept separate from resolve_tool so that "is it installed?" cannot be
+    answered "yes" by a leftover cargo binary -- otherwise we would skip
+    installing the packaged copy and keep deferring to the stale one forever.
+    """
+    cargo_dirs = _cargo_bin_dirs()
+    managed = [p for p in _on_path(name) if p.parent not in cargo_dirs]
+    return str(managed[0]) if managed else None
+
+
+def resolve_tool(name: str, rep: Reporter | None = None) -> str | None:
+    """Find a tool, preferring a package-managed copy over a cargo-installed one.
+
+    A leftover `cargo install`ed binary in ~/.cargo/bin usually sits ahead of
+    /usr/bin on PATH, so plain `which` hands back the copy nobody updates --
+    and we would then pin that path into every build on the box as the
+    rustc-wrapper. Prefer the managed one, and say so when we step over a
+    shadow, because the shadow still wins for anything the user types.
+    """
+    found = _on_path(name)
+    if not found:
+        return None
+
+    cargo_dirs = _cargo_bin_dirs()
+    managed = [p for p in found if p.parent not in cargo_dirs]
+    shadowed = [p for p in found if p.parent in cargo_dirs]
+
+    if managed:
+        if shadowed and rep is not None:
+            rep.warn(
+                f"{name}: using the packaged {managed[0]}, but {shadowed[0]} "
+                f"shadows it on PATH -- cargo-installed copies do not auto-update. "
+                f"Remove it with: cargo uninstall {name}"
+            )
+        return str(managed[0])
+
+    if rep is not None:
+        # Do not claim the distro has no package -- we only know none is on PATH
+        # right now. Under --check that is simply "we have not installed it yet".
+        rep.warn(
+            f"{name}: using the cargo-installed {found[0]} -- no packaged copy on "
+            f"PATH. Cargo-installed binaries do not auto-update."
+        )
+    return str(found[0])
+
+
+def target_triple() -> str | None:
+    """Ask rustc what it actually targets rather than guessing from uname."""
+    if shutil.which("rustc") is None:
+        return None
+    proc = run(["rustc", "-vV"])
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        if line.startswith("host:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+
+
+def install_packages(family: str, dry_run: bool, rep: Reporter) -> None:
+    """Install from the system package manager -- the top of the packaging ladder.
+
+    Repo packages are signed, and they update with the rest of the system. The
+    predecessor used `cargo install sccache`, which compiles a large Rust project
+    from source to produce a user-owned binary nobody ever updates -- and pins
+    only its dependencies, not sccache itself. That binary is then wired in as a
+    global rustc-wrapper, so it intercepts every compile on the box. Repo it is.
+    """
+    packages = MACOS_PACKAGES if family == "macos" else LINUX_PACKAGES
+    # packaged_tool, not which: a cargo-installed shadow must not make us think
+    # the packaged copy is already there, or we would defer to the stale binary
+    # forever and never install the one that actually gets updates.
+    missing = [p for p in packages if packaged_tool(p) is None]
+
+    if not missing:
+        rep.info(f"already present: {', '.join(packages)}")
+        return
+
+    if dry_run:
+        rep.info(f"[check] would install: {', '.join(missing)}")
+        return
+
+    if family == "debian":
+        cmd = ["sudo", "apt-get", "install", "-y", *missing]
+    elif family == "fedora":
+        cmd = ["sudo", "dnf", "install", "-y", *missing]
+    elif family == "macos":
+        cmd = ["brew", "install", *missing]
+    else:
+        rep.warn(f"no package manager for platform '{family}'")
+        return
+
+    rep.info(f"installing: {', '.join(missing)}")
+    try:
+        proc = run(cmd, timeout=900)
+    except subprocess.TimeoutExpired:
+        rep.warn(f"install timed out: {' '.join(missing)}")
+        return
+
+    if proc.returncode != 0:
+        # Warn, do not die: a missing accelerator must not fail provisioning.
+        # write_cargo_config() will simply leave out whatever did not land.
+        rep.warn(f"install failed for {', '.join(missing)}: {proc.stderr.strip()}")
+        return
+
+    rep.change(f"installed {', '.join(missing)}")
+
+
+def install_cargo_sweep(dry_run: bool, rep: Reporter) -> None:
+    """cargo-sweep clears out stale build artefacts. Not packaged anywhere, so
+    it comes from cargo -- but it is a plain tool, not wired into every build,
+    so the blast radius is a failed install rather than a broken toolchain.
+    """
+    if shutil.which("cargo-sweep") is not None:
+        rep.info("already present: cargo-sweep")
+        return
+    if shutil.which("cargo") is None:
+        rep.warn("cargo not found -- skipping cargo-sweep")
+        return
+    if dry_run:
+        rep.info("[check] would install cargo-sweep")
+        return
+
+    # cargo-binstall fetches a prebuilt binary; cargo install compiles it.
+    if shutil.which("cargo-binstall") is not None:
+        cmd = ["cargo", "binstall", "--no-confirm", "cargo-sweep"]
+    else:
+        cmd = ["cargo", "install", "cargo-sweep", "--locked"]
+
+    rep.info(f"installing cargo-sweep ({cmd[1]})")
+    try:
+        proc = run(cmd, timeout=900)
+    except subprocess.TimeoutExpired:
+        rep.warn("cargo-sweep install timed out")
+        return
+    if proc.returncode != 0:
+        rep.warn(f"cargo-sweep install failed: {proc.stderr.strip()}")
+        return
+    rep.change("installed cargo-sweep")
+
+
+# ---------------------------------------------------------------------------
+# Cargo config
+# ---------------------------------------------------------------------------
+
+
+def build_config(family: str, rep: Reporter) -> str:
+    """Render the config from what is ACTUALLY installed, resolved to absolute paths.
+
+    Two rules here, both learned the hard way:
+
+    1. Never name a tool we have not found. A config that references a missing
+       sccache makes every `cargo build` on the machine fail.
+    2. Use absolute paths. A bare "sccache" resolves via PATH at compile time,
+       so anything earlier on PATH silently becomes the wrapper for every rustc
+       invocation on the box.
+
+    jobs is deliberately absent: cargo already defaults to the logical CPU
+    count, which beats any number we could hardcode.
+    """
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    lines = [
+        MANAGED_HEADER,
+        f"# Written by hyperi-rust-setup on {stamp}. Re-run it to update.",
+        "#",
+        "# Edits here are overwritten. Per-project .cargo/config.toml wins over",
+        "# this file, so override there.",
+        "",
+    ]
+
+    sccache = resolve_tool("sccache", rep)
+    if sccache:
+        lines += ["[build]", f'rustc-wrapper = "{sccache}"', ""]
+    else:
+        rep.warn("sccache not found -- leaving rustc-wrapper unset")
+
+    if family != "macos":
+        mold = resolve_tool("mold", rep)
+        clang = resolve_tool("clang", rep)
+        triple = target_triple()
+        if mold and clang and triple:
+            lines += [
+                f"[target.{triple}]",
+                f'linker = "{clang}"',
+                f'rustflags = ["-C", "link-arg=-fuse-ld={mold}"]',
+                "",
+            ]
+        elif not triple:
+            rep.warn("could not determine the host target triple -- skipping linker config")
+        else:
+            rep.warn("mold or clang not found -- skipping linker config")
+
+    return "\n".join(lines)
+
+
+def write_cargo_config(family: str, dry_run: bool, rep: Reporter) -> None:
+    home = cargo_home()
+    config = home / "config.toml"
+    content = build_config(family, rep)
+
+    if content.count("\n") <= 6:
+        rep.warn("nothing installed to configure -- not writing a config")
+        return
+
+    if config.is_file():
+        existing = config.read_text(encoding="utf-8")
+        if existing == content:
+            rep.info(f"{config} already correct")
+            return
+        if MANAGED_HEADER not in existing:
+            # Someone else's file. Do not silently eat it -- and say what we
+            # would drop BEFORE doing it, so --check is worth running.
+            _warn_about_lost_keys(existing, rep)
+            if dry_run:
+                rep.info(f"[check] would back up {config} before taking it over")
+            else:
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+                backup = config.with_name(f"config.toml.pre-hyperi-{stamp}")
+                shutil.copy2(config, backup)
+                rep.warn(f"{config} was not managed by us -- backed up to {backup}")
+
+    if dry_run:
+        rep.info(f"[check] would write {config}:")
+        for line in content.splitlines():
+            print(f"      {line}")
+        return
+
+    home.mkdir(parents=True, exist_ok=True)
+    tmp = config.with_name(f".{config.name}.tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, config)  # same dir, so this is atomic
+    rep.change(f"wrote {config}")
+
+
+def _warn_about_lost_keys(existing: str, rep: Reporter) -> None:
+    """Name what the takeover drops, so it is a decision and not a surprise.
+
+    Deliberately does NOT echo the file: a Cargo config can hold registry
+    tokens inline, and this output gets captured by Ansible and CI logs.
+    """
+    try:
+        parsed = tomllib.loads(existing)
+    except tomllib.TOMLDecodeError:
+        rep.warn("the previous config was not valid TOML; it is in the backup")
+        return
+
+    ours = {"build", "target"}
+    dropped = sorted(set(parsed) - ours)
+    if dropped:
+        rep.warn(f"the previous config had sections we do not manage: {', '.join(dropped)}")
+        rep.warn("check the backup and re-add anything you still need")
+
+
+# ---------------------------------------------------------------------------
+# Verify
+# ---------------------------------------------------------------------------
+
+
+def verify(family: str, rep: Reporter) -> None:
+    """Prove the tools run, not merely that they are on disk."""
+    for tool in MACOS_PACKAGES if family == "macos" else LINUX_PACKAGES:
+        path = resolve_tool(tool)
+        if path is None:
+            rep.warn(f"{tool}: not on PATH")
+            continue
+        proc = run([path, "--version"], timeout=30)
+        if proc.returncode != 0:
+            rep.warn(f"{tool}: found at {path} but --version failed")
+            continue
+        rep.info(f"{tool}: {proc.stdout.strip().splitlines()[0]} ({path})")
+
+    config = cargo_home() / "config.toml"
+    if config.is_file():
+        try:
+            tomllib.loads(config.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            rep.warn(f"{config} is not valid TOML: {exc}")
+        else:
+            rep.info(f"{config}: valid")
+    else:
+        rep.info(f"{config}: not present")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="hyperi-rust-setup",
+        description="Set up sccache, mold and a global Cargo config for fast Rust builds.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="show what would change and exit without changing anything",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="do not prompt (how Ansible and other unattended callers invoke it)",
+    )
+    args = parser.parse_args()
+
+    rep = Reporter()
+    family = detect_platform()
+    if family == "unsupported":
+        print(
+            f"ERROR: unsupported platform ({platform.system()}). "
+            "Ubuntu, Debian, Fedora and macOS only.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if shutil.which("cargo") is None:
+        print(
+            "ERROR: cargo not found. Install Rust first (https://rustup.rs), then re-run.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"hyperi-rust-setup: {family}, CARGO_HOME={cargo_home()}")
+
+    if not args.check and not args.yes:
+        print("\nThis will install sccache/mold and take over $CARGO_HOME/config.toml.")
+        print("Re-run with --check to see the detail first, or --yes to skip this prompt.")
+        try:
+            if input("Proceed? [y/N] ").strip().lower() not in {"y", "yes"}:
+                print("Nothing done.")
+                return 0
+        except (EOFError, KeyboardInterrupt):
+            print("\nNothing done.")
+            return 0
+
+    rep.step("Install build tools")
+    install_packages(family, args.check, rep)
+    install_cargo_sweep(args.check, rep)
+
+    rep.step("Global Cargo config")
+    write_cargo_config(family, args.check, rep)
+
+    if not args.check:
+        rep.step("Verify")
+        verify(family, rep)
+
+    if rep.warnings:
+        print(f"\nFinished with {len(rep.warnings)} warning(s):")
+        for warning in rep.warnings:
+            print(f"  - {warning}")
+        # Warnings are not failure: a box without mold still builds.
+        return 0
+
+    print("\nDone." if not args.check else "\nCheck complete -- nothing changed.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

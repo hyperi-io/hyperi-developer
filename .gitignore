@@ -71,7 +71,8 @@ TODO.md
 
 # Keep these even though they have claude in name
 !lib.sh
-!install-*claude*.shansible/tests/.env
+!install-*claude*.sh
+
 ansible/tests/.env
 **/.env
 
@@ -102,9 +103,6 @@ GEMINI.md
 .codex/
 .gemini/
 .cursorrules
-
-# Git worktrees (local dev convenience)
-.worktrees/
 
 # Node / TypeScript build artefacts
 out/

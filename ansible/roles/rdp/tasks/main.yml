@@ -17,6 +17,11 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - not has_gnome
 
+- name: Remove retired RDP machinery
+  ansible.builtin.include_tasks:
+    file: removals.yml
+  tags: ['removals']
+
 - name: Configure GPU groups for VirGL acceleration
   ansible.builtin.include_tasks:
     file: gpu_groups.yml
@@ -57,10 +62,10 @@
     file: vaapi.yml
   tags: ['vaapi']
 
-- name: Configure display refresh rate
+- name: Allow elevated priority for the GRD handover daemon
   ansible.builtin.include_tasks:
-    file: display.yml
-  tags: ['display']
+    file: pam_nice.yml
+  tags: ['pam_nice']
 
 - name: Verify RDP optimizations
   ansible.builtin.include_tasks:

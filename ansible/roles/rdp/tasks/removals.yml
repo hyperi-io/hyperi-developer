@@ -1,0 +1,25 @@
+---
+# Tombstones for the retired xrandr refresh-rate cap.
+#
+# The idea was to cap the display to 30Hz to cut software-encode CPU load. It
+# never worked: it drove xrandr, and GNOME here is Wayland, where XWayland's
+# RandR cannot set the compositor's mode. Every call failed, and the script
+# swallowed the lot with `2>/dev/null || true`, so it looked fine -- the old
+# verify even asserted the script was PRESENT and called that a pass.
+#
+# The real lever is GRD's own max-framerate, which stock GRD hardcodes to
+# 60fps for the PipeWire stream. See the role README.
+#
+# Ansible cannot remove what we simply stop declaring, so hosts provisioned by
+# an older revision keep the dead script and its autostart entry until we say
+# otherwise. That is what these are for.
+
+- name: Remove the retired xrandr refresh-rate machinery
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/rdp-set-refresh-rate
+    - /etc/xdg/autostart/rdp-refresh-rate.desktop
+    - /etc/hyperi-developer/rdp-refresh-rate
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

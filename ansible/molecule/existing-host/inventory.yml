@@ -1,0 +1,18 @@
+---
+# A real, already-existing VM. Molecule does not create or destroy it.
+#
+# This repo is PUBLIC, so the host and user are not hardcoded here -- supply
+# them from the environment (see ansible/tests/.env, which is git-ignored):
+#
+#   export MOLECULE_TARGET_HOST=my-dev-box.example.internal
+#   export MOLECULE_TARGET_USER=me
+#
+# There is no default on purpose. A wrong default would silently point the run
+# at nothing; an empty one fails immediately and says why.
+
+all:
+  hosts:
+    target:
+      ansible_host: "{{ lookup('env', 'MOLECULE_TARGET_HOST') | mandatory }}"
+      ansible_user: "{{ lookup('env', 'MOLECULE_TARGET_USER') | mandatory }}"
+      ansible_python_interpreter: auto_silent

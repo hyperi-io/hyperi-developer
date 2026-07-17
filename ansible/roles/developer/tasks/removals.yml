@@ -37,7 +37,7 @@
 # binary in /usr/local/bin and/or a per-user copy in ~/.cargo/bin. Either will
 # win on PATH over the new install and NOTHING will ever update it.
 #
-# This is not hypothetical: verified on desktop-derek 2026-07-17 —
+# This is not hypothetical: verified on a real long-lived host 2026-07-17 --
 # /usr/local/bin/uv was 0.10.2, root-owned, dated Feb 11, while current is
 # 0.11.29. Five months stale, and `which uv` resolved to it, so the host
 # looked fine.
@@ -89,9 +89,9 @@
 # from Docker's own repo, and on macOS the CLI only. Declared EXPLICITLY rather
 # than left to fall out of a dependency cascade.
 #
-# Verified on desktop-derek 2026-07-17: docker-desktop 4.69.0 was still
-# installed at /opt/docker-desktop (inactive) months after we stopped
-# installing it — Ansible cannot prune what it stops declaring.
+# Verified on a real long-lived host 2026-07-17: docker-desktop 4.69.0 was
+# still installed at /opt/docker-desktop (inactive) months after we stopped
+# installing it -- Ansible cannot prune what it stops declaring.
 #
 # Removing it also takes `pass` and golang-docker-credential-helpers, which are
 # ONLY present as its credential-store dependency (verified: no
@@ -145,7 +145,7 @@
 
 # Binaries older versions dropped in /usr/local/bin and no longer install.
 # All root-owned with no update path, so they linger indefinitely.
-# Verified still present on desktop-derek 2026-07-17: bw, linear.
+# Verified still present on a real long-lived host 2026-07-17: bw, linear.
 #   minikube  — superseded by kind (vanilla kubeadm k8s in docker, closer to
 #               the real clusters our helm/argocd work targets)
 #   bw        — Bitwarden CLI, removed by decision (741e4b2)

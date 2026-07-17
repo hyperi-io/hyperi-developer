@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=RDP Refresh Rate
-Comment=Set display refresh rate for RDP performance
-Exec=/usr/local/bin/rdp-set-refresh-rate
-Hidden=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Phase=Applications

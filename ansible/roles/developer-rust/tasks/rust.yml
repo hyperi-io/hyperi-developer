@@ -222,3 +222,48 @@
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+# ============================================================
+# Build acceleration: sccache + mold
+# ============================================================
+# Delegated to `hyperi-rust-setup`, a standalone script a developer can also
+# run by hand -- the same shape as disk-attach. Ansible just calls it.
+#
+# Everything it does could be inlined here, but then it would only exist for
+# people who run the whole playbook. A dev who wants a fast Rust box on a
+# machine we do not manage should be able to run one command.
+
+- name: Install the hyperi-rust-setup tool
+  ansible.builtin.copy:
+    src: hyperi-rust-setup
+    dest: /usr/local/bin/hyperi-rust-setup
+    owner: root
+    group: root
+    mode: '0755'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+
+- name: Install the hyperi-rust-setup tool (macOS)
+  ansible.builtin.copy:
+    src: hyperi-rust-setup
+    dest: /usr/local/bin/hyperi-rust-setup
+    mode: '0755'
+  become: true
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# --yes because Ansible is the unattended caller; a human running it by hand
+# gets the confirmation prompt instead.
+- name: Configure the Rust build environment
+  ansible.builtin.command:
+    cmd: /usr/local/bin/hyperi-rust-setup --yes
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  environment: "{{ cargo_env }}"
+  register: developer_rust_setup
+  changed_when: "'CHANGED' in developer_rust_setup.stdout"
+  # An optional build accelerator must never abort the run (see S1.T11).
+  failed_when: false
+
+- name: Report Rust build environment setup
+  ansible.builtin.debug:
+    msg: "{{ developer_rust_setup.stdout_lines | default(['(no output)']) }}"
+  when: developer_rust_setup.rc | default(0) != 0

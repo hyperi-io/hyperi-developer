@@ -34,7 +34,7 @@ what we removed is correct here; an allowlist of what is permitted is not.
 |---|---|---|
 | `matrix` | containers | a clean install works on each supported release |
 | `remediation` | containers | an OLD host converges to current, and the old artefacts are GONE |
-| `desktop-derek` | delegated (real VM) | the same, against a real long-lived workstation |
+| `existing-host` | delegated (real machine) | the same, against a real long-lived workstation |
 
 ### matrix
 
@@ -63,12 +63,22 @@ looks fine but isn't: a stale `~/.cargo/bin/uv` shadows the repo uv on PATH,
 so `uv` runs, reports a plausible version, and no system update ever touches
 it again.
 
-### desktop-derek
+### existing-host
 
-Delegated against the real VM. **`create` and `destroy` are deliberately
-absent from this scenario's `test_sequence`** — a real workstation must never
-be created or destroyed by a test run. Snapshot the VM before running it;
-`converge` genuinely changes the host.
+Delegated against a real machine you already have. Point it at one with:
+
+    export MOLECULE_TARGET_HOST=my-dev-box.example.internal
+    export MOLECULE_TARGET_USER=me
+
+No host is named in the repo — this one is public, and an internal hostname in
+a public repo is topology anyone can read. There is no default either: an empty
+value fails immediately and says why, where a wrong default would quietly point
+the run at nothing.
+
+**`create` and `destroy` are deliberately absent from this scenario's
+`test_sequence`** — a real workstation must never be created or destroyed by a
+test run. Snapshot the machine before running it; `converge` genuinely changes
+it.
 
 ## Running
 
@@ -80,14 +90,14 @@ be created or destroyed by a test run. Snapshot the VM before running it;
     # the upgrade path
     molecule test -s remediation
 
-    # against the real VM (snapshot first!)
-    molecule converge -s desktop-derek
-    molecule verify   -s desktop-derek
+    # against a real machine (snapshot first!)
+    molecule converge -s existing-host
+    molecule verify   -s existing-host
 
 Preview destructive tombstones before applying them — this is the Puppet
 `noop` habit, and tombstones are the destructive part of the playbook:
 
-    molecule converge -s desktop-derek -- --check --diff
+    molecule converge -s existing-host -- --check --diff
 
 ## Container coverage limits
 

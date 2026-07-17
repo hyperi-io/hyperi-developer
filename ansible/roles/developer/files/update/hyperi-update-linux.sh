@@ -4,7 +4,7 @@
 # set up on this Ubuntu workstation, in one command:
 #
 #   * APT      (system + 3rd-party repos: docker, vscode, chrome, brave,
-#              git, k8s, azure, gcloud, jfrog, ...)   — needs sudo
+#              git, k8s, azure, gcloud, ...)          — needs sudo
 #   * Snap     (snap packages)                        — needs sudo
 #   * Flatpak  (any flatpak apps + runtimes, e.g. onlyoffice fallback) — user
 #   * Firmware (fwupd)                                — needs sudo

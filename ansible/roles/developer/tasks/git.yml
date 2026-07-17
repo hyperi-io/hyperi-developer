@@ -72,11 +72,19 @@
           {{ (ansible_facts['distribution_version'] is version('24.04', '>'))
              | ternary('noble', ansible_facts['distribution_release']) }}
 
+    # http, not https, on purpose. Launchpad publishes AAAA records, and on a
+    # network with half-working IPv6 the TLS connection hangs rather than
+    # falling back; plain http has been reliable where https was not. apt does
+    # not need the transport for integrity -- signed_by above verifies the
+    # signature on what arrives, whatever carried it. The cost is that an
+    # on-path observer can see which packages we pull.
+    # Worth revisiting: Acquire::ForceIPv4 would keep https and fix the same
+    # root cause, but it is untested here.
     - name: Add git-core PPA repository
       ansible.builtin.deb822_repository:
         name: git-core-ppa
         types: deb
-        uris: "https://ppa.launchpadcontent.net/git-core/ppa/ubuntu"
+        uris: "http://ppa.launchpadcontent.net/git-core/ppa/ubuntu"
         suites: "{{ git_ppa_codename }}"
         components: main
         signed_by: /etc/apt/keyrings/git-core-ppa.gpg

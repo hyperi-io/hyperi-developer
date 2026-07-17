@@ -127,12 +127,59 @@ Login with:
 - Check: `sudo ls -la /etc/gnome-remote-desktop/`
 - Should see: rdp-tls.crt, rdp-tls.key with proper ownership
 
+## Known limitations
+
+### The screencast framerate cannot be capped (waiting on upstream)
+
+GRD hardcodes the PipeWire screencast stream at 60fps. On a virtio-gpu VM with
+no VA-API H.264 encoder, every one of those frames is encoded in software, and
+halving the rate roughly halves that load. There is no supported way to change
+it: `gsettings list-keys org.gnome.desktop.remote-desktop.rdp` on GRD 50.0 has
+no framerate key, and nothing has landed upstream.
+
+We do not ship a workaround. A patched GRD build with a `max-framerate`
+gsettings key was written and tested, and is not adopted here: it meant
+carrying a prebuilt amd64-only `.deb` in the repo, pinned at apt priority 1001,
+which would freeze a network-facing daemon out of security updates
+indefinitely. Trading CVE patches for framerate is the wrong side of that deal.
+
+**Adopt this the moment a `max-framerate` key exists upstream.** When it does,
+the whole change is one line in `files/dconf-rdp-performance`:
+
+```
+[org/gnome/desktop/remote-desktop/rdp]
+max-framerate=uint32 30
+```
+
+Until then the software-encode path leans on the `Nice=-10` priority boost
+(see below) and `enable-animations=false`, which are what we do ship.
+
+### What we do about software encode instead
+
+`rdp_hw_encode_expected` drives this. When no hardware encoder is expected, the
+role deploys a `Nice=-10` systemd drop-in to both the GRD system service and
+the user handover service, and removes it again when hardware encode is
+available. The user-service half needs `RLIMIT_NICE` headroom to take effect --
+an unprivileged systemd user manager cannot lower niceness on its own and
+systemd does not warn when it silently fails to. That is what
+`/etc/security/limits.d/50-rdp-nice.conf` is for.
+
+### Do not restart GRD on a live session
+
+`systemctl restart gnome-remote-desktop.service` kills the GNOME session it is
+serving. This role restarts the service at the end of a run, so **applying it
+over RDP will drop your own connection mid-run**. Apply over SSH, from a local
+console, or accept the reconnect.
+
 ## Files Modified
 
 - `/etc/gnome-remote-desktop/` - System certificates
 - `/etc/sysctl.d/98-rdp-tcp.conf` - TCP optimizations
 - `/etc/sysctl.d/98-rdp-mtu.conf` - MTU settings
-- System dconf settings - Window resize behavior
+- `/etc/security/limits.d/50-rdp-nice.conf` - RLIMIT_NICE headroom for the handover daemon
+- `/etc/systemd/system/gnome-remote-desktop.service.d/priority.conf` - Nice=-10 (software-encode path only)
+- `/etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf` - as above, user service
+- System dconf settings - Window resize behavior, animations off
 
 ## Verification
 

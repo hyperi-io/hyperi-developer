@@ -1,18 +1,33 @@
 ---
+# Test VMs for a manual run against real machines.
+#
+# This repo is PUBLIC, so no real host is named here -- an internal hostname in
+# a public repo is topology anyone can read. Supply your own from the
+# environment (ansible/tests/.env is git-ignored and is the place for them):
+#
+#   export HYPERI_TEST_UBUNTU_HOST=ubuntu-box.example.internal
+#   export HYPERI_TEST_FEDORA_HOST=fedora-box.example.internal
+#   export HYPERI_TEST_USER=you
+#
+# No defaults on purpose: an empty value fails immediately and says why, where
+# a wrong default would quietly point the run at the wrong machine.
+#
+# Authenticate with SSH keys. Do not put passwords here -- use --ask-pass.
+
 all:
   children:
     test_vms:
       hosts:
         ubuntu-test:
-          ansible_host: dfe-dev-u.tyrell.com.au
-          ansible_user: dfe
+          ansible_host: "{{ lookup('env', 'HYPERI_TEST_UBUNTU_HOST') | mandatory }}"
+          ansible_user: "{{ lookup('env', 'HYPERI_TEST_USER') | mandatory }}"
           ansible_python_interpreter: /usr/bin/python3
           ansible_become: true
           ansible_become_method: sudo
 
         fedora-test:
-          ansible_host: dfe-dev.tyrell.com.au
-          ansible_user: dfe
+          ansible_host: "{{ lookup('env', 'HYPERI_TEST_FEDORA_HOST') | mandatory }}"
+          ansible_user: "{{ lookup('env', 'HYPERI_TEST_USER') | mandatory }}"
           ansible_python_interpreter: /usr/bin/python3
           ansible_become: true
           ansible_become_method: sudo

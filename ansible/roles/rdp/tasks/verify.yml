@@ -90,11 +90,10 @@
   changed_when: false
   failed_when: false
 
-- name: Verify refresh rate script deployed
+- name: Verify PAM nice limits deployed
   ansible.builtin.stat:
-    path: /usr/local/bin/rdp-set-refresh-rate
-  register: verify_refresh_rate
-  failed_when: not verify_refresh_rate.stat.exists
+    path: /etc/security/limits.d/50-rdp-nice.conf
+  register: verify_rdp_nice_limits
 
 - name: Display RDP verification
   ansible.builtin.debug:
@@ -109,4 +108,4 @@
       - VA-API H.264 encode: {{ 'AVAILABLE' if verify_vaapi_h264.rc == 0 else 'not available (software/CPU)' }}
       - RDP net sysctls: {{ 'present (VM)' if verify_rdp_tcp_conf.stat.exists else 'absent (physical)' }}
       - GRD Nice=-10 priority: {{ 'configured (software path)' if verify_grd_priority.stat.exists else 'not set (hw-encode or n/a)' }}
-      - Refresh rate cap ({{ rdp_refresh_rate }}Hz): {{ 'CONFIGURED' if verify_refresh_rate.stat.exists else 'MISSING' }}
+      - PAM nice headroom: {{ 'present' if verify_rdp_nice_limits.stat.exists else 'absent (Nice=-10 on the user service would be ignored)' }}
