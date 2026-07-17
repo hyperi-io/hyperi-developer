@@ -4,7 +4,7 @@ This guide walks through creating a Linux virtual machine in Microsoft Hyper-V o
 
 ## Prerequisites
 
-- Windows 11 Pro with Hyper-V enabled (installed by hypersec-windows.ps1)
+- Windows 11 Pro with Hyper-V enabled (installed by hyperi-windows.ps1)
 - Hyper-V Manager installed
 - Linux ISO file downloaded (e.g., Fedora Workstation Live ISO)
 - Minimum 4GB RAM available for the VM
@@ -63,7 +63,7 @@ Set up network connectivity for your VM:
 - Provides NAT (Network Address Translation)
 - VMs can access internet and host
 - No additional configuration needed
-- Automatically configured by hypersec-windows.ps1 script
+- Automatically configured by hyperi-windows.ps1 script
 
 The Default Switch is perfect for most Linux VMs - it provides internet access without needing to configure bridged networking or manual NAT.
 
@@ -75,7 +75,7 @@ Configure storage for your Linux installation:
 
 **Storage settings:**
 - **Name:** fedora-test.vhdx (or your preferred name)
-- **Location:** C:\VM\Virtual Hard Disks\ (configured by hypersec-windows.ps1)
+- **Location:** C:\VM\Virtual Hard Disks\ (configured by hyperi-windows.ps1)
 - **Size:** 127 GB (maximum)
 
 **Important:** The VHDX is **dynamically expanding**, meaning:
@@ -175,7 +175,7 @@ After creating the VM:
    - Remove or disconnect the ISO from DVD drive
    - Reboot the VM
    - Install Hyper-V Integration Services (usually automatic on modern Linux)
-4. **Configure Linux** - Use HyperSec Linux Hyperi SOE for development environment setup
+4. **Configure Linux** - Use HyperI Linux Hyperi SOE for development environment setup
 
 ## VM Configuration Settings Summary
 
@@ -190,7 +190,7 @@ After creating the VM:
 - Secure Boot: Disabled for installation (can enable later)
 - Boot order: DVD → Hard Drive → Network
 
-**Paths (configured by hypersec-windows.ps1):**
+**Paths (configured by hyperi-windows.ps1):**
 - VM config: C:\VM\Hyper-V\
 - Virtual disks: C:\VM\Virtual Hard Disks\
 - Smart paging: C:\VM\Hyper-V\
@@ -223,7 +223,7 @@ Once your Linux VM is running:
 1. **Complete OS installation** following your distribution's installer
 2. **Install guest additions/integration services** (usually automatic)
 3. **Update the system** - run distro updates
-4. **Install development tools** - use HyperSec Linux Hyperi SOE script
+4. **Install development tools** - use HyperI Linux Hyperi SOE script
 5. **Configure git, SSH, and development environment**
 
 Remember: Windows is your office desk (productivity, Office, Slack, browsers). Linux VMs are your workshop (actual development, coding, testing).

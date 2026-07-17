@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    HyperSec Windows 11 SOE - VM Host and Productivity Configuration
+    HyperI Windows 11 SOE - VM Host and Productivity Configuration
 .DESCRIPTION
     Configures Windows 11 as a secure VM host for productivity work and Linux development VMs.
 
@@ -11,7 +11,7 @@
       - VM hosting: Hyper-V with full security stack (VBS, Credential Guard, HVCI)
       - Office automation and business tasks
 
-    Actual HyperSec code development happens in Linux VMs configured with the HyperSec Linux Hyperi
+    Actual HyperI code development happens in Linux VMs configured with the HyperI Linux Hyperi
     developer SOE - NOT natively on Windows. Windows is your comfortable office chair; Linux VMs
     are where you write code.
 
@@ -22,7 +22,7 @@
     security features is intentional or coincidental is left as an exercise for the reader.
     Either way, we're not trading security for convenience.
 
-    For legacy VMware users: See hypersec-windows-vmware.ps1 (DEPRECATED - unmaintained)
+    For legacy VMware users: See hyperi-windows-vmware.ps1 (DEPRECATED - unmaintained)
 .PARAMETER SkipBrowserConfig
     Skip Firefox default browser configuration
 .PARAMETER IncludeM365
@@ -32,11 +32,11 @@
 .PARAMETER ShowHelp
     Display detailed help information about this script
 .EXAMPLE
-    .\hypersec-windows.ps1
-    .\hypersec-windows.ps1 -SkipBrowserConfig
-    .\hypersec-windows.ps1 -IncludeM365
-    .\hypersec-windows.ps1 -SkipVSCode
-    .\hypersec-windows.ps1 -ShowHelp
+    .\hyperi-windows.ps1
+    .\hyperi-windows.ps1 -SkipBrowserConfig
+    .\hyperi-windows.ps1 -IncludeM365
+    .\hyperi-windows.ps1 -SkipVSCode
+    .\hyperi-windows.ps1 -ShowHelp
 #>
 
 param(
@@ -254,14 +254,14 @@ function Show-Help {
     $helpText = @"
 
 ====================================================
-    HyperSec Windows 11 SOE Configuration
+    HyperI Windows 11 SOE Configuration
 ====================================================
 
 PURPOSE:
     Prepares Windows 11 as a secure VM host for productivity work and Linux development VMs.
 
     IMPORTANT: This script configures Windows for productivity tools (Office, Slack, browsers)
-    and VM hosting. Actual HyperSec code development happens in Linux VMs using the HyperSec
+    and VM hosting. Actual HyperI code development happens in Linux VMs using the HyperI
     Linux Hyperi developer SOE - NOT natively on Windows.
 
     Think of it this way:
@@ -340,7 +340,7 @@ DEVELOPMENT WORKFLOW:
       - VM hosting with Hyper-V
       - Office automation tasks
 
-    Linux VM (separate - HyperSec Linux Hyperi SOE):
+    Linux VM (separate - HyperI Linux Hyperi SOE):
       - Actual code development and compilation
       - Development tools and IDEs
       - Testing and debugging
@@ -348,23 +348,23 @@ DEVELOPMENT WORKFLOW:
 
 EXAMPLES:
     # Standard installation
-    .\hypersec-windows.ps1
+    .\hyperi-windows.ps1
 
     # Skip VSCode when running from VSCode
-    .\hypersec-windows.ps1 -SkipVSCode
+    .\hyperi-windows.ps1 -SkipVSCode
 
     # Include Microsoft 365
-    .\hypersec-windows.ps1 -IncludeM365
+    .\hyperi-windows.ps1 -IncludeM365
 
     # Full installation without browser config
-    .\hypersec-windows.ps1 -SkipBrowserConfig -IncludeM365
+    .\hyperi-windows.ps1 -SkipBrowserConfig -IncludeM365
 
 NOTES:
     - Installs Chocolatey if not present
     - Creates automatic system restore points
     - Requires restart after Hyper-V installation
     - ATP onboarding package (optional): drop in script directory
-    - Log file: %USERPROFILE%\hypersec-windows.log (overwrites previous)
+    - Log file: %USERPROFILE%\hyperi-windows.log (overwrites previous)
 
 "@
     Write-Host $helpText -ForegroundColor Cyan
@@ -1774,7 +1774,7 @@ public class DisplayResolution {
         
         # Create output PNG path in system wallpapers directory
         $wallpaperDir = "${env:WINDIR}\Web\Wallpaper"
-        $pngPath = Join-Path $wallpaperDir "hypersec-wallpaper.png"
+        $pngPath = Join-Path $wallpaperDir "hyperi-wallpaper.png"
         
         # Verify wallpaper directory exists and is writable
         Write-Log "  Checking wallpaper directory: $wallpaperDir" "White"
@@ -1782,7 +1782,7 @@ public class DisplayResolution {
             Write-Log "    [WARN] Windows wallpaper directory not found: $wallpaperDir" "Yellow"
             # Fallback to a different location
             $wallpaperDir = Join-Path $env:PUBLIC "Pictures"
-            $pngPath = Join-Path $wallpaperDir "hypersec-wallpaper.png"
+            $pngPath = Join-Path $wallpaperDir "hyperi-wallpaper.png"
             Write-Log "    Using fallback location: $wallpaperDir" "White"
         }
         
@@ -1999,7 +1999,7 @@ public class Wallpaper {
                 Write-Log "    [WARN] Could not set logon background: $_" "Yellow"
             }
             
-            Write-Log "[OK] HyperSec wallpaper set as system default and logon background: $pngPath" "Green"
+            Write-Log "[OK] HyperI wallpaper set as system default and logon background: $pngPath" "Green"
         }
         else {
             Write-Log "[WARN] Failed to convert SVG to PNG" "Yellow"
@@ -2174,10 +2174,26 @@ function Install-HyperV {
         try {
             $defaultSwitch = Get-VMSwitch -Name "Default Switch" -ErrorAction SilentlyContinue
             if ($defaultSwitch) {
-                $hyperSecScripts = "C:\ProgramData\HyperSec\scripts"
-                if (-not (Test-Path $hyperSecScripts)) { New-Item -Path $hyperSecScripts -ItemType Directory -Force | Out-Null }
+                # Clean up the pre-rename task and directory. Renaming them in
+                # this script does NOT touch a machine that already ran the old
+                # one: the HyperSec-named task stays registered and keeps firing
+                # its own copy of the script at every boot, alongside the new
+                # one. Both would run. Remove the old before creating the new.
+                $legacyTask = Get-ScheduledTask -TaskName "HyperSec-EnsureDefaultSwitchForVMs" -ErrorAction SilentlyContinue
+                if ($legacyTask) {
+                    Unregister-ScheduledTask -TaskName "HyperSec-EnsureDefaultSwitchForVMs" -Confirm:$false -ErrorAction SilentlyContinue
+                    Write-Log "    [OK] Removed the retired 'HyperSec-EnsureDefaultSwitchForVMs' task" "Yellow"
+                }
+                $legacyScripts = "C:\ProgramData\HyperSec\scripts"
+                if (Test-Path $legacyScripts) {
+                    Remove-Item -Path $legacyScripts -Recurse -Force -ErrorAction SilentlyContinue
+                    Write-Log "    [OK] Removed the retired $legacyScripts" "Yellow"
+                }
 
-                $netScriptPath = Join-Path $hyperSecScripts "Ensure-DefaultSwitch.ps1"
+                $hyperIScripts = "C:\ProgramData\HyperI\scripts"
+                if (-not (Test-Path $hyperIScripts)) { New-Item -Path $hyperIScripts -ItemType Directory -Force | Out-Null }
+
+                $netScriptPath = Join-Path $hyperIScripts "Ensure-DefaultSwitch.ps1"
                 $netScript = @'
 $ErrorActionPreference = "SilentlyContinue"
 Import-Module Hyper-V -ErrorAction SilentlyContinue
@@ -2206,8 +2222,8 @@ foreach ($vm in $allVMs) {
                     $trigger2 = New-ScheduledTaskTrigger -AtLogOn
                     $triggers = @($trigger1, $trigger2)
                     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest -LogonType ServiceAccount
-                    Register-ScheduledTask -TaskName "HyperSec-EnsureDefaultSwitchForVMs" -Action $action -Trigger $triggers -Principal $principal -Force | Out-Null
-                    Write-Log "    [OK] Scheduled task 'HyperSec-EnsureDefaultSwitchForVMs' configured" "Green"
+                    Register-ScheduledTask -TaskName "HyperI-EnsureDefaultSwitchForVMs" -Action $action -Trigger $triggers -Principal $principal -Force | Out-Null
+                    Write-Log "    [OK] Scheduled task 'HyperI-EnsureDefaultSwitchForVMs' configured" "Green"
                 }
                 catch {
                     Write-Log "    [WARN] Could not register scheduled task for default switch enforcement: $_" "Yellow"
@@ -2411,8 +2427,8 @@ if ($FailedPackages.Count -gt 0) {
 Write-Log ""
 Write-Log "DEVELOPMENT WORKFLOW REMINDER:" "Cyan"
 Write-Log "  This Windows machine is now configured as a VM host for productivity work." "White"
-Write-Log "  Actual HyperSec code development should be done in Linux VMs using the" "White"
-Write-Log "  HyperSec Linux Hyperi developer SOE - not natively on Windows." "White"
+Write-Log "  Actual HyperI code development should be done in Linux VMs using the" "White"
+Write-Log "  HyperI Linux Hyperi developer SOE - not natively on Windows." "White"
 Write-Log ""
 Write-Log "  Windows: Productivity, office tasks, communication, VM hosting" "White"
 Write-Log "  Linux VM: Development, coding, testing, compilation" "White"

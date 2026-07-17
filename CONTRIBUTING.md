@@ -180,7 +180,7 @@ All scripts must have a standardized header:
 
 - [ ] All tests pass (ShellCheck and BATS)
 - [ ] Code follows project style guidelines
-- [ ] Documentation updated (README.md, STATE.md)
+- [ ] Documentation updated (README.md, docs/ROLE-TASK-MAPPING.md)
 - [ ] CHANGELOG.md updated if applicable
 - [ ] Commit messages follow conventional format
 - [ ] No merge conflicts with main branch
@@ -238,7 +238,7 @@ When adding functions to lib.sh:
 1. Add function in appropriate section
 2. Include error handling
 3. Add BATS unit test in `tests/03-lib-functions.bats`
-4. Document function in STATE.md
+4. Document the function in the role README
 
 Example:
 
@@ -300,7 +300,15 @@ All contributions must pass:
 
 **Test Systems:**
 
-For HyperSec developers, test systems are available. See STATE.md (not public) for access details.
+For HyperI staff, test systems are available internally. Everyone else: point
+the test tooling at your own hosts via the environment (see
+`ansible/inventories/dev/inventory.yml` and `ansible/tests/.env.sample`), or use
+the container matrix, which needs no hosts at all:
+
+```bash
+molecule test -s matrix                    # clean install, Ubuntu + Fedora, n and n-1
+ansible/tests/update/test-hyperi-update.sh # hyperi-update across the same matrix
+```
 
 **Fedora (clean VM):**
 ```bash
@@ -408,7 +416,7 @@ Report issues to project maintainers via GitHub Issues.
 
 ## Additional Resources
 
-- [STATE.md](STATE.md) - Detailed project context and design decisions
+- [docs/ROLE-TASK-MAPPING.md](docs/ROLE-TASK-MAPPING.md) - Role and tag taxonomy
 - [README.md](README.md) - Project overview and quick start
 - [CHANGELOG.md](CHANGELOG.md) - Version history
 - [LICENSE](LICENSE) - Apache License 2.0 text
@@ -416,7 +424,7 @@ Report issues to project maintainers via GitHub Issues.
 ## Questions?
 
 - Open a GitHub Issue for questions
-- Check [STATE.md](STATE.md) for development context
+- Check [docs/ROLE-TASK-MAPPING.md](docs/ROLE-TASK-MAPPING.md) for the role and tag taxonomy
 - Review existing PRs for examples
 
 Thank you for contributing to Hyperi Developer Environment!

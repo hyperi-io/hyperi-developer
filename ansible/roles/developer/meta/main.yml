@@ -1,8 +1,8 @@
 ---
 galaxy_info:
-  author: HyperSec
+  author: HyperI
   description: Hyperi base developer environment setup
-  company: HyperSec
+  company: HyperI
   license: Apache-2.0
   min_ansible_version: "2.20"
   platforms:

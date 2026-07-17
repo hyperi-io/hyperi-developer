@@ -24,3 +24,21 @@ rdp_credentials_file: /etc/hyperi/rdp-credentials
 # ~143 bits -- far past anything that matters for a LAN-facing RDP daemon,
 # and still selectable/pasteable.
 rdp_password_length: 24
+
+# Subject of the self-signed TLS certificate GNOME Remote Desktop presents.
+#
+# Overridable because this repo is public and generic: hardcoding one company's
+# jurisdiction into everyone's certificate is presumptuous. Nothing verifies a
+# self-signed cert's subject, so this is cosmetic -- it is what a client shows
+# when it asks whether to trust the host.
+#
+# Existing hosts keep whatever subject they were built with: certificates.yml
+# guards on `creates:`, so this only affects a host with no cert yet. Delete
+# /var/lib/gnome-remote-desktop/rdp-tls.{crt,key} and re-run to reissue --
+# which changes the fingerprint, so every client will ask to trust it again.
+rdp_cert_org: "HyperI"
+rdp_cert_country: "AU"
+rdp_cert_state: "NSW"
+rdp_cert_locality: "Sydney"
+rdp_cert_subject: >-
+  /C={{ rdp_cert_country }}/ST={{ rdp_cert_state }}/L={{ rdp_cert_locality }}/O={{ rdp_cert_org }}/CN={{ ansible_hostname }}

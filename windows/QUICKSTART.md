@@ -1,4 +1,4 @@
-# HyperSec Windows SOE - Quick Start
+# HyperI Windows SOE - Quick Start
 
 Your Windows 11 machine configured with proper security in about 20 minutes.
 
@@ -38,13 +38,13 @@ Right-click PowerShell, **Run as administrator**, then:
 
 ```powershell
 # Standard installation with Hyper-V
-.\hypersec-windows.ps1
+.\hyperi-windows.ps1
 
 # Skip VSCode if you're running from VSCode
-.\hypersec-windows.ps1 -SkipVSCode
+.\hyperi-windows.ps1 -SkipVSCode
 
 # Include Microsoft 365 installation
-.\hypersec-windows.ps1 -IncludeM365
+.\hyperi-windows.ps1 -IncludeM365
 ```
 
 ### Step 3: Restart
@@ -116,8 +116,8 @@ The script sets up:
 
 ### Log Files
 Check logs in your home directory if something goes wrong:
-- `%USERPROFILE%\hypersec-windows.log` - Installation and configuration details
-- `%USERPROFILE%\hypersec-windows-vmware.log` - VMware script log (if used)
+- `%USERPROFILE%\hyperi-windows.log` - Installation and configuration details
+- `%USERPROFILE%\hyperi-windows-vmware.log` - VMware script log (if used)
 
 ## Advanced Options
 
@@ -170,7 +170,7 @@ A few things you'll need to do manually after the script runs:
 - **Security enabled** - all Windows 11 security features active, nothing disabled
 
 ### About VMware
-The old VMware-focused approach is deprecated. While VMware provides better Linux VM performance, it requires disabling VBS, Credential Guard, HVCI, and other core security features. In 2025, that's not an acceptable trade-off for most environments. If you absolutely need VMware, the `hypersec-windows-vmware.ps1` script is still there, but it won't be maintained.
+The old VMware-focused approach is deprecated. While VMware provides better Linux VM performance, it requires disabling VBS, Credential Guard, HVCI, and other core security features. In 2025, that's not an acceptable trade-off for most environments. If you absolutely need VMware, the `hyperi-windows-vmware.ps1` script is still there, but it won't be maintained.
 
 ---
 

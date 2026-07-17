@@ -44,7 +44,8 @@ usage() {
 hyperi-update — update Homebrew, uv, rustup, Claude Code and macOS in one go.
 
 Usage:
-  hyperi-update            Run all updates now.
+  hyperi-update            Confirm, then run all updates.
+  hyperi-update --yes      Skip the confirmation (for scripts/Ansible).
   hyperi-update --install  Create a clickable "Hyperi Update" app in /Applications.
   hyperi-update --help     Show this help.
 EOF
@@ -105,12 +106,33 @@ EOF
 }
 
 # --- argument handling ----------------------------------------------------
+ASSUME_YES=0
+
 case "${1:-}" in
   --install)  install_app; exit $? ;;
   -h|--help)  usage; exit 0 ;;
-  "")         ;;  # no args: fall through and run all updates
+  -y|--yes)   ASSUME_YES=1 ;;
+  "")         ;;  # no args: fall through and confirm, then run all updates
   *)          print -u2 "hyperi-update: unknown option '$1'"; usage; exit 2 ;;
 esac
+
+# --- confirm --------------------------------------------------------------
+# This upgrades every formula and cask on the machine and can pull macOS system
+# updates. Say so first. --yes is how Ansible and the .app launcher skip it.
+if (( ! ASSUME_YES )); then
+  print -P "%F{magenta}hyperi-update%f will update EVERYTHING on this Mac:\n"
+  have brew   && print "  - all Homebrew formulae and casks (including --greedy self-updaters)"
+  have uv     && print "  - uv tools"
+  have rustup && print "  - rust toolchains"
+  have claude && print "  - Claude Code CLI"
+  print "  - macOS system and security updates"
+  print "\nIt may take a while, and macOS updates may want to restart.\n"
+  read -r "confirm?Proceed? [y/N] "
+  case "${confirm:l}" in
+    y|yes) ;;
+    *) print "Nothing done."; exit 0 ;;
+  esac
+fi
 
 print -P "%F{magenta}╔════════════════════════════════════════╗%f"
 print -P "%F{magenta}║   Updating everything on $(scutil --get ComputerName 2>/dev/null || hostname)%f"

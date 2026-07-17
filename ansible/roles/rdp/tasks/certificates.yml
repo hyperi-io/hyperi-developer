@@ -16,9 +16,17 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
 
+# The subject comes from rdp_cert_subject (see defaults) rather than being
+# hardcoded: this repo is public, and one company's jurisdiction does not belong
+# in everyone's certificate. `creates:` means an existing host keeps the cert it
+# has -- reissuing would change the fingerprint and make every client re-prompt.
 - name: Generate self-signed certificate for RDP
   ansible.builtin.command:
-    cmd: openssl req -new -newkey rsa:4096 -days 730 -nodes -x509 -subj "/C=AU/ST=NSW/L=Sydney/O=HyperSec/CN={{ ansible_hostname }}" -keyout /var/lib/gnome-remote-desktop/rdp-tls.key -out /var/lib/gnome-remote-desktop/rdp-tls.crt
+    cmd: >-
+      openssl req -new -newkey rsa:4096 -days 730 -nodes -x509
+      -subj "{{ rdp_cert_subject | trim }}"
+      -keyout /var/lib/gnome-remote-desktop/rdp-tls.key
+      -out /var/lib/gnome-remote-desktop/rdp-tls.crt
   args:
     creates: /var/lib/gnome-remote-desktop/rdp-tls.crt
   when:

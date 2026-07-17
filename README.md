@@ -195,7 +195,7 @@ cd hyperi-developer
 
 ## Windows 11 SOE
 
-Automated Windows 11 Standard Operating Environment setup for HyperSec Hyperi developers.
+Automated Windows 11 Standard Operating Environment setup for HyperI developers.
 
 ### Overview
 
@@ -206,10 +206,10 @@ Automated Windows 11 configuration for development teams. Installs essential sof
 ```powershell
 # Run as Administrator in PowerShell
 cd windows
-.\hypersec-windows.ps1                    # Complete SOE with Hyper-V
-.\hypersec-windows.ps1 -SkipVSCode       # Skip VSCode (if running from VSCode)
-.\hypersec-windows.ps1 -IncludeM365      # Include Microsoft 365 installation
-.\hypersec-windows.ps1 -ShowHelp         # Display detailed help
+.\hyperi-windows.ps1                    # Complete SOE with Hyper-V
+.\hyperi-windows.ps1 -SkipVSCode       # Skip VSCode (if running from VSCode)
+.\hyperi-windows.ps1 -IncludeM365      # Include Microsoft 365 installation
+.\hyperi-windows.ps1 -ShowHelp         # Display detailed help
 ```
 
 ### Software Installation
@@ -261,7 +261,7 @@ cd windows
 
 ### Why Hyper-V Instead of VMware?
 
-VMware Workstation delivers better Linux VM performance, but requires disabling Windows security features (VBS, Credential Guard, HVCI, Core Isolation). We prioritize security over marginal performance gains. For legacy VMware users, `hypersec-windows-vmware.ps1` exists but is deprecated and unmaintained.
+VMware Workstation delivers better Linux VM performance, but requires disabling Windows security features (VBS, Credential Guard, HVCI, Core Isolation). We prioritize security over marginal performance gains. For legacy VMware users, `hyperi-windows-vmware.ps1` exists but is deprecated and unmaintained.
 
 ## Contributing
 

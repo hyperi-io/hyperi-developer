@@ -103,14 +103,18 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
 
-# One-command "update everything" tool + clickable GUI app (Ubuntu/macOS only)
+# One-command "update everything" tool + clickable GUI app.
+#
+# Fedora was excluded HERE, at the include, as well as inside the file -- so
+# fixing the script alone would have changed nothing on Fedora. Both gates had
+# to move.
 - name: Install hyperi-update command and GUI launcher
   ansible.builtin.include_tasks:
     file: update_command.yml
     apply:
       tags: ['update_command']
   tags: ['update_command']
-  when: ansible_facts['distribution'] in ['Ubuntu', 'MacOSX']
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'MacOSX']
 
 - name: Verify base tools installation
   ansible.builtin.include_tasks:

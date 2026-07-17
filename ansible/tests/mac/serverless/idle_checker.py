@@ -12,8 +12,18 @@ Note: Scaleway enforces 24h minimum lease from deployment.
 """
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 import requests
+
+# The prefix that marks a server as OURS TO DELETE. This is the only thing
+# standing between this function and someone else's Mac, so it lives in one
+# place rather than being repeated as a string literal.
+#
+# Renaming it is NOT a cosmetic change: the reaper stops recognising any server
+# still named with the old prefix, and those keep running and keep billing.
+# Rename the servers first, or match both prefixes through the transition.
+TEST_MAC_PREFIX = 'hyperi-test-mac-'
+
 
 def handle(event, context):
     """Main handler for Scaleway Function"""
@@ -33,10 +43,10 @@ def handle(event, context):
     kept = []
 
     for server in servers:
-        # Check for hypersec-test-mac-* prefix in server name
+        # Anything without our prefix is not ours. Skip it -- do not delete it.
         server_name = server.get('name', '')
-        if not server_name.startswith('hypersec-test-mac-'):
-            kept.append(f"{server_name}: not a test Mac (no hypersec-test-mac- prefix)")
+        if not server_name.startswith(TEST_MAC_PREFIX):
+            kept.append(f"{server_name}: not a test Mac (no {TEST_MAC_PREFIX} prefix)")
             continue
 
         # Check server age

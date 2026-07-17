@@ -1,45 +1,51 @@
 #!/usr/bin/env bash
 #
-# hyperi-update (Linux) — update everything the hyperi-developer installer
-# set up on this Ubuntu workstation, in one command:
+# hyperi-update (Linux) — update everything the hyperi-developer installer set
+# up on this workstation, in one command. Ubuntu/Debian (apt) and Fedora (dnf).
 #
-#   * APT      (system + 3rd-party repos: docker, vscode, chrome, brave,
-#              git, k8s, azure, gcloud, ...)          — needs sudo
-#   * Snap     (snap packages)                        — needs sudo
-#   * Flatpak  (any flatpak apps + runtimes, e.g. onlyoffice fallback) — user
-#   * Firmware (fwupd)                                — needs sudo
-#   * uv tools (gnome-extensions-cli, ...)            — user
-#   * rustup   (Rust toolchains)                      — user
-#   * Claude Code CLI (self-installed under ~/.local) — user
+#   * System packages  (apt or dnf, incl. 3rd-party repos: docker, vscode,
+#                       chrome, brave, git, k8s, azure, gcloud, opentofu, ...)
+#   * Snap             (if installed)                   — needs sudo
+#   * Flatpak          (apps + runtimes)                — user
+#   * Firmware         (fwupd)                          — needs sudo
+#   * uv tools         (gnome-extensions-cli, ...)      — user
+#   * rustup           (Rust toolchains)                — user
+#   * Claude Code CLI  (self-installed under ~/.local)  — user
 #
-# Each section is independent and self-guarding: a tool that isn't installed
-# is skipped (printed, not fatal), and a failing step is recorded and reported
-# in the summary without aborting the rest. At the end, if the system needs it,
-# you get a reboot prompt (default: No).
+# Each section is independent and self-guarding: a tool that isn't installed is
+# skipped (printed, not fatal), and a failing step is recorded and reported in
+# the summary without aborting the rest. At the end, if the system needs it, you
+# get a reboot prompt (default: No).
 #
-# Run with:  hyperi-update      (prompts once for sudo)
+# Run with:  hyperi-update          (confirms, then prompts once for sudo)
+#            hyperi-update --yes    (no confirmation — for scripts/Ansible)
 #            hyperi-update --help
 
 set -uo pipefail
 
-# Make user-level tools reachable even when launched from a GUI/.desktop
-# entry that doesn't source the login shell (uv/rustup live in ~/.cargo/bin,
-# claude in ~/.local/bin).
+# Make user-level tools reachable even when launched from a GUI/.desktop entry
+# that doesn't source the login shell (uv/rustup live in ~/.cargo/bin, claude in
+# ~/.local/bin).
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+ASSUME_YES=0
 
 usage() {
     cat <<EOF
-hyperi-update — update APT, Snap, Flatpak, firmware, uv tools, rustup and
-                Claude Code in one go.
+hyperi-update — update system packages, Snap, Flatpak, firmware, uv tools,
+                rustup and Claude Code in one go.
 
 Usage:
-  hyperi-update          Run all updates now (prompts once for sudo).
+  hyperi-update          Confirm, then run all updates (prompts once for sudo).
+  hyperi-update --yes    Skip the confirmation. Still prompts for sudo unless
+                         you have a cached ticket or passwordless sudo.
   hyperi-update --help   Show this help.
 EOF
 }
 
 case "${1:-}" in
     -h|--help) usage; exit 0 ;;
+    -y|--yes)  ASSUME_YES=1 ;;
     "")        ;;
     *)         printf 'hyperi-update: unknown option %q\n' "$1" >&2; usage; exit 2 ;;
 esac
@@ -71,6 +77,37 @@ run() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# --- distro ----------------------------------------------------------------
+# Which package manager, decided once. Detect by BINARY, not by /etc/os-release:
+# what matters is whether the tool is there to run, and a Debian derivative we
+# have never heard of still has apt-get.
+PKG_MGR="none"
+if have dnf; then
+    PKG_MGR="dnf"
+elif have apt-get; then
+    PKG_MGR="apt"
+fi
+
+# --- confirm ---------------------------------------------------------------
+# This touches every package on the box, so say so before doing it. --yes is
+# how Ansible and any other unattended caller skips this.
+if [[ "$ASSUME_YES" -eq 0 ]]; then
+    printf '%s%shyperi-update%s will update EVERYTHING on this machine:\n\n' "$BOLD" "$BLUE" "$RESET"
+    printf '  - all system packages (%s), including third-party repos\n' "${PKG_MGR}"
+    have snap     && printf '  - snap packages\n'
+    have flatpak  && printf '  - flatpak apps and runtimes\n'
+    have fwupdmgr && printf '  - device firmware\n'
+    have uv       && printf '  - uv tools\n'
+    have rustup   && printf '  - rust toolchains\n'
+    have claude   && printf '  - Claude Code CLI\n'
+    printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
+    read -r -p "Proceed? [y/N] " confirm
+    case "${confirm,,}" in
+        y|yes) ;;
+        *) printf 'Nothing done.\n'; exit 0 ;;
+    esac
+fi
+
 # --- sudo: ask once, keep alive -------------------------------------------
 section "Authenticating (sudo)"
 if sudo -v; then
@@ -84,16 +121,30 @@ else
     exit 1
 fi
 
-# --- APT -------------------------------------------------------------------
-section "APT — system packages"
-if have apt-get; then
-    run "apt-get update"       sudo apt-get update
-    run "apt-get full-upgrade" sudo apt-get -y full-upgrade
-    run "apt-get autoremove"   sudo apt-get -y autoremove
-    run "apt-get autoclean"    sudo apt-get -y autoclean
-else
-    skip "apt-get not found"
-fi
+# --- System packages -------------------------------------------------------
+case "$PKG_MGR" in
+    apt)
+        section "APT — system packages"
+        run "apt-get update"       sudo apt-get update
+        run "apt-get full-upgrade" sudo apt-get -y full-upgrade
+        run "apt-get autoremove"   sudo apt-get -y autoremove
+        run "apt-get autoclean"    sudo apt-get -y autoclean
+        ;;
+    dnf)
+        section "DNF — system packages"
+        # --refresh forces metadata expiry, so a repo added minutes ago by the
+        # installer is seen now rather than on dnf's next scheduled refresh.
+        run "dnf upgrade"    sudo dnf -y --refresh upgrade
+        run "dnf autoremove" sudo dnf -y autoremove
+        # `clean packages`, not `clean all`: dropping the metadata too just
+        # means re-downloading it on the next run for no benefit.
+        run "dnf clean packages" sudo dnf -y clean packages
+        ;;
+    *)
+        section "System packages"
+        skip "neither dnf nor apt-get found"
+        ;;
+esac
 
 # --- Snap ------------------------------------------------------------------
 section "Snap — snap packages"
@@ -165,21 +216,61 @@ else
 fi
 
 # --- Reboot prompt (only if required) --------------------------------------
-if [[ -f /run/reboot-required || -f /var/run/reboot-required ]]; then
+# The two distros answer this completely differently, and getting it wrong is
+# silent: /run/reboot-required simply never exists on Fedora, so the old
+# apt-only check reported "no reboot required" on every Fedora box forever.
+reboot_needed=1   # 1 = no (shell truth), 0 = yes
+reboot_reason=""
+
+case "$PKG_MGR" in
+    apt)
+        if [[ -f /run/reboot-required || -f /var/run/reboot-required ]]; then
+            reboot_needed=0
+            [[ -f /run/reboot-required.pkgs ]] &&
+                reboot_reason="$(paste -sd, /run/reboot-required.pkgs)"
+        fi
+        ;;
+    dnf)
+        # `dnf needs-restarting`, NOT `-r`. In dnf5 the -r/--reboothint flag
+        # "has no effect, kept for compatibility with DNF 4" -- passing it looks
+        # right and does nothing. Plain needs-restarting IS the dnf4 -r
+        # behaviour. Verified against dnf5 5.4.2 (F44) and 5.2.18 (F43); both
+        # ship the subcommand in the base install, no plugin needed.
+        #
+        # Exit codes, verified rather than assumed:
+        #   0 = no reboot needed
+        #   1 = reboot needed
+        #   2 = no such command (dnf5's code for an unknown subcommand)
+        # So an unavailable subcommand cannot be mistaken for "reboot needed".
+        sudo dnf needs-restarting >/dev/null 2>&1
+        case "$?" in
+            0) reboot_needed=1 ;;
+            1) reboot_needed=0; reboot_reason="dnf needs-restarting" ;;
+            *) skip "dnf needs-restarting unavailable — cannot tell if a reboot is needed" ;;
+        esac
+        ;;
+esac
+
+if [[ "$reboot_needed" -eq 0 ]]; then
     echo
     printf '%s%s    A reboot is required to finish applying updates.%s\n' "$BOLD" "$YELLOW" "$RESET"
-    if [[ -f /run/reboot-required.pkgs ]]; then
-        printf '%s    Triggered by: %s%s\n' "$YELLOW" "$(paste -sd, /run/reboot-required.pkgs)" "$RESET"
+    [[ -n "$reboot_reason" ]] &&
+        printf '%s    Triggered by: %s%s\n' "$YELLOW" "$reboot_reason" "$RESET"
+    if [[ "$ASSUME_YES" -eq 1 ]]; then
+        printf '%s    --yes given: NOT rebooting. Reboot when convenient.%s\n' "$YELLOW" "$RESET"
+    else
+        read -r -p "    Reboot now? [y/N] " answer
+        case "${answer,,}" in
+            y|yes) printf '    Rebooting...\n'; sudo systemctl reboot ;;
+            *)     printf '    Reboot skipped. Remember to reboot later.\n' ;;
+        esac
     fi
-    read -r -p "    Reboot now? [y/N] " answer
-    case "${answer,,}" in
-        y|yes) printf '    Rebooting...\n'; sudo systemctl reboot ;;
-        *)     printf '    Reboot skipped. Remember to reboot later.\n' ;;
-    esac
 else
     echo
     ok "No reboot required."
     # Keep the window readable when launched from the GUI app (non-interactive
     # stdin means double-clicked, not run from an existing terminal).
-    if [[ ! -t 0 ]]; then read -r -p "    Press Enter to close." _ || true; fi
+    if [[ ! -t 0 && "$ASSUME_YES" -eq 0 ]]; then
+        read -r -p "    Press Enter to close." _ || true
+    fi
 fi

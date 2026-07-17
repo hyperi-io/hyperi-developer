@@ -209,4 +209,4 @@ All should show proper values as configured by the optimizer.
 
 - [Main README](../../../README.md) - Overall project documentation
 - [CONTRIBUTING.md](../../../CONTRIBUTING.md) - Development guidelines
-- [STATE.md](../../../STATE.md) - Internal technical context (HyperSec only)
+- [ROLE-TASK-MAPPING.md](../../../docs/ROLE-TASK-MAPPING.md) - Role and tag taxonomy

@@ -158,7 +158,7 @@
           - CRON: Every hour ({{ 'existing' if cron_id is defined else 'created' }})
           - Action: Delete Mac minis idle >23h (before 2nd billing cycle)
           - Checks: CPU usage, network activity
-          - Watches: Any Mac with name prefix 'hypersec-test-mac-'
-          - Projects: hypersec-test-mac-hyperi-developer, hypersec-test-mac-agent
+          - Watches: Any Mac with name prefix 'hyperi-test-mac-'
+          - Projects: hyperi-test-mac-hyperi-developer, hyperi-test-mac-agent
 
           Your test Mac minis will auto-delete after 23h idle!
