@@ -73,7 +73,7 @@ The installer detects your OS and installs the right packages. Run `./install.sh
 - Docker CE + Docker Desktop
 - Git, GitHub CLI, Git LFS
 - kubectl, k9s, kubectx, minikube, ArgoCD, dive, Freelens
-- AWS CLI, Helm, Terraform, Vault
+- AWS CLI, Helm, OpenTofu, OpenBao
 - UV (Python manager)
 - VS Code, Chrome
 - Ghostty terminal (Solarized theme)

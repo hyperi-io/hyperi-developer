@@ -138,7 +138,7 @@ Languages (developer-<lang>):
     cursor            Cursor editor (in developer-typescript-gui)
 
 Infrastructure (infrastructure):
-    cloud             HashiCorp tools + AWS CLI v2
+    cloud             OpenTofu, OpenBao + AWS CLI v2
     azure             Azure CLI
     gcloud            Google Cloud CLI
     k8s               kubectl + helm + k9s + minikube

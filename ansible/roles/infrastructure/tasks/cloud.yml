@@ -1,56 +1,66 @@
 ---
-# Cloud tools installation (AWS CLI, Helm, Terraform, Vault)
+# Cloud tools installation (AWS CLI, Helm, OpenTofu, OpenBao)
 # Note: kubectl moved to k8s.yml
+#
+# NO HASHICORP TOOLS. HashiCorp relicensed the lot to BUSL in 2023 and IBM
+# completed its acquisition in February 2025; we use the open-source forks the
+# Linux Foundation now stewards instead:
+#
+#   terraform -> tofu   (OpenTofu, MPL-2.0)
+#   vault     -> bao    (OpenBao, MPL-2.0)
+#
+# `aws-vault` below is NOT HashiCorp Vault -- it is 99designs/aws-vault, an
+# unrelated tool for keeping AWS credentials in the OS keychain. It stays.
+#
+# Packer has no viable fork (the community never produced one) and is
+# deliberately NOT installed here. hyperi-infra needs it for image builds; its
+# developers install it themselves rather than have us ship a BUSL binary to
+# every workstation.
 
 # ============================================================================
-# HASHICORP REPOSITORY (for Terraform, Vault)
+# OPENTOFU REPOSITORY (Ubuntu only)
 # ============================================================================
+# Fedora packages opentofu natively (verified: 1.11.5 in the f44 release repo,
+# f43 updates), so it needs no vendor repo. Ubuntu does not package it at all
+# (verified against a real 26.04 container: no candidate in main or universe),
+# so we add OpenTofu's own repo -- still auto-updating, one rung down.
+#
+# The suite is literally "any" and the packages are arch-generic, so unlike the
+# HashiCorp repo this needs no LTS-codename mapping and no arch handling.
 
-- name: Configure HashiCorp repository (Ubuntu)
+- name: Configure OpenTofu repository (Ubuntu)
   block:
-    - name: Add HashiCorp GPG key
+    - name: Create keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    # Two keys, both required: the project's signing key and the package
+    # host's. They go in one keyring; apt accepts either signature.
+    - name: Add OpenTofu project GPG key
       ansible.builtin.get_url:
-        url: https://apt.releases.hashicorp.com/gpg
-        dest: /usr/share/keyrings/hashicorp-archive-keyring.asc
+        url: https://get.opentofu.org/opentofu.gpg
+        dest: /etc/apt/keyrings/opentofu.gpg
         mode: '0644'
 
-    # Map unsupported Ubuntu releases to nearest supported LTS
-    # HashiCorp only publishes repos for LTS releases (jammy, noble)
-    - name: Determine HashiCorp repo codename
-      ansible.builtin.set_fact:
-        hashicorp_codename: >-
-          {{ (ansible_facts['distribution_version'] is version('24.04', '>'))
-             | ternary('noble', ansible_facts['distribution_release']) }}
+    - name: Add OpenTofu package host GPG key
+      ansible.builtin.get_url:
+        url: https://packages.opentofu.org/opentofu/tofu/gpgkey
+        dest: /etc/apt/keyrings/opentofu-repo.asc
+        mode: '0644'
 
-    - name: Add HashiCorp repository
+    - name: Add OpenTofu repository
       ansible.builtin.deb822_repository:
-        name: hashicorp
+        name: opentofu
         types: deb
-        uris: "https://apt.releases.hashicorp.com"
-        suites: "{{ hashicorp_codename }}"
+        uris: "https://packages.opentofu.org/opentofu/tofu/any/"
+        suites: any
         components: main
-        signed_by: /usr/share/keyrings/hashicorp-archive-keyring.asc
+        signed_by: /etc/apt/keyrings/opentofu.gpg
         state: present
 
   when: ansible_facts['distribution'] == 'Ubuntu'
-
-- name: Configure HashiCorp repository (Fedora)
-  block:
-    - name: Import HashiCorp GPG key
-      ansible.builtin.rpm_key:
-        state: present
-        key: https://rpm.releases.hashicorp.com/gpg
-
-    - name: Add HashiCorp repository
-      ansible.builtin.yum_repository:
-        name: hashicorp
-        description: HashiCorp Stable
-        baseurl: https://rpm.releases.hashicorp.com/fedora/$releasever/$basearch/stable
-        enabled: true
-        gpgcheck: true
-        gpgkey: https://rpm.releases.hashicorp.com/gpg
-
-  when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
 # AWS CLI V2 (Linux binary install)
@@ -199,25 +209,73 @@
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
-# TERRAFORM & VAULT (from HashiCorp repos)
+# OPENTOFU + OPENBAO
 # ============================================================================
+# Packaging differs per platform, so each takes the best rung available:
+#
+#            tofu                      bao
+#   Fedora   dnf (native)              dnf (native)
+#   Ubuntu   OpenTofu repo (above)     GitHub release .deb (see below)
+#   macOS    brew core                 brew core
+#
+# Verified 2026-07-17 against real containers, not from documentation:
+#   Fedora 44 stable has opentofu 1.11.5 AND openbao 2.5.5. (Fedora's mdapi
+#   reports openbao only in updates-testing because it returns the NEWEST
+#   build; a real `dnf --disablerepo=updates-testing list` shows 2.5.1 in
+#   release and 2.5.5 in updates. Trust dnf, not the API.)
+#   Ubuntu 26.04 has NEITHER in main or universe.
 
-- name: Install Terraform and Vault (Ubuntu)
+- name: Install OpenTofu (Ubuntu)
   ansible.builtin.apt:
-    name:
-      - terraform
-      - vault
+    name: tofu
     state: present
     update_cache: true
   when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Install Terraform and Vault (Fedora)
+- name: Install OpenTofu and OpenBao (Fedora)
   ansible.builtin.dnf:
     name:
-      - terraform
-      - vault
+      - opentofu
+      - openbao
     state: present
   when: ansible_facts['distribution'] == 'Fedora'
+
+# OpenBao publishes no APT repo -- only GitHub release .debs. That is the
+# bottom rung of the packaging ladder (nothing auto-updates it), and it is why
+# hosts out there carry a hand-installed openbao with no update path. We pin an
+# explicit version rather than chase `latest` so a run is reproducible, and
+# hyperi-update refreshes it.
+#
+# Bump openbao_version when a release lands. Fedora and macOS ignore this.
+- name: Install OpenBao (Ubuntu)
+  block:
+    - name: Check the installed OpenBao version
+      ansible.builtin.command:
+        cmd: dpkg-query -W -f='${Version}' openbao
+      register: infrastructure_bao_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Download the OpenBao deb
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}/openbao_{{ openbao_version }}_linux_{{ openbao_deb_arch }}.deb
+        dest: "/tmp/openbao_{{ openbao_version }}_{{ openbao_deb_arch }}.deb"
+        mode: '0644'
+      when: infrastructure_bao_installed.stdout != openbao_version
+
+    - name: Install the OpenBao deb
+      ansible.builtin.apt:
+        deb: "/tmp/openbao_{{ openbao_version }}_{{ openbao_deb_arch }}.deb"
+        state: present
+      when: infrastructure_bao_installed.stdout != openbao_version
+
+    - name: Remove the downloaded deb
+      ansible.builtin.file:
+        path: "/tmp/openbao_{{ openbao_version }}_{{ openbao_deb_arch }}.deb"
+        state: absent
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
 
 # ============================================================================
 # macOS - Install via Homebrew
@@ -235,22 +293,18 @@
         name: helm
         state: present
 
-    # Terraform and Vault are no longer in homebrew-core
-    # (HashiCorp moved them to their own tap after the license change).
-    # Tap must happen BEFORE the install tasks reference tapped formulae.
-    - name: Tap HashiCorp formulae
-      community.general.homebrew_tap:
-        name: hashicorp/tap
+    # Both are in homebrew-core, so no tap is needed. That is a straight
+    # improvement on what they replace: HashiCorp pulled terraform and vault
+    # OUT of homebrew-core into their own tap after the licence change, which
+    # is the tap we no longer add.
+    - name: Install OpenTofu
+      community.general.homebrew:
+        name: opentofu
         state: present
 
-    - name: Install Terraform
+    - name: Install OpenBao
       community.general.homebrew:
-        name: hashicorp/tap/terraform
-        state: present
-
-    - name: Install Vault
-      community.general.homebrew:
-        name: hashicorp/tap/vault
+        name: openbao
         state: present
 
     - name: Install Helm Dashboard plugin

@@ -58,13 +58,14 @@
   changed_when: false
   failed_when: verify_helm.rc != 0
 
-- name: Verify Terraform
-  ansible.builtin.command: terraform version
-  register: verify_terraform
+# OpenTofu, not Terraform -- see infrastructure/tasks/cloud.yml for why.
+- name: Verify OpenTofu
+  ansible.builtin.command: tofu version
+  register: verify_tofu
   environment:
     PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
   changed_when: false
-  failed_when: verify_terraform.rc != 0
+  failed_when: verify_tofu.rc != 0
 
 # Git verification
 - name: Verify Git
@@ -168,7 +169,7 @@
       - Docker group: User added (logout required for shell access)
       - kubectl: {{ verify_kubectl.stdout | regex_search('v[0-9.]+') }}
       - Helm: {{ verify_helm.stdout }}
-      - Terraform: {{ verify_terraform.stdout_lines[0] }}
+      - OpenTofu: {{ verify_tofu.stdout_lines[0] }}
       - Git: {{ verify_git.stdout }}
       - Git subtree: ✅
       - Git LFS: ✅ Filters installed
@@ -184,7 +185,7 @@
       - Docker Desktop: Installed (launch manually for CLI access)
       - kubectl: {{ verify_kubectl.stdout | regex_search('v[0-9.]+') }}
       - Helm: {{ verify_helm.stdout }}
-      - Terraform: {{ verify_terraform.stdout_lines[0] }}
+      - OpenTofu: {{ verify_tofu.stdout_lines[0] }}
       - Git: {{ verify_git.stdout }}
       - Git subtree: ✅
       - Git LFS: ✅ Filters installed

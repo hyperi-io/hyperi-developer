@@ -4,7 +4,7 @@
 # up on this machine in one command:
 #   - macOS system + security updates (softwareupdate)
 #   - Homebrew formulae and casks (apps, CLIs, subsystems — incl. aws, gh,
-#     az, kubectl, helm, terraform, vault, gcloud-cli, linear, ...)
+#     az, kubectl, helm, opentofu, openbao, gcloud-cli, ...)
 #   - uv tools, rustup toolchains
 #   - Claude Code CLI (self-installed under ~/.local)
 #

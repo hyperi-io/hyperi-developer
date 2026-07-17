@@ -2,7 +2,16 @@
 # Infrastructure Role — Generic IaC + cloud CLIs (any IaC operator).
 # Not HyperI-specific. Org tooling lives in `corporate`.
 
-- name: Install HashiCorp + AWS cloud tools
+# Before the installs: removing terraform/vault must not race the tofu/bao
+# install, and the HashiCorp repo has to go before an apt update reads it again.
+- name: Remove the retired HashiCorp tools
+  ansible.builtin.include_tasks:
+    file: removals.yml
+    apply:
+      tags: ['infrastructure', 'cloud', 'removals']
+  tags: ['infrastructure', 'cloud', 'removals']
+
+- name: Install IaC + AWS cloud tools (OpenTofu, OpenBao, AWS CLI)
   ansible.builtin.include_tasks:
     file: cloud.yml
     apply:

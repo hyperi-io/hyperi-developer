@@ -220,3 +220,68 @@
     mode: '0644'
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================
+# CLI on PATH
+# ============================================================
+# Linux gets this free: the .deb and COPR both drop /usr/bin/ghostty.
+#
+# macOS does not. The cask installs Ghostty.app plus manpages and completions,
+# but no binary -- so `ghostty +validate-config`, `ghostty +list-themes` and
+# the rest are unreachable without typing the full bundle path. Upstream
+# documents no way to fix this, so we symlink it ourselves.
+#
+# /usr/local/bin because it is on the default macOS PATH and is not Homebrew's
+# (brew owns /opt/homebrew on Apple Silicon, and dropping a non-brew symlink in
+# its bin would upset brew doctor and risk cleanup removing it). It is also
+# where the rest of our own tools go.
+#
+# The target path is stable across Ghostty's in-place auto-updates.
+- name: Check Ghostty.app is present before linking (macOS)
+  ansible.builtin.stat:
+    path: /Applications/Ghostty.app/Contents/MacOS/ghostty
+  register: ghostty_macos_app
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Ensure /usr/local/bin exists (macOS)
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    mode: '0755'
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - ghostty_macos_app.stat.exists | default(false)
+
+- name: Put the Ghostty CLI on PATH (macOS)
+  ansible.builtin.file:
+    src: /Applications/Ghostty.app/Contents/MacOS/ghostty
+    dest: /usr/local/bin/ghostty
+    state: link
+    force: true
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - ghostty_macos_app.stat.exists | default(false)
+
+- name: Verify the Ghostty CLI resolves on PATH (macOS)
+  ansible.builtin.command:
+    cmd: ghostty --version
+  register: ghostty_cli_check
+  changed_when: false
+  failed_when: false
+  become: false
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - ghostty_macos_app.stat.exists | default(false)
+
+- name: Warn if the Ghostty CLI is still not reachable (macOS)
+  ansible.builtin.debug:
+    msg: >-
+      Ghostty CLI symlinked to /usr/local/bin/ghostty but `ghostty --version`
+      did not run. Check /usr/local/bin is on your PATH.
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - ghostty_macos_app.stat.exists | default(false)
+    - ghostty_cli_check.rc | default(1) != 0

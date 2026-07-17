@@ -1,0 +1,83 @@
+---
+# Tombstones for the HashiCorp tools we replaced with their open-source forks.
+#
+#   terraform -> tofu  (OpenTofu, MPL-2.0)
+#   vault     -> bao   (OpenBao, MPL-2.0)
+#
+# Ansible cannot remove what we simply stop declaring, so every host we have
+# ever provisioned keeps terraform, vault AND the HashiCorp repo until we say
+# otherwise. Leaving the repo behind is the worse half: it would go on serving
+# BUSL packages and updates forever.
+#
+# Removing terraform WILL break tooling that still shells out to it -- notably
+# hyperi-infra, which invokes `terraform` directly. That is deliberate and
+# tracked; the alternative was shipping a BUSL binary indefinitely.
+
+- name: Remove Terraform and Vault (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - terraform
+      - vault
+    state: absent
+    purge: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Remove Terraform and Vault (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - terraform
+      - vault
+    state: absent
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# The repo itself. Both filenames are removed: deb822_repository writes
+# .sources, and older revisions of this role used apt_repository, which wrote
+# .list. A host provisioned before that migration carries the .list.
+- name: Remove the HashiCorp APT repository (Ubuntu)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/hashicorp.sources
+    - /etc/apt/sources.list.d/hashicorp.list
+    - /usr/share/keyrings/hashicorp-archive-keyring.asc
+    - /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  register: infrastructure_hashicorp_repo_removed
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Refresh the APT cache after removing the repository
+  ansible.builtin.apt:
+    update_cache: true
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - infrastructure_hashicorp_repo_removed is changed
+
+- name: Remove the HashiCorp YUM repository (Fedora)
+  ansible.builtin.file:
+    path: /etc/yum.repos.d/hashicorp.repo
+    state: absent
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# macOS. Untap only after the formulae are gone, or brew refuses.
+#
+# NOT touched: `aws-vault`. It is 99designs/aws-vault, nothing to do with
+# HashiCorp Vault despite the name, and it is still installed on purpose.
+- name: Remove Terraform and Vault (macOS)
+  community.general.homebrew:
+    name:
+      - hashicorp/tap/terraform
+      - hashicorp/tap/vault
+    state: absent
+  become: false
+  environment: "{{ homebrew_env }}"
+  failed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Remove the HashiCorp Homebrew tap (macOS)
+  community.general.homebrew_tap:
+    name: hashicorp/tap
+    state: absent
+  become: false
+  environment: "{{ homebrew_env }}"
+  failed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'

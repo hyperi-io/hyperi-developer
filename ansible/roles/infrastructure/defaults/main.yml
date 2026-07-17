@@ -1,0 +1,15 @@
+---
+# Infrastructure role defaults
+
+# OpenBao publishes no APT repository, only GitHub release .debs, so Ubuntu
+# needs an explicit version here. Fedora (dnf) and macOS (brew) ignore this and
+# track their own repos.
+#
+# Pinned rather than `latest` so a run is reproducible and a bad upstream
+# release cannot silently land on every workstation. Bump it deliberately:
+#   gh api repos/openbao/openbao/releases/latest --jq .tag_name
+openbao_version: "2.6.0"
+
+# OpenBao's release assets are named linux_amd64 / linux_arm64. Do not hardcode
+# amd64: arm64 Linux is real here (arm64 VMs, containers on Apple Silicon).
+openbao_deb_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"

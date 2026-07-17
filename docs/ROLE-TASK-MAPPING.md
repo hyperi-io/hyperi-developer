@@ -194,7 +194,7 @@ Generic IaC + cloud — not HyperI-specific.
 
 | Task | Per-app tag | Source | What it does |
 |---|---|---|---|
-| `cloud.yml` | `cloud` | from `developer/` | HashiCorp tools (Terraform, Vault, Packer) + AWS CLI v2. |
+| `cloud.yml` | `cloud` | from `developer/` | OpenTofu + OpenBao (the OSS forks; no HashiCorp BUSL tools) + AWS CLI v2. |
 | `azure.yml` | `azure` | from `developer_core/` | Azure CLI. |
 | `gcloud.yml` | `gcloud` | from `developer_core/` | Google Cloud CLI. |
 | `k8s.yml` | `k8s` | from `developer/` | kubectl + helm + k9s + minikube. |
