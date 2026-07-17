@@ -1,0 +1,61 @@
+---
+# disk-attach — a tool a developer runs when a disk gets attached to their VM.
+#
+# Deliberately just a script on PATH. No systemd unit, no timer, no udev rule:
+# nothing here runs unattended, so it cannot surprise anyone by claiming a disk
+# they happened to have plugged in at boot.
+#
+# That is a change from the version hyperi-infra deploys, which ran at boot via
+# a systemd oneshot. That unit set ProtectSystem=full, making /etc read-only, so
+# the script's fstab backup could never be written — it partitioned and
+# formatted the disk, then failed, and the disk was left carrying a signature
+# and therefore invisible to every later run. hyperi-infra's prod inventory
+# already disables it ("Don't auto-format anything that appears").
+#
+# Linux only: it is GPT/fstab/blkid work. macOS attaches disks through Disk
+# Utility and has no fstab to speak of.
+
+- name: Install the disk-attach tool
+  ansible.builtin.copy:
+    src: disk-attach
+    dest: /usr/local/sbin/disk-attach
+    owner: root
+    group: root
+    mode: '0755'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+
+# The old location. hyperi-infra's server_base put it in /usr/local/bin; ours
+# lives in /usr/local/sbin because it is root-only. Remove the old copy or
+# whichever comes first on PATH wins, and they will drift apart.
+- name: Remove the superseded /usr/local/bin/disk-attach
+  ansible.builtin.file:
+    path: /usr/local/bin/disk-attach
+    state: absent
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+
+# The boot-time unit is the thing that made the old one dangerous. Take it out
+# on any host that still carries it, whoever installed it.
+- name: Disable the retired disk-attach boot service
+  ansible.builtin.systemd_service:
+    name: disk-attach.service
+    enabled: false
+    state: stopped
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+  failed_when: false
+
+- name: Remove the retired disk-attach unit and config
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/disk-attach.service
+    - /etc/hyperi/disk-attach.conf
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+  register: corporate_disk_attach_unit_removed
+
+- name: Reload systemd after removing the unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+    - corporate_disk_attach_unit_removed is changed

@@ -1,0 +1,577 @@
+#!/usr/bin/env python3
+"""Partition, format and mount an empty data disk.
+
+Finds disks with no partition table, no filesystem and no other signature,
+then optionally sets one up: GPT label, single partition, ext4 (or xfs),
+an /etc/fstab entry keyed by UUID, and a mount.
+
+Deliberately a plain sudo-invoked script: no systemd unit, no timer, no udev
+rule, no config file. Nothing here ever runs unattended, so it can never
+surprise you by eating a disk you happened to have plugged in at boot. If you
+want it to act, you run it and say yes.
+
+Safety model, in order of how much it matters:
+
+  * Refuses to touch anything carrying ANY signature -- filesystem, partition
+    table, LVM PV, RAID member, LUKS header, ZFS label. If it cannot determine
+    that, it SKIPS. A probe that errors means "unknown", never "empty".
+  * Refuses removable and USB-attached devices outright. "Blank" is not
+    "unclaimed" -- a wiped stick is blank, and so is a staged Ceph OSD.
+  * Refuses the disk holding /, /boot or any mounted filesystem.
+  * Defaults to reporting only. Making changes needs an explicit target and a
+    confirmation (or --yes).
+  * Writes /etc/fstab atomically, preserving mode and SELinux label, always
+    with nofail so a missing disk can never block boot.
+
+Usage:
+    sudo disk-attach                     # report candidates, change nothing
+    sudo disk-attach --disk /dev/sdd     # set that disk up (asks first)
+    sudo disk-attach --disk /dev/sdd -n  # dry run: say what would happen
+    sudo disk-attach --all --yes         # every candidate, no prompting
+
+Exit codes: 0 ok / 1 error / 2 nothing to do.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+VERSION = "2.0.0"
+
+FSTAB = Path("/etc/fstab")
+MOUNT_BASE = Path("/data")
+
+# nofail is not optional and is not a default a caller can drop: without it a
+# detached data disk stops the machine booting. noatime/nodiratime are for
+# throughput; discard lets the SSD reclaim blocks.
+MOUNT_OPTIONS = "defaults,nofail,noatime,nodiratime,discard"
+
+SUPPORTED_FILESYSTEMS = ("ext4", "xfs")
+
+# Anything smaller is not a data disk. Sized to exclude EFI/boot oddities
+# rather than to be clever.
+MIN_DISK_BYTES = 1024 * 1024 * 1024  # 1GiB
+
+log = logging.getLogger("disk-attach")
+
+
+class DiskAttachError(Exception):
+    """A disk could not be set up. Carries a human-readable reason."""
+
+
+@dataclass(frozen=True, slots=True)
+class Disk:
+    """A whole block device considered as a candidate.
+
+    Attributes:
+        name: Kernel name, e.g. ``sdd``.
+        size: Size in bytes.
+        removable: Kernel RM flag.
+        hotplug: Kernel HOTPLUG flag.
+        transport: Transport, e.g. ``usb``, ``sata``, ``nvme``; may be empty.
+        has_children: True if the kernel sees partitions or mappings on it.
+        mounted: True if it or anything on it is mounted.
+    """
+
+    name: str
+    size: int
+    removable: bool
+    hotplug: bool
+    transport: str
+    has_children: bool
+    mounted: bool
+
+    @property
+    def path(self) -> str:
+        """Return the device path, e.g. ``/dev/sdd``."""
+        return f"/dev/{self.name}"
+
+    def partition_path(self, number: int = 1) -> str:
+        """Return the path of partition ``number`` on this disk.
+
+        Kernel naming inserts a ``p`` when the disk name ends in a digit --
+        ``nvme0n1`` -> ``nvme0n1p1``, ``mmcblk0`` -> ``mmcblk0p1`` -- and does
+        not otherwise: ``sdd`` -> ``sdd1``. Keying off a trailing digit rather
+        than a substring match on "nvme" is what makes SD cards and loop
+        devices come out right.
+        """
+        sep = "p" if self.name[-1].isdigit() else ""
+        return f"{self.path}{sep}{number}"
+
+
+def run(cmd: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    """Run a command, capturing output.
+
+    Always list-form -- no shell is involved, so device paths cannot be
+    interpreted. Encoding is pinned because ``text=True`` alone uses the
+    locale, and a minimal environment (LC_ALL=C) turns one non-ASCII byte into
+    a UnicodeDecodeError.
+
+    Args:
+        cmd: Command and arguments.
+        timeout: Seconds before giving up.
+
+    Returns:
+        The completed process; the caller decides what a non-zero rc means.
+    """
+    log.debug("run: %s", " ".join(cmd))
+    return subprocess.run(  # noqa: S603 -- list form, no shell, fixed argv0
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=False,
+    )
+
+
+def boot_disks() -> set[str]:
+    """Return the kernel names of disks backing any mounted filesystem.
+
+    Uses lsblk's tree rather than parsing ``/`` out of findmnt: an LVM or ZFS
+    root resolves to ``/dev/mapper/...``, which never matches a disk name, and
+    that mismatch is how a boot disk ends up looking like a candidate.
+
+    Returns:
+        Disk names, e.g. ``{"sda"}``. Empty if lsblk cannot be read, which
+        callers must treat as "cannot tell" and therefore refuse to proceed.
+    """
+    proc = run(["lsblk", "-J", "-o", "NAME,TYPE,MOUNTPOINT"])
+    if proc.returncode != 0:
+        raise DiskAttachError(f"lsblk failed: {proc.stderr.strip()}")
+
+    try:
+        tree = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise DiskAttachError(f"lsblk returned unparseable JSON: {exc}") from exc
+
+    in_use: set[str] = set()
+
+    def walk(node: dict, root: str) -> bool:
+        used = bool(node.get("mountpoint"))
+        for child in node.get("children") or []:
+            used |= walk(child, root)
+        if used and node.get("type") == "disk":
+            in_use.add(root)
+        return used
+
+    for node in tree.get("blockdevices") or []:
+        if node.get("type") == "disk":
+            walk(node, str(node.get("name")))
+
+    return in_use
+
+
+def has_signature(path: str) -> bool:
+    """Report whether a device carries any recognisable on-disk signature.
+
+    Covers filesystems, partition tables, LVM PVs, RAID members, LUKS headers
+    and ZFS labels -- ``blkid -p`` reads the superblock directly, so an array
+    that is merely unassembled is still detected.
+
+    This FAILS CLOSED. If the probe cannot run, times out, or returns anything
+    unexpected, the answer is True (treat as occupied). The previous version
+    swallowed those errors and returned False, which meant a slow SAN LUN or a
+    missing blkid turned a live LVM PV into a formatting candidate.
+
+    Args:
+        path: Device path, e.g. ``/dev/sdd``.
+
+    Returns:
+        True if a signature is present OR could not be ruled out.
+    """
+    try:
+        proc = run(["blkid", "-p", path], timeout=30)
+    except subprocess.TimeoutExpired:
+        log.warning("%s: blkid timed out -- treating as occupied", path)
+        return True
+    except OSError as exc:
+        log.warning("%s: blkid could not run (%s) -- treating as occupied", path, exc)
+        return True
+
+    # 0 = signature found, 2 = nothing found. Anything else is an error, and an
+    # error is not evidence of emptiness.
+    if proc.returncode == 0:
+        log.debug("%s: signature: %s", path, proc.stdout.strip())
+        return True
+    if proc.returncode == 2:
+        return False
+
+    log.warning(
+        "%s: blkid rc=%d (%s) -- treating as occupied",
+        path,
+        proc.returncode,
+        proc.stderr.strip(),
+    )
+    return True
+
+
+def list_disks() -> list[Disk]:
+    """Enumerate whole block devices with the attributes needed to judge them.
+
+    Returns:
+        Every disk the kernel reports, unfiltered.
+    """
+    proc = run(
+        [
+            "lsblk",
+            "-J",
+            "-b",
+            "-o",
+            "NAME,SIZE,TYPE,RM,HOTPLUG,TRAN,MOUNTPOINT",
+        ]
+    )
+    if proc.returncode != 0:
+        raise DiskAttachError(f"lsblk failed: {proc.stderr.strip()}")
+
+    try:
+        tree = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise DiskAttachError(f"lsblk returned unparseable JSON: {exc}") from exc
+
+    def any_mounted(node: dict) -> bool:
+        if node.get("mountpoint"):
+            return True
+        return any(any_mounted(c) for c in node.get("children") or [])
+
+    disks: list[Disk] = []
+    for node in tree.get("blockdevices") or []:
+        if node.get("type") != "disk":
+            continue
+        disks.append(
+            Disk(
+                name=str(node["name"]),
+                size=int(node.get("size") or 0),
+                removable=bool(node.get("rm")),
+                hotplug=bool(node.get("hotplug")),
+                transport=str(node.get("tran") or ""),
+                has_children=bool(node.get("children")),
+                mounted=any_mounted(node),
+            )
+        )
+    return disks
+
+
+def rejection_reason(disk: Disk, in_use: set[str]) -> str | None:
+    """Explain why a disk is not a candidate.
+
+    Ordered cheapest-first, and every rejection is explainable -- an operator
+    asking "why did it skip sdb?" should get an answer, not silence.
+
+    Args:
+        disk: The disk to judge.
+        in_use: Disk names backing a mounted filesystem.
+
+    Returns:
+        A reason, or None if the disk is a candidate.
+    """
+    if disk.name in in_use:
+        return "holds a mounted filesystem (boot or data)"
+    if disk.mounted:
+        return "mounted"
+    if disk.has_children:
+        return "already partitioned"
+    if disk.removable or disk.hotplug:
+        return "removable/hotplug -- blank does not mean unclaimed"
+    if disk.transport == "usb":
+        return "USB-attached -- blank does not mean unclaimed"
+    if disk.size < MIN_DISK_BYTES:
+        return f"smaller than {MIN_DISK_BYTES // 1024**3}GiB"
+    if has_signature(disk.path):
+        return "carries a signature (filesystem/partition table/LVM/RAID/LUKS)"
+    return None
+
+
+def next_mount_point(base: Path) -> Path:
+    """Pick the first unused mount point under ``base``.
+
+    Args:
+        base: Parent directory, e.g. ``/data``.
+
+    Returns:
+        ``base`` itself if free, else ``base/disk2``, ``base/disk3``, ...
+    """
+    fstab_text = FSTAB.read_text(encoding="utf-8") if FSTAB.exists() else ""
+
+    def free(path: Path) -> bool:
+        if str(path) in fstab_text:
+            return False
+        return not (path.exists() and any(path.iterdir()))
+
+    if free(base):
+        return base
+    for n in range(2, 100):
+        candidate = base / f"disk{n}"
+        if free(candidate):
+            return candidate
+    raise DiskAttachError(f"no free mount point under {base}")
+
+
+def device_uuid(part: str) -> str:
+    """Return the filesystem UUID of a partition.
+
+    Args:
+        part: Partition path, e.g. ``/dev/sdd1``.
+
+    Returns:
+        The UUID.
+
+    Raises:
+        DiskAttachError: If no UUID could be read.
+    """
+    proc = run(["blkid", "-s", "UUID", "-o", "value", part])
+    uuid = proc.stdout.strip()
+    if proc.returncode != 0 or not uuid:
+        raise DiskAttachError(f"no UUID for {part}: {proc.stderr.strip()}")
+    return uuid
+
+
+def add_fstab_entry(uuid: str, mount_point: Path, fstype: str) -> None:
+    """Add a mount entry to /etc/fstab, atomically.
+
+    The temp file is created in /etc so os.replace() is a same-filesystem
+    rename and therefore atomic; a temp file in /tmp would land on a different
+    filesystem, and the rename would silently degrade to truncate-and-copy,
+    which can leave a half-written fstab if the machine dies mid-write.
+
+    Mode and SELinux label are copied from the existing fstab, because a
+    relabelled fstab is read by systemd-fstab-generator at early boot.
+
+    Args:
+        uuid: Filesystem UUID.
+        mount_point: Where it should mount.
+        fstype: Filesystem type.
+
+    Raises:
+        DiskAttachError: If fstab already references the UUID.
+    """
+    current = FSTAB.read_text(encoding="utf-8")
+    if uuid in current:
+        raise DiskAttachError(f"fstab already references UUID={uuid}")
+
+    # fsck pass 2: it is not the root filesystem. dump 0: not backed up by dump.
+    line = f"UUID={uuid}\t{mount_point}\t{fstype}\t{MOUNT_OPTIONS}\t0\t2\n"
+    updated = current if current.endswith("\n") else current + "\n"
+    updated += line
+
+    fd, tmp_name = tempfile.mkstemp(dir=str(FSTAB.parent), prefix=".fstab-", text=True)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(updated)
+            handle.flush()
+            os.fsync(handle.fileno())
+        shutil.copystat(FSTAB, tmp)
+        try:
+            shutil.copymode(FSTAB, tmp)
+        except OSError:  # noqa: S110 -- copystat already did the work
+            pass
+        os.replace(tmp, FSTAB)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+    restorecon = shutil.which("restorecon")
+    if restorecon:
+        run([restorecon, str(FSTAB)])
+    log.info("fstab: %s", line.strip())
+
+
+def setup(disk: Disk, fstype: str, *, dry_run: bool) -> None:
+    """Partition, format, record and mount a disk.
+
+    Ordered so the irreversible step comes as late as possible, and so a
+    failure never leaves a formatted disk that no longer looks empty and is
+    therefore invisible to the next run.
+
+    Args:
+        disk: The disk to set up.
+        fstype: Filesystem to create.
+        dry_run: If True, report the plan and change nothing.
+    """
+    mount_point = next_mount_point(MOUNT_BASE)
+    part = disk.partition_path()
+
+    if dry_run:
+        log.info(
+            "DRY RUN %s (%.1f GiB): would GPT + %s -> %s",
+            disk.path,
+            disk.size / 1024**3,
+            fstype,
+            mount_point,
+        )
+        return
+
+    log.info("%s: writing GPT label", disk.path)
+    proc = run(["parted", "-s", disk.path, "mklabel", "gpt"])
+    if proc.returncode != 0:
+        raise DiskAttachError(f"mklabel failed: {proc.stderr.strip()}")
+
+    log.info("%s: creating partition", disk.path)
+    proc = run(["parted", "-s", "-a", "optimal", disk.path, "mkpart", "data", "0%", "100%"])
+    if proc.returncode != 0:
+        raise DiskAttachError(f"mkpart failed: {proc.stderr.strip()}")
+
+    # Wait for udev rather than polling for the node: settle returns when the
+    # kernel has actually finished creating it.
+    run(["udevadm", "settle"], timeout=30)
+    if not Path(part).exists():
+        raise DiskAttachError(f"{part} did not appear after partitioning")
+
+    log.info("%s: mkfs.%s", part, fstype)
+    mkfs = ["mkfs.ext4", "-q", "-L", "data", part]
+    if fstype == "xfs":
+        mkfs = ["mkfs.xfs", "-q", "-L", "data", part]
+    proc = run(mkfs, timeout=300)
+    if proc.returncode != 0:
+        raise DiskAttachError(f"mkfs failed: {proc.stderr.strip()}")
+
+    uuid = device_uuid(part)
+    mount_point.mkdir(parents=True, exist_ok=True)
+    add_fstab_entry(uuid, mount_point, fstype)
+
+    proc = run(["mount", str(mount_point)])
+    if proc.returncode != 0:
+        raise DiskAttachError(f"mount failed: {proc.stderr.strip()}")
+
+    log.info("%s -> %s (UUID=%s)", part, mount_point, uuid)
+
+
+def report(disks: list[Disk], in_use: set[str]) -> list[Disk]:
+    """Print every disk with a verdict, and return the candidates.
+
+    Args:
+        disks: All disks.
+        in_use: Disk names backing a mounted filesystem.
+
+    Returns:
+        The disks that are candidates.
+    """
+    candidates: list[Disk] = []
+    for disk in sorted(disks, key=lambda d: d.name):
+        reason = rejection_reason(disk, in_use)
+        size = f"{disk.size / 1024**3:.0f}G"
+        if reason is None:
+            candidates.append(disk)
+            log.info("  %-12s %6s  CANDIDATE", disk.path, size)
+        else:
+            log.info("  %-12s %6s  skip: %s", disk.path, size, reason)
+    return candidates
+
+
+def confirm(disks: list[Disk]) -> bool:
+    """Ask before destroying anything.
+
+    Args:
+        disks: Disks about to be set up.
+
+    Returns:
+        True if the operator typed yes.
+    """
+    print("\nAbout to ERASE and set up:", file=sys.stderr)
+    for disk in disks:
+        print(f"  {disk.path}  ({disk.size / 1024**3:.0f} GiB)", file=sys.stderr)
+    try:
+        return input("\nType 'yes' to continue: ").strip() == "yes"
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+def main() -> int:
+    """Entry point.
+
+    Returns:
+        0 on success, 1 on error, 2 if there was nothing to do.
+    """
+    parser = argparse.ArgumentParser(
+        prog="disk-attach",
+        description="Partition, format and mount an empty data disk.",
+    )
+    parser.add_argument("--disk", help="operate on this disk only, e.g. /dev/sdd")
+    parser.add_argument("--all", action="store_true", help="operate on every candidate")
+    parser.add_argument(
+        "-n", "--dry-run", action="store_true", help="report the plan, change nothing"
+    )
+    parser.add_argument("--yes", action="store_true", help="do not prompt")
+    parser.add_argument(
+        "--filesystem",
+        choices=SUPPORTED_FILESYSTEMS,
+        default="ext4",
+        help="filesystem to create (default: ext4)",
+    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    parser.add_argument("--version", action="version", version=f"disk-attach {VERSION}")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(message)s",
+        stream=sys.stderr,
+    )
+
+    if os.geteuid() != 0:
+        log.error("disk-attach must run as root: sudo disk-attach ...")
+        return 1
+
+    try:
+        in_use = boot_disks()
+        disks = list_disks()
+    except DiskAttachError as exc:
+        log.error("cannot enumerate disks: %s", exc)
+        return 1
+
+    log.info("Disks:")
+    candidates = report(disks, in_use)
+
+    if args.disk:
+        wanted = args.disk.removeprefix("/dev/")
+        chosen = [d for d in candidates if d.name == wanted]
+        if not chosen:
+            reason = next(
+                (rejection_reason(d, in_use) for d in disks if d.name == wanted),
+                "no such disk",
+            )
+            log.error("%s is not a candidate: %s", args.disk, reason)
+            return 1
+    elif args.all:
+        chosen = candidates
+    else:
+        # No target: reporting is the whole job. This is the safe default and
+        # the reason this script has no unattended mode.
+        if candidates:
+            log.info("\n%d candidate(s). Re-run with --disk <dev> or --all.", len(candidates))
+        else:
+            log.info("\nNo candidates.")
+        return 0 if candidates else 2
+
+    if not chosen:
+        log.info("Nothing to do.")
+        return 2
+
+    if not args.dry_run and not args.yes and not confirm(chosen):
+        log.info("Aborted.")
+        return 1
+
+    failed = 0
+    for disk in chosen:
+        try:
+            setup(disk, args.filesystem, dry_run=args.dry_run)
+        except DiskAttachError as exc:
+            log.error("%s: %s", disk.path, exc)
+            failed += 1
+
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

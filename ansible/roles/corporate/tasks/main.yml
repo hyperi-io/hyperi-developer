@@ -47,6 +47,13 @@
       tags: ['corporate', 'gitleaks']
   tags: ['corporate', 'gitleaks']
 
+- name: Install the disk-attach tool
+  ansible.builtin.include_tasks:
+    file: disk_attach.yml
+    apply:
+      tags: ['corporate', 'disk-attach']
+  tags: ['corporate', 'disk-attach']
+
 - name: Install OpenVPN 3
   ansible.builtin.include_tasks:
     file: openvpn.yml
