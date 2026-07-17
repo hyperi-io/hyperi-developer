@@ -1,0 +1,80 @@
+---
+# SOE Role — the HyperI Standard Operating Environment (opt-in).
+#
+# Tier 1 of the audience model. This holds HyperI POLICY: the things we impose
+# on a HyperI machine and would have no business putting on anyone else's.
+# Auto-updates, bash history auto-commit, OpenVPN, telemetry-disable,
+# disk-attach, Claude Code.
+#
+# It depends on `contributor`, so a HyperI machine gets the CI toolchain
+# (hyperi-ci, gitleaks, act, semgrep, alint, osv-scanner) and, through that,
+# the generic `developer` base. The chain is:
+#
+#   developer  ->  contributor  ->  soe
+#
+# If you are adding something here, ask first whether an outside contributor to
+# a HyperI product would want it. If yes, it belongs in `contributor` and soe
+# gets it free. Only put it here if the answer is "only on OUR machines".
+#
+# Named `soe`, not `core`: `core` meant the MAXIMAL org bundle while reading
+# like the minimal base, which is exactly backwards.
+#
+# GUI counterparts live in soe-gui (Slack, office suite, Nemo etc.).
+
+- name: Load macOS variables
+  ansible.builtin.include_vars:
+    file: macos.yml
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Configure auto-updates (unattended-upgrades / dnf-automatic)
+  ansible.builtin.include_tasks:
+    file: security.yml
+    apply:
+      tags: ['soe', 'auto-updates']
+  tags: ['soe', 'auto-updates']
+
+- name: Configure shell (bash history auto-commit)
+  ansible.builtin.include_tasks:
+    file: shell_config.yml
+    apply:
+      tags: ['soe', 'bash-history']
+  tags: ['soe', 'bash-history']
+
+- name: Install Claude Code CLI
+  ansible.builtin.include_tasks:
+    file: claude.yml
+    apply:
+      tags: ['soe', 'claude']
+  tags: ['soe', 'claude']
+
+# act, gitleaks and hyperi-ci are NOT here: they moved to `contributor`, which
+# this role depends on. They are what you need to work on a HyperI product,
+# not HyperI policy -- so an outside contributor should get them too.
+
+- name: Install the disk-attach tool
+  ansible.builtin.include_tasks:
+    file: disk_attach.yml
+    apply:
+      tags: ['soe', 'disk-attach']
+  tags: ['soe', 'disk-attach']
+
+- name: Install OpenVPN 3
+  ansible.builtin.include_tasks:
+    file: openvpn.yml
+    apply:
+      tags: ['soe', 'openvpn']
+  tags: ['soe', 'openvpn']
+
+- name: Disable telemetry and advertising
+  ansible.builtin.include_tasks:
+    file: telemetry-disable.yml
+    apply:
+      tags: ['soe', 'telemetry-disable']
+  tags: ['soe', 'telemetry-disable']
+
+- name: Verify SOE tools installation
+  ansible.builtin.include_tasks:
+    file: verify.yml
+    apply:
+      tags: ['soe', 'verify']
+  tags: ['soe', 'verify']

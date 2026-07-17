@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  author: HyperI
+  description: >-
+    Tier 2 of the audience model: what an outside contributor to a HyperI
+    product needs, without any HyperI org policy.
+  company: HyperI
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Fedora
+      versions: ['43', '44']
+    - name: Ubuntu
+      versions: ['noble', 'resolute']
+
+# contributor is a SUPERSET of developer. Depending on it, rather than telling
+# people to pass both tags, means --tags contributor is enough and nobody has
+# to remember what it implies.
+dependencies:
+  - role: developer

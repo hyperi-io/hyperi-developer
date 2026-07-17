@@ -1,0 +1,52 @@
+---
+# Verification — contributor role tools.
+#
+# These are exercised rather than stat'd: `command -v gitleaks` proves a file
+# exists, `gitleaks version` proves it runs. We have shipped a script that was
+# present and did nothing before; presence is not function.
+#
+# semgrep, alint and osv-scanner are checked but do NOT fail the run: they are
+# optional (see docs/RESILIENT-DEPLOY.md), their installs already record a
+# warning if they fail, and failing here would just report the same thing twice
+# and abort. gitleaks IS blocking for `hyperi-ci check`, so it fails.
+
+- name: Verify Gitleaks
+  ansible.builtin.command: gitleaks version
+  environment:
+    PATH: "/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  register: verify_gitleaks
+  changed_when: false
+  failed_when: verify_gitleaks.rc != 0
+
+- name: Verify act
+  ansible.builtin.command: act --version
+  environment:
+    PATH: "/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  register: verify_act
+  changed_when: false
+  failed_when: verify_act.rc != 0
+
+- name: Check the optional hyperi-ci check tools
+  ansible.builtin.command: "{{ item }} --version"
+  environment:
+    PATH: "{{ user_home }}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  loop:
+    - hyperi-ci
+    - semgrep
+    - alint
+    - osv-scanner
+  register: verify_ci_tools
+  changed_when: false
+  failed_when: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+- name: Display contributor tools verification
+  ansible.builtin.debug:
+    msg: |
+      Contributor toolchain:
+      - Gitleaks: {{ verify_gitleaks.stdout | default('installed') }}
+      - act: {{ verify_act.stdout | default('installed') }}
+      {% for r in verify_ci_tools.results %}
+      - {{ r.item }}: {{ r.stdout_lines[0] | default('NOT AVAILABLE') if r.rc == 0 else 'NOT AVAILABLE -- hyperi-ci check will skip its pass' }}
+      {% endfor %}

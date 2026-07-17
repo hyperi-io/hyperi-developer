@@ -119,12 +119,23 @@
       failed_when: false
       tags: ['always']
 
+    # We support n and n-1, so the declared minimum IS n-1: Fedora 43, Ubuntu
+    # 24.04 LTS. Fedora 42 went EOL 2026-05-27 and this gate still let it in.
+    #
+    # NOTE this duplicates the gate in roles/developer/tasks/init.yml, which
+    # reads min_fedora_version / min_ubuntu_version from that role's defaults.
+    # Two gates that can disagree is how the EOL version survived here after
+    # the role was fixed. Giving the gate one SSoT is S1.T0c; until then, bump
+    # BOTH, together, along with ansible/molecule/vars.yml.
     - name: Validate supported operating system
       ansible.builtin.fail:
-        msg: "Unsupported OS: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}. Supported: Fedora 42+, Ubuntu 24.04+, macOS"
+        msg: >-
+          Unsupported OS: {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }}.
+          Supported: Fedora 43+, Ubuntu 24.04+, macOS.
       when: >
         (ansible_facts['distribution'] not in ['Fedora', 'Ubuntu', 'MacOSX']) or
-        (ansible_facts['distribution'] == 'Fedora' and ansible_facts['distribution_major_version']|int < 42) or
+        (ansible_facts['distribution'] == 'Fedora' and ansible_facts['distribution_major_version']|int < 43) or
         (ansible_facts['distribution'] == 'Ubuntu' and ansible_facts['distribution_version'] is version('24.04', '<'))
       tags: ['always']
 
@@ -225,14 +236,36 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['infrastructure-gui', 'never']
 
-    # Org-specific (opt-in via --tags corporate or --corporate flag).
-    - role: corporate
+    # ========================================================================
+    # THE THREE AUDIENCES
+    # ========================================================================
+    # soe (Standard Operating Environment) is a superset of contributor, which
+    # is a superset of the raw tags anyone can cherry-pick:
+    #
+    #   1. HyperI staff              --tags soe        everything below, plus
+    #                                                  org policy: VPN, telemetry
+    #                                                  off, branding, bash history
+    #   2. Outside contributors      --tags contributor  what you need to work ON
+    #      to HyperI products                            our products: the CI
+    #                                                    toolchain, no org policy
+    #   3. Anyone else               --tags <whatever>   pick components directly
+    #
+    # The chain is wired with meta dependencies, so `--tags soe` pulls
+    # contributor, which pulls developer. Nobody has to remember the list.
+    #
+    # This used to be called `core`, which was backwards: it meant the MAXIMAL
+    # org bundle while reading like the minimal base.
+    - role: contributor
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['corporate', 'never']
+      tags: ['contributor', 'never']
 
-    - role: corporate-gui
+    - role: soe
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['corporate-gui', 'never']
+      tags: ['soe', 'never']
+
+    - role: soe-gui
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['soe-gui', 'never']
 
     # macOS modern bash (opt-in, macOS-only).
     - role: bash-modern

@@ -1,5 +1,5 @@
 ---
-# corporate-gui depends on uv — gnome.yml installs gnome-extensions-cli (gext),
+# soe-gui depends on uv — gnome.yml installs gnome-extensions-cli (gext),
 # which is a uv tool, so uv must exist before the extension tasks run.
 #
 # This replaces an include_tasks: uv.yml inside gnome.yml. That include pointed

@@ -7,8 +7,8 @@
   ansible.builtin.include_tasks:
     file: nemo.yml
     apply:
-      tags: ['corporate-gui', 'nemo']
-  tags: ['corporate-gui', 'nemo']
+      tags: ['soe-gui', 'nemo']
+  tags: ['soe-gui', 'nemo']
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
@@ -17,8 +17,8 @@
   ansible.builtin.include_tasks:
     file: desktop_cleanup.yml
     apply:
-      tags: ['corporate-gui', 'desktop-cleanup']
-  tags: ['corporate-gui', 'desktop-cleanup']
+      tags: ['soe-gui', 'desktop-cleanup']
+  tags: ['soe-gui', 'desktop-cleanup']
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
@@ -33,7 +33,7 @@
 - name: Install GNOME extensions and apply UI mode (winlike or maclike)
   ansible.builtin.include_tasks:
     file: gnome.yml
-  tags: ['corporate-gui', 'gnome-extensions', 'winlike', 'maclike', 'never']
+  tags: ['soe-gui', 'gnome-extensions', 'winlike', 'maclike', 'never']
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
@@ -43,22 +43,22 @@
   ansible.builtin.include_tasks:
     file: slack.yml
     apply:
-      tags: ['corporate-gui', 'slack']
-  tags: ['corporate-gui', 'slack']
+      tags: ['soe-gui', 'slack']
+  tags: ['soe-gui', 'slack']
   when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
 
 - name: Install OnlyOffice Desktop Editors
   ansible.builtin.include_tasks:
     file: onlyoffice.yml
     apply:
-      tags: ['corporate-gui', 'onlyoffice']
-  tags: ['corporate-gui', 'onlyoffice']
+      tags: ['soe-gui', 'onlyoffice']
+  tags: ['soe-gui', 'onlyoffice']
   when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
 
 - name: Install office suite tasks
   ansible.builtin.include_tasks:
     file: office.yml
     apply:
-      tags: ['corporate-gui', 'office']
-  tags: ['corporate-gui', 'office']
+      tags: ['soe-gui', 'office']
+  tags: ['soe-gui', 'office']
   when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'

@@ -55,10 +55,15 @@ OPTIONS:
   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
   --branch BRANCH      Git branch to use (default: main)
   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
-  --corporate          Shortcut: HyperI staff workstation defaults
-                       (generic dev + HyperI org tools, no IaC, no langs)
+  --soe                Shortcut: HyperI staff workstation defaults
+                       (generic dev + CI toolchain + HyperI org policy;
+                       no IaC, no language toolchains)
                        Equivalent to:
-                       --tags developer,developer-gui,corporate,corporate-gui,cosmetic
+                       --tags developer-gui,soe,soe-gui,cosmetic
+  --contributor        Shortcut: for outside contributors to HyperI products.
+                       The dev base + the toolchain our CI runs, and none of
+                       our org policy (no VPN, telemetry, branding, Slack).
+                       Equivalent to: --tags contributor
   --list-apps          Print every per-app sub-tag (slack, vscode, claude, etc.)
                        for granular --tags X selection
   --help               Show this help message
@@ -83,10 +88,13 @@ EXAMPLES:
     ./install.sh --tags slack
 
   HyperI staff machine + Rust:
-    ./install.sh --corporate --tags developer-rust
+    ./install.sh --soe --tags developer-rust
 
   HyperI SRE workstation:
-    ./install.sh --corporate --tags infrastructure,infrastructure-gui
+    ./install.sh --soe --tags infrastructure,infrastructure-gui
+
+  Outside contributor working on a HyperI product:
+    ./install.sh --contributor
 
   Install with Australian region (locale, formats, spell-check):
     ./install.sh --region au
@@ -141,17 +149,22 @@ Infrastructure (infrastructure):
     cloud             OpenTofu, OpenBao + AWS CLI v2
     azure             Azure CLI
     gcloud            Google Cloud CLI
-    k8s               kubectl + helm + k9s + minikube
+    k8s               kubectl + helm + k9s + kind + argocd + dive
     vector            Vector data pipeline tool
     lens              K8s desktop client (in infrastructure-gui)
 
-Corporate / HyperI-specific (corporate, corporate-gui):
+Contributor (contributor) — to work ON a HyperI product, no org policy:
+    hyperi-ci         hyperi-ci + the tools its checks drive
+                      (semgrep, alint, osv-scanner)
+    gitleaks          Secret scanner
+    act               Run GitHub Actions locally
+
+HyperI SOE (soe, soe-gui) — org policy, includes everything above:
     auto-updates      unattended-upgrades / dnf-automatic
     bash-history      bash history auto-commit
-    act               Run GitHub Actions locally
     claude            Claude Code CLI
-    gitleaks          Secret scanner
     openvpn           OpenVPN 3 client
+    disk-attach       Sudo tool to mount a newly attached disk
     telemetry-disable Disable Ubuntu Pro/ESM ads + telemetry
     slack             Slack desktop
     onlyoffice        OnlyOffice Desktop Editors
@@ -171,7 +184,7 @@ Composability examples:
     ./install.sh --tags slack                    Just Slack
     ./install.sh --tags developer-gui            All of developer-gui
     ./install.sh --tags vscode,ghostty           VS Code + Ghostty only
-    ./install.sh --corporate --tags developer-rust  Corporate + Rust
+    ./install.sh --soe --tags developer-rust        SOE + Rust
 EOF
     exit 0
 }
@@ -215,16 +228,32 @@ while [[ $# -gt 0 ]]; do
             REGION_ARG="$2"
             shift 2
             ;;
-        --corporate)
-            # HyperI staff workstation default: generic dev + HyperI org tools.
-            # Excludes infrastructure (SRE-leaning, opt-in via --tags) and
-            # specific languages (too personal — add --tags developer-rust etc.).
-            CORPORATE_TAGS="developer,developer-gui,corporate,corporate-gui,cosmetic"
+        --soe)
+            # HyperI staff workstation default: generic dev + the CI toolchain
+            # + HyperI org policy. Excludes infrastructure (SRE-leaning, opt-in
+            # via --tags) and specific languages (too personal -- add --tags
+            # developer-rust etc.).
+            #
+            # soe pulls contributor pulls developer via meta dependencies, so
+            # naming soe here is enough; the others come with it.
+            SOE_TAGS="developer-gui,soe,soe-gui,cosmetic"
             if [[ -n "$ANSIBLE_TAGS" ]]; then
                 CURRENT_TAGS="${ANSIBLE_TAGS#--tags }"
-                ANSIBLE_TAGS="--tags ${CURRENT_TAGS},${CORPORATE_TAGS}"
+                ANSIBLE_TAGS="--tags ${CURRENT_TAGS},${SOE_TAGS}"
             else
-                ANSIBLE_TAGS="--tags ${CORPORATE_TAGS}"
+                ANSIBLE_TAGS="--tags ${SOE_TAGS}"
+            fi
+            shift
+            ;;
+        --contributor)
+            # For someone outside HyperI working ON a HyperI product: the dev
+            # base plus the toolchain our CI runs, and none of our org policy.
+            CONTRIBUTOR_TAGS="contributor"
+            if [[ -n "$ANSIBLE_TAGS" ]]; then
+                CURRENT_TAGS="${ANSIBLE_TAGS#--tags }"
+                ANSIBLE_TAGS="--tags ${CURRENT_TAGS},${CONTRIBUTOR_TAGS}"
+            else
+                ANSIBLE_TAGS="--tags ${CONTRIBUTOR_TAGS}"
             fi
             shift
             ;;

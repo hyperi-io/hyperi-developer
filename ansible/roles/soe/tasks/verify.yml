@@ -1,5 +1,11 @@
 ---
-# Verification — corporate role tools
+# Verification — SOE role tools.
+#
+# Only what soe itself installs. gitleaks and act moved to `contributor` along
+# with the tasks that install them -- verifying them from here would pass by
+# accident (soe depends on contributor, so they happen to be present) and would
+# keep passing if contributor stopped installing them. A verify that cannot
+# fail for the right reason is not a verify.
 
 - name: Verify OpenVPN 3 (Linux)
   ansible.builtin.command: openvpn3 version
@@ -34,41 +40,9 @@
   failed_when: verify_claude.rc != 0
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Verify Gitleaks (Linux)
-  ansible.builtin.command: gitleaks version
-  register: verify_gitleaks
-  changed_when: false
-  failed_when: verify_gitleaks.rc != 0
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Verify Gitleaks (macOS)
-  ansible.builtin.command: gitleaks version
-  environment: "{{ homebrew_env }}"
-  register: verify_gitleaks
-  changed_when: false
-  failed_when: verify_gitleaks.rc != 0
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-- name: Verify act (Linux)
-  ansible.builtin.command: act --version
-  register: verify_act
-  changed_when: false
-  failed_when: verify_act.rc != 0
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Verify act (macOS)
-  ansible.builtin.command: act --version
-  environment: "{{ homebrew_env }}"
-  register: verify_act
-  changed_when: false
-  failed_when: verify_act.rc != 0
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-- name: Display corporate tools verification
+- name: Display SOE tools verification
   ansible.builtin.debug:
     msg: |
-      ✅ Corporate Tools Verified:
+      ✅ SOE Tools Verified:
       - OpenVPN: {{ verify_openvpn.stdout | default('skipped (install failed - manual install required)') }}
       - Claude Code CLI: {{ verify_claude.stdout | default('installed') }}
-      - Gitleaks: {{ verify_gitleaks.stdout | default('installed') }}
-      - act: {{ verify_act.stdout | default('installed') }}

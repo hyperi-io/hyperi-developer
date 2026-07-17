@@ -1,0 +1,54 @@
+---
+# Contributor Role — tier 2 of the audience model.
+#
+# For someone outside HyperI who wants to work ON a HyperI product (dfe and
+# friends): everything the generic developer base gives you, plus the toolchain
+# our CI actually runs, so `hyperi-ci check` passes locally before you open a
+# PR rather than failing in CI.
+#
+# What it deliberately does NOT include is the point of it existing: no
+# OpenVPN, no telemetry-disable, no bash-history-to-git, no wallpaper, no
+# Slack. Those are HyperI POLICY for HyperI machines, and imposing them on a
+# contributor's laptop would be rude. They live in `soe`, which depends on this.
+#
+#   developer     generic dev base           <- meta dependency of this role
+#   contributor   + the CI toolchain         <- you are here
+#   soe           + HyperI org policy        <- depends on this role
+#
+# Nothing here is HyperI-only in any meaningful sense: hyperi-ci is public and
+# the linters it drives are ordinary open-source tools.
+#
+# These tasks live HERE rather than in soe, and soe reaches them by depending
+# on this role. The alternative -- soe keeping them and contributor including
+# them across the role boundary with a relative path -- is how
+# `include_tasks: uv.yml` came to silently break `--tags winlike`: a path
+# relative to one role does not resolve from another.
+
+- name: Install hyperi-ci and the tools its checks require
+  ansible.builtin.include_tasks:
+    file: hyperi_ci.yml
+    apply:
+      tags: ['contributor', 'hyperi-ci']
+  tags: ['contributor', 'hyperi-ci']
+
+- name: Install Gitleaks (secret detection)
+  ansible.builtin.include_tasks:
+    file: gitleaks.yml
+    apply:
+      tags: ['contributor', 'gitleaks']
+  tags: ['contributor', 'gitleaks']
+
+- name: Install act (GitHub Actions runner)
+  ansible.builtin.include_tasks:
+    file: act.yml
+    apply:
+      tags: ['contributor', 'act']
+  tags: ['contributor', 'act']
+
+- name: Verify the contributor toolchain
+  ansible.builtin.include_tasks:
+    file: verify.yml
+    apply:
+      tags: ['contributor', 'verify']
+  tags: ['contributor', 'verify']
+  when: not ansible_check_mode

@@ -1,0 +1,24 @@
+---
+galaxy_info:
+  author: HyperI
+  description: >-
+    Tier 1 of the audience model: the HyperI Standard Operating Environment.
+    Everything a contributor gets, plus HyperI org policy.
+  company: HyperI
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Fedora
+      versions: ['43', '44']
+    - name: Ubuntu
+      versions: ['noble', 'resolute']
+
+# soe is a SUPERSET of contributor, which is a superset of developer. Wiring
+# the chain here means `--tags soe` pulls the whole stack and nobody has to
+# remember what it implies.
+#
+# It also decides where a task lives: anything a contributor needs belongs in
+# contributor, and soe gets it for free. soe only holds what is HyperI POLICY
+# -- VPN, telemetry-disable, bash history to git, branding.
+dependencies:
+  - role: contributor

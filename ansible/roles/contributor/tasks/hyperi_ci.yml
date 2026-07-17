@@ -28,8 +28,8 @@
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   environment:
     PATH: "/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
-  register: corporate_hyperi_ci
-  changed_when: "'Installed' in corporate_hyperi_ci.stdout | default('')"
+  register: contributor_hyperi_ci
+  changed_when: "'Installed' in contributor_hyperi_ci.stdout | default('')"
   failed_when: false
 
 - name: Warn if hyperi-ci did not install
@@ -40,8 +40,8 @@
   ansible.builtin.set_fact:
     deploy_warnings: >-
       {{ deploy_warnings | default([])
-         + ['hyperi-ci: uv tool install failed -- ' ~ (corporate_hyperi_ci.stderr | default('') | trim | truncate(120))] }}
-  when: corporate_hyperi_ci.rc | default(0) != 0
+         + ['hyperi-ci: uv tool install failed -- ' ~ (contributor_hyperi_ci.stderr | default('') | trim | truncate(120))] }}
+  when: contributor_hyperi_ci.rc | default(0) != 0
 
 # ============================================================================
 # semgrep
@@ -65,8 +65,8 @@
   become_user: "{{ actual_user }}"
   environment:
     PATH: "/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
-  register: corporate_semgrep
-  changed_when: "'Installed' in corporate_semgrep.stdout | default('')"
+  register: contributor_semgrep
+  changed_when: "'Installed' in contributor_semgrep.stdout | default('')"
   failed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
@@ -81,7 +81,7 @@
          + ['semgrep: install failed -- hyperi-ci check will skip its semgrep pass'] }}
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - corporate_semgrep.rc | default(0) != 0
+    - contributor_semgrep.rc | default(0) != 0
 
 # ============================================================================
 # alint
@@ -105,8 +105,8 @@
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   environment:
     PATH: "{{ user_home }}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
-  register: corporate_alint
-  changed_when: "'Installed package' in corporate_alint.stdout | default('')"
+  register: contributor_alint
+  changed_when: "'Installed package' in contributor_alint.stdout | default('')"
   failed_when: false
 
 - name: Warn if alint did not install
@@ -119,7 +119,7 @@
       {{ deploy_warnings | default([])
          + ['alint: cargo install failed (needs a Rust toolchain -- add the '
             ~ 'developer-rust tag). hyperi-ci check will skip its alint pass.'] }}
-  when: corporate_alint.rc | default(0) != 0
+  when: contributor_alint.rc | default(0) != 0
 
 # ============================================================================
 # osv-scanner
@@ -140,13 +140,13 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/google/osv-scanner/releases/latest
         return_content: true
-      register: corporate_osv_latest
+      register: contributor_osv_latest
       check_mode: false
 
     - name: Download osv-scanner
       ansible.builtin.get_url:
         url: >-
-          https://github.com/google/osv-scanner/releases/download/{{ corporate_osv_latest.json.tag_name }}/osv-scanner_linux_{{ hyperi_arch_deb }}
+          https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_latest.json.tag_name }}/osv-scanner_linux_{{ hyperi_arch_deb }}
         dest: /usr/local/bin/osv-scanner
         owner: root
         group: root
