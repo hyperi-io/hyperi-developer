@@ -59,13 +59,16 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
   check_mode: false
 
+# Assets are named ghostty_<ver>_<arch>_<suite>.deb, e.g.
+# ghostty_1.3.1-0.ppa2_arm64_24.04.deb. arm64 debs exist for every suite amd64
+# has, so this is a straight token swap.
 - name: Find .deb file for detected Ubuntu version
   ansible.builtin.set_fact:
     ghostty_deb_url: "{{ item.browser_download_url }}"
   loop: "{{ ghostty_latest.json.assets }}"
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
-    - "'_amd64_' + ansible_facts['distribution_version'] + '.deb' in item.name"
+    - "'_' + hyperi_arch_deb + '_' + ansible_facts['distribution_version'] + '.deb' in item.name"
 
 - name: Download Ghostty .deb
   ansible.builtin.get_url:

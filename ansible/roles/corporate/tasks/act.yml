@@ -37,9 +37,16 @@
       ansible.builtin.set_fact:
         act_version: "{{ act_release.json.tag_name }}"
 
+    # act does NOT use one naming scheme across arches: amd64 is `x86_64`,
+    # arm64 is `arm64` (not `aarch64`). So neither shared token fits both, and
+    # a substring swap on either would 404. Verified against the real release.
+    - name: Determine the act asset architecture
+      ansible.builtin.set_fact:
+        act_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
+
     - name: Download act binary tarball
       ansible.builtin.get_url:
-        url: "https://github.com/nektos/act/releases/download/{{ act_version }}/act_Linux_x86_64.tar.gz"
+        url: "https://github.com/nektos/act/releases/download/{{ act_version }}/act_Linux_{{ act_arch }}.tar.gz"
         dest: /tmp/act.tar.gz
         mode: '0644'
 

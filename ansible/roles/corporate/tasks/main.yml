@@ -47,6 +47,15 @@
       tags: ['corporate', 'gitleaks']
   tags: ['corporate', 'gitleaks']
 
+# After gitleaks: `hyperi-ci check` treats gitleaks as blocking, so it wants it
+# present. The rest of check's external binaries come with this.
+- name: Install hyperi-ci and the tools its checks require
+  ansible.builtin.include_tasks:
+    file: hyperi_ci.yml
+    apply:
+      tags: ['corporate', 'hyperi-ci']
+  tags: ['corporate', 'hyperi-ci']
+
 - name: Install the disk-attach tool
   ansible.builtin.include_tasks:
     file: disk_attach.yml

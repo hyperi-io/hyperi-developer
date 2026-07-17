@@ -165,6 +165,56 @@
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
+# RETIRED CLI UTILITIES
+# ============================================================================
+# Dropped from utilities.yml by decision. Removing them from the install list
+# does nothing on its own -- Ansible cannot prune what we stop declaring, so
+# every host we have ever built keeps them until told.
+#
+#   telnet, nmap        no business on a default developer box
+#   net-tools           superseded by iproute2 (ss, ip) for ~15 years
+#   traceroute, whois   niche; install them when you need them
+#   tree                superseded by eza/fd
+#   httpie              superseded by curl for our uses
+#
+# NOT purged, only removed: `purge` would also delete config a developer may
+# have written themselves.
+- name: Remove retired CLI utilities (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - telnet
+      - net-tools
+      - traceroute
+      - nmap
+      - whois
+      - tree
+      - httpie
+    state: absent
+  when: ansible_facts['distribution'] == 'Fedora'
+  failed_when: false
+
+- name: Remove retired CLI utilities (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - telnet
+      - net-tools
+      - traceroute
+      - nmap
+      - whois
+      - tree
+      - httpie
+    state: absent
+    purge: false
+    autoremove: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  failed_when: false
+
+# macOS is deliberately absent. These came from brew, and `brew uninstall` on a
+# Mac hits tools the developer may well have installed themselves for their own
+# reasons -- on a personal machine, undeclared state is theirs, not ours. The
+# Linux boxes are provisioned fleet machines; a Mac is somebody's laptop.
+
+# ============================================================================
 # STALE CONFIG — blocks and repo files older versions wrote.
 # ============================================================================
 

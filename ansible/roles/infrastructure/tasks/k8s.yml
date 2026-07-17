@@ -81,7 +81,7 @@
 
     - name: Download and extract k9s
       ansible.builtin.unarchive:
-        src: "https://github.com/derailed/k9s/releases/download/{{ k9s_latest.json.tag_name }}/k9s_Linux_amd64.tar.gz"
+        src: "https://github.com/derailed/k9s/releases/download/{{ k9s_latest.json.tag_name }}/k9s_Linux_{{ hyperi_arch_deb }}.tar.gz"
         dest: /usr/local/bin
         remote_src: true
         include: k9s
@@ -108,25 +108,26 @@
         dest: /usr/local/bin/kubens
         mode: '0755'
 
-    # Minikube
-    - name: Download Minikube
+    # kind, not minikube. kind runs vanilla kubeadm Kubernetes in docker, which
+    # is closer to the real clusters our helm/argocd work targets; minikube is
+    # its own opinionated distribution.
+    #
+    # minikube used to be installed HERE while developer/tasks/removals.yml
+    # tombstoned it -- the same run removed it and put it back, and since the
+    # developer role runs first, the reinstall won. The tombstone only works
+    # once the install is gone too.
+    - name: Get latest kind version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/kubernetes-sigs/kind/releases/latest
+        return_content: true
+      register: kind_latest
+      check_mode: false
+
+    - name: Download kind
       ansible.builtin.get_url:
-        url: https://github.com/kubernetes/minikube/releases/latest/download/minikube-linux-amd64
-        dest: /tmp/minikube-linux-amd64
+        url: "https://github.com/kubernetes-sigs/kind/releases/download/{{ kind_latest.json.tag_name }}/kind-linux-{{ hyperi_arch_deb }}"
+        dest: /usr/local/bin/kind
         mode: '0755'
-
-    - name: Install Minikube
-      ansible.builtin.copy:
-        src: /tmp/minikube-linux-amd64
-        dest: /usr/local/bin/minikube
-        mode: '0755'
-        remote_src: true
-      when: not ansible_check_mode
-
-    - name: Remove Minikube installer
-      ansible.builtin.file:
-        path: /tmp/minikube-linux-amd64
-        state: absent
 
     # ArgoCD CLI
     - name: Get latest ArgoCD version
@@ -138,7 +139,7 @@
 
     - name: Download ArgoCD CLI
       ansible.builtin.get_url:
-        url: "https://github.com/argoproj/argo-cd/releases/download/{{ argocd_latest.json.tag_name }}/argocd-linux-amd64"
+        url: "https://github.com/argoproj/argo-cd/releases/download/{{ argocd_latest.json.tag_name }}/argocd-linux-{{ hyperi_arch_deb }}"
         dest: /usr/local/bin/argocd
         mode: '0755'
 
@@ -150,14 +151,31 @@
       register: dive_latest
       check_mode: false
 
+    # dive tags its releases v0.13.1 but names the asset dive_0.13.1_... -- the
+    # leading v is stripped in the filename but not the path.
+    - name: Set the dive asset version
+      ansible.builtin.set_fact:
+        dive_version: "{{ dive_latest.json.tag_name | regex_replace('^v', '') }}"
+
     - name: Download and extract dive
       ansible.builtin.unarchive:
-        src: "https://github.com/wagoodman/dive/releases/download/{{ dive_latest.json.tag_name }}/dive_{{ dive_latest.json.tag_name | regex_replace('^v', '') }}_linux_amd64.tar.gz"
+        src: >-
+          https://github.com/wagoodman/dive/releases/download/{{ dive_latest.json.tag_name }}/dive_{{ dive_version }}_linux_{{ hyperi_arch_deb }}.tar.gz
         dest: /usr/local/bin
         remote_src: true
         include: dive
         mode: '0755'
       when: not ansible_check_mode
+
+  rescue:
+    # One dead upstream must not cost the whole k8s toolset. See
+    # docs/RESILIENT-DEPLOY.md.
+    - name: Record that a Kubernetes CLI tool did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Kubernetes CLI tools (k9s/kubectx/kind/argocd/dive): '
+                ~ (ansible_failed_result.msg | default('download failed'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 

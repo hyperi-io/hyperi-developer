@@ -46,23 +46,13 @@
       ansible.builtin.set_fact:
         uv_version: "{{ uv_latest_release.json.tag_name }}"
 
-    # Do not hardcode amd64: arm64 Linux is real (Graviton, arm64 VMs, and
-    # containers on Apple Silicon), and a hardcoded x86_64 URL 404s there.
+    # uv names its assets with the full GNU triple. Unlike sd, uv publishes a
+    # gnu build for BOTH arches, so the libc token does not move.
+    # The unsupported-arch check now lives in playbooks/main.yml pre_tasks --
+    # one gate for the whole run rather than a copy per tool.
     - name: Determine uv binary architecture
       ansible.builtin.set_fact:
-        uv_arch: >-
-          {%- if ansible_facts['architecture'] == 'x86_64' -%}
-          x86_64-unknown-linux-gnu
-          {%- elif ansible_facts['architecture'] == 'aarch64' -%}
-          aarch64-unknown-linux-gnu
-          {%- else -%}
-          unsupported
-          {%- endif -%}
-
-    - name: Fail if unsupported architecture
-      ansible.builtin.fail:
-        msg: "Unsupported architecture for uv: {{ ansible_facts['architecture'] }}"
-      when: uv_arch == 'unsupported'
+        uv_arch: "{{ hyperi_arch_gnu }}-unknown-linux-gnu"
 
     - name: Create the user-local bin directory
       ansible.builtin.file:

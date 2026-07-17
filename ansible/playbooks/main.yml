@@ -21,6 +21,36 @@
           Python: {{ ansible_facts['python_version'] }}
       tags: ['always']
 
+    # ========================================================================
+    # ARCHITECTURE
+    # ========================================================================
+    # Upstreams cannot agree what to call an architecture, so we carry both
+    # spellings and each download picks the one its upstream uses:
+    #
+    #   hyperi_arch_deb   amd64  / arm64      Debian-style. Most GitHub releases.
+    #   hyperi_arch_gnu   x86_64 / aarch64    GNU triple style. AWS CLI, rustc.
+    #
+    # Defined ONCE, here, rather than per role: three roles had grown their own
+    # near-identical copy of this jinja, and a fourth was about to. `always`
+    # means it is set for any --tags run.
+    #
+    # arm64 Linux is real here -- arm64 VMs, containers on Apple Silicon -- so a
+    # hardcoded amd64 URL is a 404 on a real machine, not a hypothetical one.
+    # Every tool we fetch by URL was checked: all of them publish arm64.
+    - name: Determine architecture tokens
+      ansible.builtin.set_fact:
+        hyperi_arch_deb: "{{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'amd64' }}"
+        hyperi_arch_gnu: "{{ 'aarch64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'x86_64' }}"
+      tags: ['always']
+
+    - name: Fail on an architecture we do not publish for
+      ansible.builtin.fail:
+        msg: >-
+          Unsupported architecture: {{ ansible_facts['architecture'] }}.
+          This playbook fetches x86_64/amd64 and aarch64/arm64 builds only.
+      when: ansible_facts['architecture'] not in ['x86_64', 'amd64', 'aarch64', 'arm64']
+      tags: ['always']
+
     # Wait for package manager locks (handles automatic updates in progress)
     - name: Wait for APT lock to be released (Ubuntu)
       ansible.builtin.shell: |
@@ -224,12 +254,50 @@
       tags: ['always']
 
   post_tasks:
+    # ========================================================================
+    # WHAT DID NOT INSTALL
+    # ========================================================================
+    # This deployment is best-effort, not all-or-nothing: it is not routinely
+    # maintained, and upstreams rename assets, move repos and go away. A single
+    # dead upstream must not abort the run.
+    #
+    # The other half of that bargain is THIS. "Carry on and warn" is only
+    # acceptable if the warning is unmissable -- otherwise it is just a silent
+    # half-install, which is worse than failing, because the box looks done.
+    #
+    # Optional installs record their failure by appending to deploy_warnings
+    # (see the block/rescue pattern in roles/*/tasks/*.yml). CRITICAL things --
+    # unsupported OS, a broken package manager, git, the docker engine -- still
+    # fail the run: a box without those is not a developer box.
+    - name: Report what did not install
+      ansible.builtin.debug:
+        msg: |
+          {{ deploy_warnings | length }} thing(s) did not install.
+
+          The rest of the environment is set up and usable. These are optional
+          components whose upstream failed; the run continued deliberately.
+
+          {% for w in deploy_warnings %}
+            - {{ w }}
+          {% endfor %}
+
+          Re-run to retry them. If one keeps failing, its upstream has probably
+          moved -- that is a bug in this repo, please report it.
+      when:
+        - deploy_warnings is defined
+        - deploy_warnings | length > 0
+      tags: ['always']
+
     - name: Display completion message
       ansible.builtin.debug:
         msg: |
-          Developer Environment installation complete!
+          Developer Environment installation complete{{
+            ' -- with ' ~ deploy_warnings | length ~ ' warning(s), see above'
+            if (deploy_warnings | default([]) | length > 0) else '!'
+          }}
 
           Next steps:
           1. Log out and back in for Docker group membership
           2. Reboot to apply all optimizations
           3. Configure your tools (Git, AWS CLI, etc.)
+      tags: ['always']

@@ -5,29 +5,30 @@
 # CLI UTILITIES (no desktop required)
 # ============================================================================
 
+# Dropped from this list by decision, and tombstoned in removals.yml so they
+# leave hosts that already have them: telnet, net-tools, nmap, whois,
+# traceroute, tree, httpie. They are either superseded (ss over netstat, curl
+# over httpie, eza/fd over tree) or things a developer box has no business
+# shipping by default (nmap, telnet). Install them yourself if you want them.
 - name: Install CLI utilities (Fedora)
   ansible.builtin.dnf:
     name:
       - jq
+      - gron                  # make JSON greppable
       - bat
       - fzf
       - ripgrep
       - fd-find
+      - git-delta             # git diff pager. NOT `delta` -- that is a binary-diff tool
+      - moreutils             # sponge, ts, vipe, chronic
       - miller                # data processing (mlr command)
       - rsync
-      - httpie
       - tmux
       - htop
       - lsof
       - needrestart           # flag daemons needing restart after upgrades (cf. dnf needs-restarting)
-      - tree
       - wget
       - bind-utils
-      - net-tools
-      - traceroute
-      - nmap
-      - telnet
-      - whois
       - ShellCheck
       - postgresql
       - ansible
@@ -42,27 +43,25 @@
   ansible.builtin.apt:
     name:
       - jq
+      - gron                  # make JSON greppable
       - bat
       - fzf
       - ripgrep
       - fd-find
       - sd                    # sane sed replacement
+      - git-delta             # git diff pager. NOT `delta` -- on Ubuntu that
+                              # name belongs to an ancient binary-diff tool
+      - moreutils             # sponge, ts, vipe, chronic
+      - lazygit               # git TUI
       - miller                # data processing (mlr command)
       - rsync
-      - httpie
       - tmux
       - htop
       - lsof
       - needrestart           # flag daemons needing restart after upgrades
-      - tree
       - wget
       - dnsutils
-      - net-tools
-      - traceroute
-      - nmap
-      - telnet
       - netcat-openbsd
-      - whois
       - shellcheck
       - postgresql-client
       - ansible
@@ -84,23 +83,25 @@
   community.general.homebrew:
     name:
       - jq
+      - gron                  # make JSON greppable
       - bat
       - fzf
       - ripgrep
       - fd
       - sd                    # sane sed replacement
+      - git-delta             # git diff pager (brew aliases `delta` to this)
+      - moreutils             # sponge, ts, vipe, chronic
+      - lazygit               # git TUI
+      - dive                  # docker image layer explorer (brew-core has it;
+                              # Linux takes a GitHub binary, see k8s.yml)
+      - trufflehog            # secret scanner
       - miller                # data processing (mlr command)
       - rsync
-      - httpie
       - tmux
       - htop
-      - tree
       - wget
       - bind
-      - nmap
-      - telnet
       - netcat
-      - whois
       - shellcheck
       - postgresql@16
       - yq
@@ -113,31 +114,67 @@
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # yq - Binary download (Linux only, macOS uses Homebrew above)
-- name: Download yq
-  ansible.builtin.get_url:
-    url: https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-    dest: /usr/local/bin/yq
-    mode: '0755'
+- name: Install yq
+  block:
+    - name: Download yq
+      ansible.builtin.get_url:
+        url: "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_{{ hyperi_arch_deb }}"
+        dest: /usr/local/bin/yq
+        mode: '0755'
+
+  rescue:
+    - name: Record that yq did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately not
+      # role-prefixed: it is the shared accumulator playbooks/main.yml reports
+      # from. See docs/RESILIENT-DEPLOY.md.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['yq: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # sd - sane sed replacement (binary download for Fedora, apt for Ubuntu)
-- name: Get latest sd version
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/chmln/sd/releases/latest
-    return_content: true
-  register: sd_release
-  when: ansible_facts['distribution'] == 'Fedora'
+- name: Install sd (Fedora)
+  block:
+    - name: Get latest sd version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/chmln/sd/releases/latest
+        return_content: true
+      register: sd_release
 
-- name: Download and extract sd (Fedora)
-  ansible.builtin.unarchive:
-    src: "https://github.com/chmln/sd/releases/download/{{ sd_release.json.tag_name }}/sd-{{ sd_release.json.tag_name }}-x86_64-unknown-linux-gnu.tar.gz"
-    dest: /usr/local/bin
-    remote_src: true
-    extra_opts:
-      - --strip-components=1
-      - --wildcards
-      - "*/sd"
-    mode: '0755'
+    # sd is the one that punishes a naive arch swap. Its arm64 build is
+    # MUSL-ONLY -- there is no aarch64-unknown-linux-gnu asset, and asking for
+    # one 404s (verified). amd64 has both gnu and musl. So the libc token
+    # changes with the arch, not just the arch token.
+    - name: Determine the sd release target
+      ansible.builtin.set_fact:
+        sd_target: >-
+          {{ 'aarch64-unknown-linux-musl'
+             if hyperi_arch_deb == 'arm64'
+             else 'x86_64-unknown-linux-gnu' }}
+
+    - name: Download and extract sd
+      ansible.builtin.unarchive:
+        src: "https://github.com/chmln/sd/releases/download/{{ sd_release.json.tag_name }}/sd-{{ sd_release.json.tag_name }}-{{ sd_target | trim }}.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        extra_opts:
+          - --strip-components=1
+          - --wildcards
+          - "*/sd"
+        mode: '0755'
+
+  rescue:
+    - name: Record that sd did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately not
+      # role-prefixed: it is the shared accumulator playbooks/main.yml reports
+      # from. See docs/RESILIENT-DEPLOY.md.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['sd: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
   when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================

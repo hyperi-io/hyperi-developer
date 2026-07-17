@@ -70,7 +70,7 @@
   block:
     - name: Download AWS CLI v2 installer
       ansible.builtin.get_url:
-        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        url: https://awscli.amazonaws.com/awscli-exe-linux-{{ hyperi_arch_gnu }}.zip
         dest: /tmp/awscliv2.zip
         mode: '0644'
 
@@ -137,9 +137,16 @@
 
     - name: Download aws-vault binary
       ansible.builtin.get_url:
-        url: "https://github.com/99designs/aws-vault/releases/download/{{ aws_vault_version }}/aws-vault-linux-amd64"
+        url: "https://github.com/99designs/aws-vault/releases/download/{{ aws_vault_version }}/aws-vault-linux-{{ hyperi_arch_deb }}"
         dest: /usr/local/bin/aws-vault
         mode: '0755'
+
+  rescue:
+    - name: Record that aws-vault did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['aws-vault: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
@@ -160,16 +167,11 @@
       ansible.builtin.set_fact:
         helm_version: "{{ helm_latest_release.json.tag_name }}"
 
+    # Was its own copy of the arch jinja; now uses the shared token set from
+    # playbooks/main.yml. Helm names its tarballs linux-<deb-style-arch>.
     - name: Determine Helm binary architecture
       ansible.builtin.set_fact:
-        helm_arch: >-
-          {%- if ansible_facts['architecture'] == 'x86_64' -%}
-          linux-amd64
-          {%- elif ansible_facts['architecture'] == 'aarch64' -%}
-          linux-arm64
-          {%- else -%}
-          unsupported
-          {%- endif -%}
+        helm_arch: "linux-{{ hyperi_arch_deb }}"
 
     - name: Download Helm binary tarball
       ansible.builtin.get_url:

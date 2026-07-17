@@ -1,0 +1,163 @@
+---
+# hyperi-ci and the external binaries `hyperi-ci check` shells out to.
+#
+# `check` does not bundle its linters -- it drives whatever is on PATH and
+# skips (or fails) what is missing. So installing hyperi-ci without these gets
+# you a check that silently does less than you think.
+#
+# From hyperi-ci's own defaults.yaml, which is the SSoT (its README is thinner):
+#   gitleaks       blocking  -- already installed by gitleaks.yml
+#   semgrep        warn      -- cross-language, runs at dispatch
+#   alint          auto      -- see the note below, it is NOT ansible-lint
+# plus per-language tools that live with their language roles rather than here
+# (ruff/ty via developer-python, cargo-deny/nextest via developer-rust, and so
+# on) -- no point installing a Go linter on a box with no Go.
+
+# ============================================================================
+# hyperi-ci itself
+# ============================================================================
+# A Python tool on PyPI, not in our Homebrew tap. `uv tool install` is the
+# right rung here: it is not packaged by any distro, and uv gives it an
+# isolated venv plus an update path (`uv tool upgrade --all`, which
+# hyperi-update already runs).
+- name: Install hyperi-ci
+  ansible.builtin.command:
+    cmd: uv tool install hyperi-ci
+    creates: "{{ user_home }}/.local/share/uv/tools/hyperi-ci"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  environment:
+    PATH: "/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  register: corporate_hyperi_ci
+  changed_when: "'Installed' in corporate_hyperi_ci.stdout | default('')"
+  failed_when: false
+
+- name: Warn if hyperi-ci did not install
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately NOT
+  # role-prefixed: it is the shared accumulator that playbooks/main.yml
+  # post_tasks reports from. A per-role name would give every role its own
+  # list and the summary would report almost nothing.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['hyperi-ci: uv tool install failed -- ' ~ (corporate_hyperi_ci.stderr | default('') | trim | truncate(120))] }}
+  when: corporate_hyperi_ci.rc | default(0) != 0
+
+# ============================================================================
+# semgrep
+# ============================================================================
+# brew has it; no distro packages it (verified against ubuntu:26.04 and
+# fedora:44 with sccache as a control). On Linux that leaves uv -- semgrep is a
+# Python tool, so this is its native distribution channel, not a workaround.
+- name: Install semgrep (macOS)
+  community.general.homebrew:
+    name: semgrep
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install semgrep (Linux)
+  ansible.builtin.command:
+    cmd: uv tool install semgrep
+    creates: "{{ user_home }}/.local/share/uv/tools/semgrep"
+  become: true
+  become_user: "{{ actual_user }}"
+  environment:
+    PATH: "/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  register: corporate_semgrep
+  changed_when: "'Installed' in corporate_semgrep.stdout | default('')"
+  failed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Warn if semgrep did not install
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately NOT
+  # role-prefixed: it is the shared accumulator that playbooks/main.yml
+  # post_tasks reports from. A per-role name would give every role its own
+  # list and the summary would report almost nothing.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['semgrep: install failed -- hyperi-ci check will skip its semgrep pass'] }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - corporate_semgrep.rc | default(0) != 0
+
+# ============================================================================
+# alint
+# ============================================================================
+# NOT ansible-lint. `alint` is a language-agnostic linter for repository
+# STRUCTURE -- file existence, filename conventions, content rules -- from
+# asamarts/alint. hyperi-ci ships a config for it (hyperi.alint.yml) and runs
+# it under `quality.alint: auto`.
+#
+# Worth being loud about, because the name reads like an ansible-lint
+# abbreviation and installing ansible-lint here would satisfy nobody: it is a
+# different tool solving a different problem. ansible-lint is a dev dependency
+# of THIS repo (see CONTRIBUTING), not something hyperi-ci calls.
+#
+# Not packaged anywhere, so cargo it is -- the bottom rung, and the only rung.
+- name: Install alint (repository-structure linter, NOT ansible-lint)
+  ansible.builtin.command:
+    cmd: cargo install alint
+    creates: "{{ user_home }}/.cargo/bin/alint"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  environment:
+    PATH: "{{ user_home }}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+  register: corporate_alint
+  changed_when: "'Installed package' in corporate_alint.stdout | default('')"
+  failed_when: false
+
+- name: Warn if alint did not install
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately NOT
+  # role-prefixed: it is the shared accumulator that playbooks/main.yml
+  # post_tasks reports from. A per-role name would give every role its own
+  # list and the summary would report almost nothing.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['alint: cargo install failed (needs a Rust toolchain -- add the '
+            ~ 'developer-rust tag). hyperi-ci check will skip its alint pass.'] }}
+  when: corporate_alint.rc | default(0) != 0
+
+# ============================================================================
+# osv-scanner
+# ============================================================================
+# hyperi-ci calls it for Rust and TypeScript dependency audits. brew has it;
+# no distro does, so Linux takes the GitHub release.
+- name: Install osv-scanner (macOS)
+  community.general.homebrew:
+    name: osv-scanner
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install osv-scanner (Linux)
+  block:
+    - name: Get latest osv-scanner version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/google/osv-scanner/releases/latest
+        return_content: true
+      register: corporate_osv_latest
+      check_mode: false
+
+    - name: Download osv-scanner
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/google/osv-scanner/releases/download/{{ corporate_osv_latest.json.tag_name }}/osv-scanner_linux_{{ hyperi_arch_deb }}
+        dest: /usr/local/bin/osv-scanner
+        owner: root
+        group: root
+        mode: '0755'
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- see the note above.
+    - name: Record that osv-scanner did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['osv-scanner: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
