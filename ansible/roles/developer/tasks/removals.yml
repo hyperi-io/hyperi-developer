@@ -1,0 +1,181 @@
+---
+# Tombstones — things this project used to install and no longer does.
+#
+# WHY THIS FILE EXISTS
+# Ansible is convergent, not declarative-with-pruning. It enforces what you
+# DECLARE and has no concept of "this used to be declared, so remove it".
+# Puppet has `purge`; OpenTofu can do it because it keeps state; Ansible has
+# neither. So deleting an install task leaves the tool on every existing host
+# forever. The only way to express "should not exist" is to say so.
+#
+# WHY NOT A PURGE
+# `package_facts` could enumerate everything installed and remove whatever we
+# do not declare. We deliberately do not: on a developer workstation
+# UNDECLARED STATE IS THE POINT — people install their own tools, and a purge
+# would delete their work. This is a denylist of what WE removed, never an
+# allowlist of what is permitted.
+#
+# RULES FOR ADDING HERE
+#   - When you drop an install, ADD the removal. Same commit.
+#   - Say WHY it was dropped, so a future reader can retire the tombstone.
+#   - Never fail the run: a host that never had the thing is the common case.
+#   - Removals are the destructive part of this playbook. Preview with
+#     --check --diff.
+#
+# RETIRING TOMBSTONES
+# Once no host in the field is old enough to carry an artefact, delete its
+# tombstone. Track that by the version stamp, not by memory.
+
+# ============================================================================
+# SHADOWING — a stale user-level copy that wins on PATH over the system one.
+# The worst class: the host LOOKS fine (the command runs, plausible version)
+# but no system update will ever touch that copy again.
+# ============================================================================
+
+# uv is now repo-installed (dnf on Fedora, brew on macOS) or user-owned in
+# ~/.local/bin (Ubuntu). Older versions of this project dropped a root-owned
+# binary in /usr/local/bin and/or a per-user copy in ~/.cargo/bin. Either will
+# win on PATH over the new install and NOTHING will ever update it.
+#
+# This is not hypothetical: verified on desktop-derek 2026-07-17 —
+# /usr/local/bin/uv was 0.10.2, root-owned, dated Feb 11, while current is
+# 0.11.29. Five months stale, and `which uv` resolved to it, so the host
+# looked fine.
+- name: Remove the retired root-owned uv binary (no update path; shadows the repo install)
+  ansible.builtin.file:
+    path: /usr/local/bin/uv
+    state: absent
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Remove the retired user-level uv (superseded by the repo install)
+  ansible.builtin.file:
+    path: "{{ user_home }}/.cargo/bin/uv"
+    state: absent
+  become: false
+  when: ansible_facts['distribution'] in ['Fedora', 'MacOSX']
+
+# ============================================================================
+# CANNOT CO-EXIST — the old thing actively conflicts with its replacement.
+# ============================================================================
+
+# OrbStack: free tier is personal, non-commercial use only; business use needs
+# a paid seat. Replaced by colima (MIT, free commercial). Both register a
+# docker context + socket, so leaving it makes `docker`'s target ambiguous.
+# NOTE: uninstalling OrbStack also removes the docker CLI it provided — the
+# docker role reinstalls the CLI from brew, so ordering matters.
+- name: Remove OrbStack (paid for commercial use; replaced by colima)
+  community.general.homebrew_cask:
+    name: orbstack
+    state: absent
+  become: false
+  environment: "{{ homebrew_cask_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false
+
+- name: Remove the stale OrbStack docker context
+  ansible.builtin.command:
+    cmd: docker context rm orbstack
+  become: false
+  register: developer_rm_orbstack_ctx
+  changed_when: "'orbstack' in (developer_rm_orbstack_ctx.stdout | default(''))"
+  failed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# RETIRED BY DECISION — dropped from the default install.
+# ============================================================================
+
+# Docker Desktop — dropped by decision; on Linux we install Docker Engine (CE)
+# from Docker's own repo, and on macOS the CLI only. Declared EXPLICITLY rather
+# than left to fall out of a dependency cascade.
+#
+# Verified on desktop-derek 2026-07-17: docker-desktop 4.69.0 was still
+# installed at /opt/docker-desktop (inactive) months after we stopped
+# installing it — Ansible cannot prune what it stops declaring.
+#
+# Removing it also takes `pass` and golang-docker-credential-helpers, which are
+# ONLY present as its credential-store dependency (verified: no
+# ~/.password-store, no credsStore in ~/.docker/config.json). That cascade is
+# intended. If a host DOES use `pass` for real, apt keeps it — it only removes
+# what nothing else needs.
+- name: Remove Docker Desktop (dropped by decision; Engine/CLI replace it)
+  ansible.builtin.apt:
+    name: docker-desktop
+    state: absent
+    autoremove: true
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  failed_when: false
+
+# Legacy network tools: telnet is a plaintext relic (nc/curl cover it),
+# net-tools ships deprecated ifconfig/netstat superseded by iproute2, and
+# nmap/whois/traceroute/tree/httpie are rarely used on a dev box (curl covers
+# httpie; fd covers tree).
+#
+# NOTE `tree` is not standalone: `pass` depends on it, and docker-desktop
+# depends on `pass`. Removing tree therefore cascades to both. That is fine
+# here (both are going anyway) but it is why removals get dry-run against a
+# real host before they ship.
+- name: Remove retired CLI utilities (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - telnet
+      - net-tools
+      - nmap
+      - whois
+      - traceroute
+      - tree
+      - httpie
+    state: absent
+  when: ansible_facts['distribution'] == 'Fedora'
+  failed_when: false
+
+- name: Remove retired CLI utilities (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - telnet
+      - net-tools
+      - nmap
+      - whois
+      - traceroute
+      - tree
+      - httpie
+    state: absent
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  failed_when: false
+
+# Binaries older versions dropped in /usr/local/bin and no longer install.
+# All root-owned with no update path, so they linger indefinitely.
+# Verified still present on desktop-derek 2026-07-17: bw, linear.
+#   minikube  — superseded by kind (vanilla kubeadm k8s in docker, closer to
+#               the real clusters our helm/argocd work targets)
+#   bw        — Bitwarden CLI, removed by decision (741e4b2)
+#   linear    — Linear CLI, removed by decision 2026-05-01
+#   jfrog     — removed by decision 2026-05-01
+#   netbird   — removed by decision 2026-05-01
+- name: Remove retired /usr/local/bin binaries
+  ansible.builtin.file:
+    path: "/usr/local/bin/{{ item }}"
+    state: absent
+  loop:
+    - minikube
+    - bw
+    - linear
+    - jfrog
+    - netbird
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# ============================================================================
+# STALE CONFIG — blocks and repo files older versions wrote.
+# ============================================================================
+
+# gnu-tools is retired, so its PATH shim now prepends directories for packages
+# we no longer install. blockinfile removes it cleanly via the same marker it
+# was written with.
+- name: Remove the retired GNU tools PATH shim from ~/.zprofile
+  ansible.builtin.blockinfile:
+    path: "{{ user_home }}/.zprofile"
+    marker: "# {mark} HYPERI: GNU tools PATH shim"
+    state: absent
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false

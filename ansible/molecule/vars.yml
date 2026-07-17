@@ -1,0 +1,48 @@
+---
+# SSoT for the supported-release matrix.
+#
+# CONFIG-DRIVEN, NOT HARDCODED — both n-1 slots roll within a year, so this
+# file is the one place to bump. It feeds BOTH the molecule test matrix and
+# (via the same values) the playbook's declared minimum versions, so the two
+# cannot drift apart: we support n and n-1, and the declared minimum IS n-1.
+#
+# WHY n AND n-1 ONLY (not n-2):
+#   Ubuntu LTS lives 5 years, so n-2 (22.04) would be fine. Fedora only ever
+#   supports TWO releases (~13 months), so Fedora's n-2 is ALWAYS EOL by
+#   construction and its mirrors move to archives.fedoraproject.org — a test
+#   there fails on dnf, not on our playbook. One rule for both distros beats
+#   a per-distro exception.
+#
+# Verified 2026-07-17 (endoflife.date):
+#   Ubuntu 26.04 Resolute Raccoon  2026-04-23, EOL 2031-04-30
+#   Ubuntu 24.04 Noble Numbat      2024-04-25, EOL 2029-05-31
+#   Fedora 44                      2026-04-28, EOL 2027-06-02
+#   Fedora 43                      2025-10-28, EOL 2026-12-09
+#   (Fedora 42 EOL'd 2026-05-27 — already dead, hence no n-2.)
+
+molecule_matrix:
+  - name: ubuntu-2604
+    image: docker.io/library/ubuntu:26.04
+    distro: Ubuntu
+    release: "26.04"
+    rank: n
+  - name: ubuntu-2404
+    image: docker.io/library/ubuntu:24.04
+    distro: Ubuntu
+    release: "24.04"
+    rank: n-1
+  - name: fedora-44
+    image: docker.io/library/fedora:44
+    distro: Fedora
+    release: "44"
+    rank: n
+  - name: fedora-43
+    image: docker.io/library/fedora:43
+    distro: Fedora
+    release: "43"
+    rank: n-1
+
+# The old tag the remediation scenario provisions FROM, to manufacture drift.
+# Bump this as old releases fall out of the field. Anything older than this is
+# out of scope for automated remediation testing.
+remediation_from_tag: "v2.4.4"

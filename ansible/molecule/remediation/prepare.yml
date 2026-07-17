@@ -1,0 +1,123 @@
+---
+# Manufacture the drift a real long-lived host carries, so the remediation test
+# has something real to remediate.
+#
+# THIS IS A HARVESTED FIXTURE, NOT AN INVENTION.
+# Every artefact below was observed on desktop-derek (Ubuntu 26.04, provisioned
+# by an older version of this project and in daily use for months) on
+# 2026-07-17. Synthetic drift would not have found most of it — notably that
+# the stale uv sits in /usr/local/bin, NOT ~/.cargo/bin where we assumed.
+#
+# desktop-derek is a real workstation and cannot stay in the test loop. This
+# file is how its drift outlives it: containers reproduce this exact profile
+# forever, and the VM is retired from testing.
+#
+# Adding to this fixture: only add what you have OBSERVED on a real host.
+# A fixture that tests our assumptions rather than reality is worse than none.
+
+- name: Manufacture the drift of an old hyperi-developer host
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    # ------------------------------------------------------------------
+    # SHADOWING — the class that hides. Host looks fine; the command runs
+    # and reports a plausible version. It is the stale copy, and no system
+    # update will ever touch it.
+    # ------------------------------------------------------------------
+    # Observed: /usr/local/bin/uv was uv 0.10.2, root-owned, dated Feb 11,
+    # while current was 0.11.29. FIVE MONTHS stale, and `which uv` resolved
+    # to it. We do not need the real binary to test the tombstone — only a
+    # root-owned file at the path that must end up gone.
+    - name: Plant a stale root-owned uv (observed 0.10.2 vs current 0.11.29)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          # Fixture standing in for the stale uv 0.10.2 binary observed on
+          # desktop-derek: root-owned, /usr/local/bin, no update path.
+          echo "uv 0.10.2"
+        dest: /usr/local/bin/uv
+        owner: root
+        group: root
+        mode: '0755'
+
+    # ------------------------------------------------------------------
+    # RETIRED BY DECISION, YET STILL PRESENT — the "Ansible cannot prune"
+    # failure, observed in the wild months after we stopped installing them.
+    # ------------------------------------------------------------------
+    - name: Plant retired /usr/local/bin binaries (observed still present)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "retired tool fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - bw          # Bitwarden CLI — removed by decision in 741e4b2
+        - linear      # Linear CLI — removed by decision 2026-05-01
+        - minikube    # superseded by kind
+
+    # ------------------------------------------------------------------
+    # RETIRED PACKAGES — all nine were still installed on desktop-derek.
+    # `tree` matters most: pass depends on it, and docker-desktop depends on
+    # pass, so removing tree cascades. The fixture must reproduce that chain
+    # or the test will not exercise it.
+    # ------------------------------------------------------------------
+    - name: Install retired packages so the tombstones have something to remove
+      ansible.builtin.apt:
+        name:
+          - telnet
+          - net-tools
+          - nmap
+          - whois
+          - traceroute
+          - tree
+          - httpie
+          - pass        # depends on tree — reproduces the cascade
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      failed_when: false
+
+    # ------------------------------------------------------------------
+    # NOT OURS — deployed by hyperi-infra's server_base role.
+    # Planted deliberately so `verify` can assert we DO NOT remove them.
+    # A remediation that deletes a sibling project's artefacts is a bug, and
+    # this fixture is what stops that regressing: disk-attach.service attaches
+    # disks at boot.
+    # ------------------------------------------------------------------
+    - name: Plant hyperi-infra artefacts (must SURVIVE remediation)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          # Owned by hyperi-infra (server_base role), NOT hyperi-developer.
+          # hyperi-developer must never remove this.
+          echo "hyperi-infra artefact: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - disk-attach
+        - hyperi-boot-tuning.sh
+
+    # ------------------------------------------------------------------
+    # UNOWNED — no owner in hyperi-developer or hyperi-infra, so almost
+    # certainly the user's own installs. Planted so verify can assert we
+    # LEAVE THEM: on a developer workstation undeclared state is legitimate,
+    # and deleting someone's own tools is the purge mistake we rejected.
+    # ------------------------------------------------------------------
+    - name: Plant the user's own tools (must SURVIVE remediation)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "user's own tool: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - tinygo
+        - github-mcp-server

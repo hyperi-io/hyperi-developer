@@ -26,6 +26,18 @@
       tags: ['developer', 'repository']
   tags: ['developer', 'repository']
 
+# Tombstones — remove what this project used to install and no longer does.
+# Ansible cannot prune what it stops declaring, so removals must be declared.
+# Runs BEFORE the installs: removing OrbStack also removes the docker CLI it
+# provided, and the docker role below reinstalls the CLI from brew. Ordering is
+# load-bearing, not cosmetic.
+- name: Remove retired tools (tombstones)
+  ansible.builtin.include_tasks:
+    file: removals.yml
+    apply:
+      tags: ['developer', 'removals']
+  tags: ['developer', 'removals']
+
 - name: Install Docker
   ansible.builtin.include_tasks:
     file: docker.yml

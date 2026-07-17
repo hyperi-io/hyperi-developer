@@ -1,0 +1,49 @@
+---
+# Delegated scenario — runs against the REAL desktop-derek VM.
+#
+# SAFETY: `create` and `destroy` are deliberately ABSENT from test_sequence.
+# The default molecule sequence ends in `destroy`, which against a real
+# workstation would be catastrophic. There is nothing to create (the host
+# exists) and nothing may be destroyed. `molecule test -s desktop-derek` is
+# therefore intentionally NOT a full create/destroy cycle.
+#
+# SNAPSHOT THE VM BEFORE RUNNING. `converge` genuinely changes the host — that
+# is the entire point of the scenario.
+#
+# Preview first, always (the Puppet `noop` habit — tombstones are the
+# destructive part of this playbook):
+#     molecule converge -s desktop-derek -- --check --diff
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: requirements.yml
+    ignore-errors: true
+
+ansible:
+  cfg:
+    defaults:
+      host_key_checking: false
+      interpreter_python: auto_silent
+    ssh_connection:
+      pipelining: true
+  env:
+    ANSIBLE_FORCE_COLOR: "1"
+  executor:
+    backend: ansible-playbook
+    args:
+      ansible_playbook:
+        - --diff
+  playbooks:
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: desktop-derek
+  # No create / destroy / cleanup: this is a real machine.
+  test_sequence:
+    - dependency
+    - syntax
+    - converge
+    - idempotence
+    - verify

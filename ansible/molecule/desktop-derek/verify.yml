@@ -1,0 +1,151 @@
+---
+# Verify the remediation actually happened.
+#
+# The point of this file is NOT "did the new tools arrive" — a normal converge
+# shows that. It is "are the OLD artefacts GONE". Ansible cannot prune what it
+# no longer declares, so every removal below is a tombstone we wrote by hand,
+# and a tombstone nobody tests is a tombstone that silently stops working.
+#
+# The nastiest class is SHADOWING: the host looks correct because the command
+# runs and reports a plausible version — but it is the stale user-level copy,
+# which no system update will ever touch again.
+
+- name: Verify remediation
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    # ------------------------------------------------------------------
+    # SHADOWING — a stale user-level binary ahead of the system one on PATH
+    # ------------------------------------------------------------------
+    - name: Stat the retired user-level uv locations
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ ansible_env.HOME }}/.cargo/bin/uv"
+        - "{{ ansible_env.HOME }}/.cargo/bin/ruff"
+      register: verify_stale_uv
+
+    - name: Assert no stale user-level uv shadows the system install
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          {{ item.item }} still exists. uv is now installed system-wide from a
+          repo; this stale user-level copy will win on PATH and will never be
+          updated by a system update, so the host will look current while
+          silently rotting.
+        success_msg: "no stale user-level copy at {{ item.item }}"
+      loop: "{{ verify_stale_uv.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Resolve which uv actually wins on PATH
+      ansible.builtin.command: which uv
+      register: verify_uv_which
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the winning uv is the system-wide one
+      ansible.builtin.assert:
+        that:
+          - "'/.cargo/' not in verify_uv_which.stdout"
+          - "'/.local/' not in verify_uv_which.stdout or ansible_facts['distribution'] == 'Ubuntu'"
+        fail_msg: >-
+          uv resolves to {{ verify_uv_which.stdout }} — a user-level path.
+          Expected the repo-installed one (/usr/bin on Fedora,
+          /opt/homebrew/bin on macOS). Ubuntu is the documented exception:
+          no apt package exists, so uv is user-owned there by design.
+        success_msg: "uv resolves to {{ verify_uv_which.stdout }}"
+      when: verify_uv_which.rc == 0
+
+    # ------------------------------------------------------------------
+    # CANNOT CO-EXIST — the old thing actively conflicts with the new
+    # ------------------------------------------------------------------
+    - name: Stat retired container runtimes
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /Applications/OrbStack.app          # paid for commercial use; replaced by colima
+        - /usr/bin/docker-desktop
+        - /opt/docker-desktop
+      register: verify_retired_runtimes
+
+    - name: Assert retired container runtimes are gone
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          {{ item.item }} still present. It registers a competing docker
+          context/socket, so which daemon `docker` talks to becomes ambiguous.
+        success_msg: "{{ item.item }} absent"
+      loop: "{{ verify_retired_runtimes.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ------------------------------------------------------------------
+    # RETIRED PACKAGES — dropped by decision, must not linger
+    # ------------------------------------------------------------------
+    - name: Gather installed packages
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Assert retired packages are gone
+      ansible.builtin.assert:
+        that:
+          - item not in ansible_facts.packages
+        fail_msg: "{{ item }} is still installed — its tombstone did not fire."
+        success_msg: "{{ item }} absent"
+      loop:
+        - telnet
+        - net-tools
+        - nmap
+        - whois
+        - traceroute
+        - tree
+        - httpie
+      loop_control:
+        label: "{{ item }}"
+
+    # ------------------------------------------------------------------
+    # STALE CONFIG — blocks and repo files the old version wrote
+    # ------------------------------------------------------------------
+    - name: Read ~/.zprofile if present
+      ansible.builtin.slurp:
+        src: "{{ ansible_env.HOME }}/.zprofile"
+      register: verify_zprofile
+      failed_when: false
+
+    - name: Assert the retired GNU tools PATH shim is gone
+      ansible.builtin.assert:
+        that:
+          - "'HYPERI: GNU tools PATH shim' not in (verify_zprofile.content | b64decode)"
+        fail_msg: >-
+          The GNU tools PATH shim is still in ~/.zprofile. gnu-tools is retired,
+          so the shim now prepends paths for packages we no longer install.
+        success_msg: "GNU tools PATH shim absent from ~/.zprofile"
+      when: verify_zprofile.content is defined
+
+    - name: Stat legacy apt .list repo files superseded by deb822 .sources
+      ansible.builtin.stat:
+        path: "/etc/apt/sources.list.d/{{ item }}.list"
+      loop:
+        - slack
+        - vscode
+        - docker
+        - hashicorp
+      register: verify_legacy_lists
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Assert legacy .list files are gone
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          {{ item.item }}.list still exists alongside the deb822 .sources file.
+          apt will see the repo configured twice and warn on every update.
+        success_msg: "{{ item.item }}.list absent"
+      loop: "{{ verify_legacy_lists.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: ansible_facts['distribution'] == 'Ubuntu'

@@ -1,0 +1,10 @@
+---
+# Converge the real desktop-derek VM to current.
+#
+# This CHANGES the machine. Snapshot before running.
+#
+# It runs the same playbook a normal install runs — no test-only variant —
+# because a remediation path that is not the real path proves nothing.
+
+- name: Converge desktop-derek to the current playbook
+  ansible.builtin.import_playbook: ../../playbooks/main.yml

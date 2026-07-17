@@ -1,0 +1,112 @@
+---
+# Assert the remediation did the right thing — in BOTH directions.
+#
+# Removing the retired stuff is only half the test. A remediation that also
+# deletes a sibling project's artefacts, or the user's own tools, is a bug —
+# and a worse one, because it destroys things nobody asked us to touch. So the
+# "must survive" assertions below matter at least as much as the removals.
+
+- name: Verify remediation
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    # ==================================================================
+    # MUST BE GONE
+    # ==================================================================
+    - name: Stat artefacts that must be gone
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+      loop:
+        - uv          # stale root-owned copy shadowing the real install
+        - bw          # Bitwarden — removed by decision
+        - linear      # Linear CLI — removed by decision
+        - minikube    # superseded by kind
+      register: verify_gone
+
+    - name: Assert retired artefacts were removed
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          /usr/local/bin/{{ item.item }} survived remediation. Its tombstone did
+          not fire — Ansible cannot prune what it stops declaring, so if the
+          tombstone is missing or mis-pathed the artefact lives forever.
+        success_msg: "/usr/local/bin/{{ item.item }} removed"
+      loop: "{{ verify_gone.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Gather installed packages
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Assert retired packages were removed
+      ansible.builtin.assert:
+        that:
+          - item not in ansible_facts.packages
+        fail_msg: "{{ item }} is still installed — its tombstone did not fire."
+        success_msg: "{{ item }} removed"
+      loop:
+        - telnet
+        - net-tools
+        - nmap
+        - whois
+        - traceroute
+        - tree
+        - httpie
+        - docker-desktop
+      loop_control:
+        label: "{{ item }}"
+
+    # ==================================================================
+    # MUST SURVIVE — the half that stops us becoming destructive
+    # ==================================================================
+    - name: Stat artefacts that must survive
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+      loop:
+        - disk-attach            # hyperi-infra's (server_base role)
+        - hyperi-boot-tuning.sh  # hyperi-infra's (server_base role)
+        - tinygo                 # user's own — undeclared, not ours to remove
+        - github-mcp-server      # user's own — undeclared, not ours to remove
+      register: verify_survive
+
+    - name: Assert we did not delete things that are not ours
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: >-
+          /usr/local/bin/{{ item.item }} was REMOVED and should not have been.
+          disk-attach and hyperi-boot-tuning.sh belong to hyperi-infra
+          (disk-attach.service attaches disks at boot — removing it can break
+          storage). tinygo and github-mcp-server have no owner in either
+          project, so they are the user's own: on a developer workstation
+          undeclared state is legitimate. "Not declared by us" does not mean
+          "ours to remove".
+        success_msg: "/usr/local/bin/{{ item.item }} correctly left alone"
+      loop: "{{ verify_survive.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ==================================================================
+    # THE REPLACEMENT ACTUALLY WORKS — removing the old thing is not enough
+    # if the new one never arrived.
+    # ==================================================================
+    - name: Resolve which uv wins on PATH after remediation
+      ansible.builtin.command: which uv
+      register: verify_uv_which
+      changed_when: false
+      failed_when: false
+
+    - name: Assert uv resolves to the managed install, not a stale copy
+      ansible.builtin.assert:
+        that:
+          - verify_uv_which.rc == 0
+          - "'/usr/local/bin/uv' not in verify_uv_which.stdout"
+        fail_msg: >-
+          uv resolves to '{{ verify_uv_which.stdout }}'. Expected the managed
+          install (repo on Fedora, ~/.local/bin on Ubuntu). If it still points
+          at /usr/local/bin the host looks current while silently rotting —
+          which is exactly the failure this test exists to catch.
+        success_msg: "uv resolves to {{ verify_uv_which.stdout }}"
