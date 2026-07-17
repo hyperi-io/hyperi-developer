@@ -52,6 +52,12 @@
     file: mtu.yml
   tags: ['mtu']
 
+# Must precede service.yml, which feeds the password to grdctl.
+- name: Settle RDP credentials
+  ansible.builtin.include_tasks:
+    file: credentials.yml
+  tags: ['service', 'credentials']
+
 - name: Enable RDP service
   ansible.builtin.include_tasks:
     file: service.yml

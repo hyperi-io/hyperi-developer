@@ -1,0 +1,16 @@
+# Declared repo classification. The prefix in a repo name is only a hint; this
+# file is the authority.
+#
+# 4 = OSS: public, Apache-2.0, publishes.
+#
+# Matches what this repo already is: public, Apache-2.0, and explicitly built
+# for three audiences -- HyperI staff, outside contributors to HyperI products,
+# and anyone cherry-picking components by tag. The HyperI-specific parts are
+# opt-in, not the default install.
+#
+# Consequences that follow from this line, and are enforced elsewhere:
+#   - No internal topology in the tree: no internal hostnames, no credentials,
+#     no private-registry URLs, no internal project-name lists. Test targets
+#     come from the environment (see ansible/inventories/dev/inventory.yml).
+#   - Licence stays Apache-2.0. Any change to it is a human decision.
+classification: 4

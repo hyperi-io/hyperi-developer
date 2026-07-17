@@ -3,7 +3,24 @@
 
 # RDP credentials for GNOME Remote Desktop.
 #
-# WARNING: these defaults are well-known and this daemon listens on 3389.
-# Override them in your inventory or playbook vars. See the role README.
+# The password is GENERATED PER HOST, not defaulted. This daemon listens on
+# 3389, and a shared well-known password across a fleet is one leak away from
+# being a fleet-wide one. It used to default to "hyperi" on every host we
+# provisioned.
+#
+# Leave rdp_password unset and the role mints a random one, stores it
+# root-only at /etc/hyperi/rdp-credentials, and prints it once at the end of
+# the run. Set it explicitly (inventory, --extra-vars, vault) and yours wins.
 rdp_username: "hyperi"
-rdp_password: "hyperi"
+
+# Not set on purpose -- see above. Override to pin one.
+# rdp_password: ""
+
+# Where the generated password is recorded so a developer can find it again.
+# Root-only: anyone who can read it can already read /etc/shadow.
+rdp_credentials_file: /etc/hyperi/rdp-credentials
+
+# Length of the generated password. 24 chars from ascii_letters+digits is
+# ~143 bits -- far past anything that matters for a LAN-facing RDP daemon,
+# and still selectable/pasteable.
+rdp_password_length: 24

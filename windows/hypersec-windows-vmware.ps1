@@ -1026,7 +1026,7 @@ function Configure-WindowsDefender {
 #   ## [1.0.0] - $(Get-Date -Format "yyyy-MM-dd")
 #   Initial high-performance Linux VM template
 # Copyright: © 2025 HyperSec Pty Ltd  
-# Licence: "HyperSec EULA © 2025"
+# Licence: "Apache-2.0"
 #---
 
 .encoding = "UTF-8"
@@ -1106,7 +1106,7 @@ logging = "FALSE"
 #   ## [1.0.0] - $(Get-Date -Format "yyyy-MM-dd")
 #   Initial vSphere-compatible VM template
 # Copyright: © 2025 HyperSec Pty Ltd
-# Licence: "HyperSec EULA © 2025"
+# Licence: "Apache-2.0"
 #---
 
 .encoding = "UTF-8"

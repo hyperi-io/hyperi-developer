@@ -133,12 +133,16 @@
 # SET DEFAULT RDP CREDENTIALS
 # ============================================================================
 
-- name: Set default RDP credentials
+# rdp_effective_password, not rdp_password: credentials.yml settles the
+# precedence (operator-supplied > previously generated > freshly generated) so
+# it lives in one place rather than being re-derived here.
+- name: Set RDP credentials
   ansible.builtin.command:
-    cmd: "grdctl --system rdp set-credentials {{ rdp_username }} {{ rdp_password }}"
+    cmd: "grdctl --system rdp set-credentials {{ rdp_username }} {{ rdp_effective_password }}"
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - rdp_effective_password is defined
   failed_when: false
   changed_when: false
   no_log: true  # Hide password from logs
@@ -164,12 +168,14 @@
     msg: |
       GNOME Remote Desktop configured:
       - Remote Login (RDP): ENABLED on port 3389
-      - Default credentials: username={{ rdp_username }}
+      - Username: {{ rdp_username }}
+      - Password: {{ 'supplied via rdp_password' if rdp_password is defined
+                     else 'generated for this host -- see ' ~ rdp_credentials_file }}
 
       RDP Access:
       - Connect to: {{ ansible_hostname }}:3389 (or {{ ansible_default_ipv4.address | default('IP') }}:3389)
-      - Username: {{ rdp_username }}
       - Change password: sudo grdctl --system rdp set-credentials <user> <pass>
+        (and update {{ rdp_credentials_file }}, or the next run will set it back)
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome

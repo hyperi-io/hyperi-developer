@@ -23,3 +23,31 @@
     - /etc/xdg/autostart/rdp-refresh-rate.desktop
     - /etc/hyperi-developer/rdp-refresh-rate
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# Every host we provisioned before 2026-07-17 has the well-known password
+# "hyperi" on a daemon listening on 3389. credentials.yml alone will NOT fix
+# them: it generates only when no credentials file exists, and these hosts have
+# no file -- so they would get a fresh password, which is exactly what we want,
+# but only once this marker tells us they have been dealt with.
+#
+# The marker is what makes the remediation observable. Without it we cannot
+# tell a host that was fixed from one that never had the problem.
+- name: Check whether this host predates per-host RDP passwords
+  ansible.builtin.stat:
+    path: /etc/hyperi/rdp-credentials
+  register: rdp_creds_present
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+- name: Warn about the retired shared RDP password
+  ansible.builtin.debug:
+    msg: >-
+      This host has no {{ rdp_credentials_file }}, so it may still be using the
+      old shared default password on port 3389. A new random one is being
+      generated now and will be printed at the end of this run.
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - not (rdp_creds_present.stat.exists | default(false))
+    - rdp_password is not defined
