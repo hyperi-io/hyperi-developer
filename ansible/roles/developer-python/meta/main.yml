@@ -1,0 +1,8 @@
+---
+# Developer-Python — the Python tier.
+#
+# uv lives in its own role (it is needed by non-Python roles too, e.g. gext).
+# Depend on it rather than including its task file across a role boundary.
+
+dependencies:
+  - role: uv

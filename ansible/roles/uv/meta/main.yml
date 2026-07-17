@@ -1,0 +1,15 @@
+---
+# UV — Astral's Python package/venv manager.
+#
+# Its own role because uv is NOT just a Python-toolchain concern: it is a
+# HyperI standard tool, and non-Python roles need it too (the GNOME extension
+# installer `gext` is a uv tool). Roles that need uv depend on this via meta
+# rather than including a task file across role boundaries — that cross-role
+# include is exactly what broke when uv moved during the role split.
+
+galaxy_info:
+  role_name: uv
+  description: UV Python package manager (Astral)
+  standalone: true
+
+dependencies: []

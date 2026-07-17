@@ -38,15 +38,11 @@
 # ============================================================================
 # UV PACKAGE MANAGER (required for gnome-extensions-cli)
 # ============================================================================
-# UV is required to install gext. Include uv.yml here to ensure it's available
-# even when running with partial tags (e.g., --tags winlike without --tags python)
-
-- name: Ensure UV package manager is installed
-  ansible.builtin.include_tasks: uv.yml
-  tags: ['winlike', 'maclike', 'never']
-  when:
-    - has_gnome | default(false)
-    - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
+# gext is a uv tool, so uv must exist before the extension tasks below. It is
+# guaranteed by this role's meta dependency on the `uv` role — which is why
+# there is no include_tasks here. There used to be one pointing at uv.yml; the
+# role split moved that file to developer-python and the include silently
+# became unresolvable, so --tags winlike failed at runtime.
 
 # ============================================================================
 # PREREQUISITES

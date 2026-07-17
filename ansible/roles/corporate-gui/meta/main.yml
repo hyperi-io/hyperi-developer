@@ -1,0 +1,11 @@
+---
+# corporate-gui depends on uv — gnome.yml installs gnome-extensions-cli (gext),
+# which is a uv tool, so uv must exist before the extension tasks run.
+#
+# This replaces an include_tasks: uv.yml inside gnome.yml. That include pointed
+# at a file in this role's own tasks/ dir; the role split moved uv.yml to
+# developer-python and the include silently stopped resolving, so --tags winlike
+# failed at runtime. A meta dependency cannot rot that way.
+
+dependencies:
+  - role: uv
