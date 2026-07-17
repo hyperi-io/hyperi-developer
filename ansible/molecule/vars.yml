@@ -1,10 +1,17 @@
 ---
-# SSoT for the supported-release matrix.
+# SSoT for the molecule test matrix.
 #
-# CONFIG-DRIVEN, NOT HARDCODED — both n-1 slots roll within a year, so this
-# file is the one place to bump. It feeds BOTH the molecule test matrix and
-# (via the same values) the playbook's declared minimum versions, so the two
-# cannot drift apart: we support n and n-1, and the declared minimum IS n-1.
+# CONFIG-DRIVEN, NOT HARDCODED -- both n-1 slots roll within a year, so this is
+# the one place to bump the MATRIX. We support n and n-1, and the declared
+# minimum IS n-1.
+#
+# It does NOT feed the playbook's declared minimums. `min_fedora_version` and
+# `min_ubuntu_version` live in roles/developer/defaults/main.yml and must be
+# bumped WITH this file, by hand, until S1.T0c gives the OS gate a real SSoT.
+# This is not hypothetical: this file said Fedora 43 was n-1 while the role
+# still pinned min_fedora_version to 42, two months after 42 went EOL. An
+# earlier version of this comment claimed the two "cannot drift apart" -- they
+# had already drifted, and the claim is why nobody looked.
 #
 # WHY n AND n-1 ONLY (not n-2):
 #   Ubuntu LTS lives 5 years, so n-2 (22.04) would be fine. Fedora only ever

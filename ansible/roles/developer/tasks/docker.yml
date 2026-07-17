@@ -113,19 +113,63 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# Without this, `docker compose` and `docker buildx` are "unknown command" on
+# every Mac we provision. Docker Desktop used to drop its plugins where the CLI
+# already looks; brew puts them under its own prefix, and the CLI does not scan
+# there unless told. Installing the formulae is only half the job.
+- name: Find the Homebrew prefix (macOS)
+  ansible.builtin.command:
+    cmd: brew --prefix
+  register: developer_brew_prefix
+  changed_when: false
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Read the existing Docker CLI config (macOS)
+  ansible.builtin.slurp:
+    src: "{{ ansible_facts['env'].HOME }}/.docker/config.json"
+  register: developer_docker_cfg_raw
+  become: false
+  failed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# MERGE, never overwrite: a real config.json holds `auths` (registry
+# credentials) and `currentContext`. Writing a fresh file here would log the
+# developer out of every registry they use.
+- name: Point the Docker CLI at Homebrew's plugins (macOS)
+  ansible.builtin.copy:
+    content: >-
+      {{
+        (developer_docker_cfg_raw.content | default('') | b64decode | from_json
+         if developer_docker_cfg_raw.content is defined else {})
+        | combine({
+            'cliPluginsExtraDirs': [
+              developer_brew_prefix.stdout ~ '/lib/docker/cli-plugins'
+            ]
+          })
+        | to_nice_json
+      }}
+    dest: "{{ ansible_facts['env'].HOME }}/.docker/config.json"
+    mode: '0600'
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
 - name: Display Docker daemon hint (macOS)
   ansible.builtin.debug:
     msg: |
       Docker CLI installed (no Docker Desktop bundled — by design).
 
-      You need to choose a container runtime/daemon. Common options:
-        - colima    : brew install colima  (lightweight, CLI-only)
-        - orbstack  : brew install orbstack  (newer, fast — paid for commercial)
-        - podman    : brew install podman   (rootless, daemonless)
+      You still need a daemon. colima is what we use:
 
-      After installing your chosen daemon, start it (e.g. `colima start`).
-      The Docker CLI installed here will then connect to it via the standard
-      DOCKER_HOST socket.
+        colima start
+
+      It runs docker-ce in a small VM on Apple's own Virtualization.framework,
+      so it is a delivery mechanism for the same engine Linux runs natively,
+      not a different one. The CLI installed here connects to it over the
+      standard socket.
+
+      Not OrbStack: it requires a paid licence for commercial use.
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================

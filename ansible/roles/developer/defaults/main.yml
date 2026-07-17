@@ -4,11 +4,21 @@
 # Use --skip-tags to disable features, --tags to enable optional ones.
 
 # Supported platforms (used for validation in init.yml)
+#
+# We support n and n-1, so the declared minimum IS n-1. Both slots roll within
+# a year -- when they do, bump these AND ansible/molecule/vars.yml together.
+#
+#   Fedora 44 (n), 43 (n-1). Fedora only ever supports two releases, so its
+#   n-2 is always EOL: 42 went EOL in May 2026, and this was still pinned to
+#   it. An EOL minimum means we claim to support a release whose mirrors are
+#   archived and whose security updates have stopped.
+#
+#   Ubuntu 26.04 LTS (n), 24.04 LTS (n-1).
 supported_distros:
   - Fedora
   - Ubuntu
   - MacOSX
-min_fedora_version: 42
+min_fedora_version: 43
 min_ubuntu_version: "24.04"
 
 # Docker configuration
