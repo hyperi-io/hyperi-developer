@@ -62,13 +62,16 @@
 # them. Run explicitly via --tags chrome / --tags brave / --tags avatar.
 # ============================================================================
 
+# Chrome and Brave are cross-platform: has_gnome is always false on macOS, so
+# gating on it alone made the Homebrew cask tasks in chrome.yml / brave.yml
+# unreachable there. Gate on "a Linux desktop OR macOS" instead.
 - name: Install Google Chrome (opt-in)
   ansible.builtin.include_tasks:
     file: chrome.yml
     apply:
       tags: ['chrome', 'never']
   tags: ['chrome', 'never']
-  when: has_gnome | default(false)
+  when: (has_gnome | default(false)) or ansible_facts['distribution'] == 'MacOSX'
 
 - name: Install Brave Browser (opt-in)
   ansible.builtin.include_tasks:
@@ -76,7 +79,7 @@
     apply:
       tags: ['brave', 'never']
   tags: ['brave', 'never']
-  when: has_gnome | default(false)
+  when: (has_gnome | default(false)) or ansible_facts['distribution'] == 'MacOSX'
 
 - name: Deploy user avatar (opt-in)
   ansible.builtin.include_tasks:
