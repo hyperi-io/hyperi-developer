@@ -244,23 +244,6 @@
         method: system
       when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-    # Remmina - Remote Desktop Client (native packages, incl. RDP plugin)
-    - name: Install Remmina + RDP plugin (Ubuntu)
-      ansible.builtin.apt:
-        name:
-          - remmina
-          - remmina-plugin-rdp
-        state: present
-      when: ansible_facts['distribution'] == 'Ubuntu'
-
-    - name: Install Remmina + RDP plugin (Fedora)
-      ansible.builtin.dnf:
-        name:
-          - remmina
-          - remmina-plugins-rdp
-        state: present
-      when: ansible_facts['distribution'] == 'Fedora'
-
 # ============================================================================
 # Hyperi ADMIN TOOLS
 # ============================================================================
@@ -270,7 +253,12 @@
 # stranger's PATH), and these are fleet/VM tooling, not general dev utilities.
 # Run explicitly with `--tags admin-scripts`; HyperI machines select them.
 - name: Install HyperI admin scripts (opt-in)
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    # Explicit-request / soe only -- a NOPASSWD-sudo user is a footgun that must
+    # never ride in on a persona meta-role's propagated tag. See removals in
+    # developer/tasks/main.yml for the same ansible_run_tags gate.
+    - "'admin-scripts' in ansible_run_tags or 'soe' in ansible_run_tags"
   # `soe` so HyperI machines get them; `never` so the generic base does not.
   # (removals/update_command get `soe` automatically via the soe->developer meta
   # dependency, but this block is nested in utilities.yml, so it needs it here.)

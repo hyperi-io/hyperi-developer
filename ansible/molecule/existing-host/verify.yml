@@ -125,27 +125,3 @@
           so the shim now prepends paths for packages we no longer install.
         success_msg: "GNU tools PATH shim absent from ~/.zprofile"
       when: verify_zprofile.content is defined
-
-    - name: Stat legacy apt .list repo files superseded by deb822 .sources
-      ansible.builtin.stat:
-        path: "/etc/apt/sources.list.d/{{ item }}.list"
-      loop:
-        - slack
-        - vscode
-        - docker
-        - hashicorp
-      register: verify_legacy_lists
-      when: ansible_facts['distribution'] == 'Ubuntu'
-
-    - name: Assert legacy .list files are gone
-      ansible.builtin.assert:
-        that:
-          - not item.stat.exists
-        fail_msg: >-
-          {{ item.item }}.list still exists alongside the deb822 .sources file.
-          apt will see the repo configured twice and warn on every update.
-        success_msg: "{{ item.item }}.list absent"
-      loop: "{{ verify_legacy_lists.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item }}"
-      when: ansible_facts['distribution'] == 'Ubuntu'

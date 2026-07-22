@@ -1,0 +1,8 @@
+---
+# Meta-role: the stack comes via meta/dependencies. This anchor task exists so
+# the role loads cleanly and the full-stack tag resolves.
+- name: full-stack persona
+  ansible.builtin.debug:
+    msg: >-
+      full-stack: developer base + developer-gui + node + typescript + python +
+      infrastructure, selected via meta dependencies.

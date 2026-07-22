@@ -1,0 +1,33 @@
+---
+# vpn-clients role -- VPN client tooling. Opt-in via `--tags vpn-clients`; soe
+# pulls it by default as org policy. Per-tool tags let you take just one:
+# `--tags openvpn` / `--tags wireguard` / `--tags tunnelblick`.
+
+# Tagged with every tool tag so the macOS Homebrew vars load whichever one you
+# select (each macOS install below needs homebrew_env / homebrew_cask_env).
+- name: Load macOS Homebrew variables
+  ansible.builtin.include_vars:
+    file: macos.yml
+  tags: ['vpn-clients', 'openvpn', 'wireguard', 'tunnelblick']
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install OpenVPN 3 client
+  ansible.builtin.include_tasks:
+    file: openvpn3.yml
+    apply:
+      tags: ['vpn-clients', 'openvpn']
+  tags: ['vpn-clients', 'openvpn']
+
+- name: Install WireGuard tools
+  ansible.builtin.include_tasks:
+    file: wireguard.yml
+    apply:
+      tags: ['vpn-clients', 'wireguard']
+  tags: ['vpn-clients', 'wireguard']
+
+- name: Install Tunnelblick (macOS OpenVPN GUI)
+  ansible.builtin.include_tasks:
+    file: tunnelblick.yml
+    apply:
+      tags: ['vpn-clients', 'tunnelblick']
+  tags: ['vpn-clients', 'tunnelblick']

@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  author: HyperI
+  description: Persona meta-role -- SRE / platform box (base + infrastructure)
+  company: HyperI
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Fedora
+      versions: ['42']
+    - name: Ubuntu
+      versions: ['noble']
+
+# SRE / platform: the clean developer base plus the infrastructure CLIs (cloud,
+# IaC, k8s, the data group). The base's destructive/org extras (removals,
+# admin-scripts) stay off -- they gate on ansible_run_tags, not propagation.
+dependencies:
+  - role: developer
+  - role: infrastructure

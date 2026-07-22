@@ -1,0 +1,36 @@
+---
+# yamllint - YAML linter. Distro package on Linux (OS-swept), brew on macOS.
+
+- name: Install yamllint (macOS)
+  community.general.homebrew:
+    name: yamllint
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install yamllint (Linux)
+  block:
+    - name: Install yamllint (Fedora)
+      ansible.builtin.dnf:
+        name: yamllint
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install yamllint (Ubuntu)
+      ansible.builtin.apt:
+        name: yamllint
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+  rescue:
+    - name: Record that yamllint did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['yamllint: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

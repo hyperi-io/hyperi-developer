@@ -37,6 +37,12 @@
     apply:
       tags: ['removals', 'soe', 'never']
   tags: ['removals', 'soe', 'never']
+  # Fire ONLY when explicitly asked for (--tags removals) or on a soe run. A
+  # persona meta-role that pulls the developer base propagates its own tag onto
+  # every base task, which would otherwise drag this destructive tombstone in;
+  # gating on ansible_run_tags (what the user actually requested) blocks that and
+  # also makes a raw `--tags developer` safe.
+  when: "'removals' in ansible_run_tags or 'soe' in ansible_run_tags"
 
 - name: Install Docker
   ansible.builtin.include_tasks:
@@ -83,7 +89,9 @@
     apply:
       tags: ['chrome', 'never']
   tags: ['chrome', 'never']
-  when: (has_gnome | default(false)) or ansible_facts['distribution'] == 'MacOSX'
+  when:
+    - (has_gnome | default(false)) or ansible_facts['distribution'] == 'MacOSX'
+    - "'chrome' in ansible_run_tags or 'soe' in ansible_run_tags"
 
 - name: Install Brave Browser (opt-in)
   ansible.builtin.include_tasks:
@@ -91,7 +99,9 @@
     apply:
       tags: ['brave', 'never']
   tags: ['brave', 'never']
-  when: (has_gnome | default(false)) or ansible_facts['distribution'] == 'MacOSX'
+  when:
+    - (has_gnome | default(false)) or ansible_facts['distribution'] == 'MacOSX'
+    - "'brave' in ansible_run_tags or 'soe' in ansible_run_tags"
 
 - name: Deploy user avatar (opt-in)
   ansible.builtin.include_tasks:
@@ -102,6 +112,7 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
+    - "'avatar' in ansible_run_tags or 'soe' in ansible_run_tags"
 
 # One-command "update everything" tool + clickable GUI app. Opt-in (`never`):
 # it installs a HyperI-branded "Hyperi Update" launcher, which is org furniture,
@@ -113,7 +124,9 @@
     apply:
       tags: ['update_command', 'soe', 'never']
   tags: ['update_command', 'soe', 'never']
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'MacOSX']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'MacOSX']
+    - "'update_command' in ansible_run_tags or 'soe' in ansible_run_tags"
 
 - name: Verify base tools installation
   ansible.builtin.include_tasks:

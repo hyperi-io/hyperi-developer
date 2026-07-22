@@ -1,0 +1,24 @@
+---
+# WireGuard -- the tools ship in-distro on Linux (auto-updates with the OS). On
+# macOS the CLI (wg / wg-quick) comes from the Homebrew formula; the App Store
+# GUI app has no Homebrew cask, and the CLI covers scripted wg-quick configs.
+
+- name: Install WireGuard tools (Ubuntu)
+  ansible.builtin.apt:
+    name: wireguard-tools
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install WireGuard tools (Fedora)
+  ansible.builtin.dnf:
+    name: wireguard-tools
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install WireGuard tools (macOS)
+  community.general.homebrew:
+    name: wireguard-tools
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'

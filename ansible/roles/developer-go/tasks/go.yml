@@ -42,3 +42,92 @@
   become: false
   changed_when: true
   failed_when: false
+
+# ============================================================
+# CI-parity linters/scanners (the Go gates hyperi-ci drives).
+# ============================================================
+
+# golangci-lint: official snap on Linux (classic confinement, snapd auto-refresh
+# keeps it current), brew on macOS. On Fedora this needs snapd present; if it is
+# not, the rescue records a warning rather than aborting the run.
+- name: Install golangci-lint (macOS)
+  community.general.homebrew:
+    name: golangci-lint
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install golangci-lint (Linux — snap)
+  block:
+    - name: Install golangci-lint via snap (Linux)
+      community.general.snap:
+        name: golangci-lint
+        classic: true
+        state: present
+
+  rescue:
+    - name: Record that golangci-lint did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['golangci-lint: ' ~ (ansible_failed_result.msg | default('snap install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# gosec: Fedora dnf (OS-swept), Ubuntu go install (no distro package), brew macOS.
+- name: Install gosec (macOS)
+  community.general.homebrew:
+    name: gosec
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install gosec (Fedora)
+  block:
+    - name: Install gosec via dnf (Fedora)
+      ansible.builtin.dnf:
+        name: gosec
+        state: present
+
+  rescue:
+    - name: Record that gosec did not install (Fedora)
+      # noqa: var-naming[no-role-prefix] -- shared accumulator, see note above.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['gosec: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install gosec (Ubuntu — go install)
+  ansible.builtin.command:
+    cmd: go install github.com/securego/gosec/v2/cmd/gosec@latest
+  environment:
+    GOPATH: "{{ user_home }}/go"
+  become: false
+  changed_when: true
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# govulncheck: go install on Linux, brew on macOS.
+- name: Install govulncheck (macOS)
+  community.general.homebrew:
+    name: govulncheck
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install govulncheck (Linux — go install)
+  ansible.builtin.command:
+    cmd: go install golang.org/x/vuln/cmd/govulncheck@latest
+  environment:
+    GOPATH: "{{ user_home }}/go"
+  become: false
+  changed_when: true
+  failed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

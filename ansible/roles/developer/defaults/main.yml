@@ -60,11 +60,3 @@ background_file: "default-background.svg"
 # Empty string = skip all regional customisation (default).
 # Use --tags region to apply, or set the variable and run with desktop tag.
 desktop_region: ""
-
-# ============================================================================
-# OFFICE SUITE
-# ============================================================================
-# OnlyOffice is the default (better MS Office compatibility)
-# LibreOffice is opt-in for users who prefer it
-install_onlyoffice: true
-install_libreoffice: false

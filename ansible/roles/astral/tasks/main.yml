@@ -1,0 +1,142 @@
+---
+# astral - the Astral toolchain, installed as ONE suite in the developer BASE.
+#
+#   uv    - package/venv/interpreter manager (replaces pip, pyenv, pipx). Also
+#           GENERAL-purpose here: it runs ansible on macOS, semgrep, hyperi-ci,
+#           gext, and manages Python versions -- which is why the suite lives in
+#           the base, not just the Python tier. uv bundles `uv audit` (OSV +
+#           experimental malware scan) and `uv check` (type-check via ty), so
+#           keeping uv current gets those for free as they mature.
+#   ruff  - lint + format in one fast command (replaces flake8, isort, black).
+#   ty    - type checker (the HyperI default over pyright).
+#
+# INSTALL POLICY: system-wide from a repo wherever one exists, so the suite
+# rides a normal system update (`hyperi-update`, or a plain dnf/brew upgrade)
+# instead of rotting at whatever version was current on install day.
+#   Fedora : dnf   -- all three are in the MAIN repo
+#   macOS  : brew  -- all three are core formulae
+#   Ubuntu : no apt repo from Astral. uv comes from the upstream tarball
+#            (user-owned in ~/.local/bin); ruff and ty install as uv tools
+#            (also user-owned). hyperi-update refreshes all three.
+
+# ============================================================================
+# uv - must be first: ruff/ty on Ubuntu install THROUGH uv
+# ============================================================================
+
+- name: Install uv (Fedora)
+  ansible.builtin.dnf:
+    name: uv
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+  tags: ['astral', 'uv']
+
+- name: Install uv (macOS)
+  community.general.homebrew:
+    name: uv
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  tags: ['astral', 'uv']
+
+- name: Install uv from the upstream release (Ubuntu)
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  tags: ['astral', 'uv']
+  block:
+    - name: Get latest uv version from GitHub API
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/astral-sh/uv/releases/latest
+        return_content: true
+      register: uv_latest_release
+      check_mode: false
+
+    - name: Set uv version fact
+      ansible.builtin.set_fact:
+        uv_version: "{{ uv_latest_release.json.tag_name }}"
+
+    # uv publishes a gnu build for both arches, so the libc token does not move.
+    - name: Determine uv binary architecture
+      ansible.builtin.set_fact:
+        uv_arch: "{{ hyperi_arch_gnu }}-unknown-linux-gnu"
+
+    - name: Create the user-local bin directory
+      ansible.builtin.file:
+        path: "{{ user_home }}/.local/bin"
+        state: directory
+        mode: '0755'
+        owner: "{{ actual_user }}"
+        group: "{{ actual_user }}"
+
+    - name: Download uv tarball
+      ansible.builtin.get_url:
+        url: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ uv_arch }}.tar.gz"
+        dest: "/tmp/uv-{{ uv_arch }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract uv
+      ansible.builtin.unarchive:
+        src: "/tmp/uv-{{ uv_arch }}.tar.gz"
+        dest: "{{ user_home }}/.local/bin"
+        remote_src: true
+        creates: "{{ user_home }}/.local/bin/uv"
+        owner: "{{ actual_user }}"
+        group: "{{ actual_user }}"
+        extra_opts:
+          - --strip-components=1
+
+    - name: Remove uv tarball
+      ansible.builtin.file:
+        path: "/tmp/uv-{{ uv_arch }}.tar.gz"
+        state: absent
+
+# ============================================================================
+# ruff + ty - repo-managed on Fedora/macOS; uv tools on Ubuntu
+# ============================================================================
+
+- name: Install ruff and ty (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - ruff                  # lint + format
+      - ty                    # type checker
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+  tags: ['astral', 'ruff', 'ty']
+
+- name: Install ruff and ty (macOS)
+  community.general.homebrew:
+    name:
+      - ruff                  # lint + format
+      - ty                    # type checker
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  tags: ['astral', 'ruff', 'ty']
+
+# Ubuntu: no apt repo; install as user-owned uv tools (hyperi-update refreshes
+# via `uv tool upgrade`). uv is installed above, so it is on PATH here.
+- name: Install ruff and ty (Ubuntu - uv tools, hyperi-update tracks these)
+  ansible.builtin.command:
+    cmd: "uv tool install {{ item }}"
+  environment:
+    PATH: "{{ user_home }}/.cargo/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  become: false
+  loop:
+    - ruff
+    - ty
+  register: astral_uv_tool_install
+  changed_when: "'already installed' not in (astral_uv_tool_install.stderr | default(''))"
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  tags: ['astral', 'ruff', 'ty']
+
+- name: Display the Astral suite info
+  ansible.builtin.debug:
+    msg: |
+      Astral suite installed ({{ 'repo-managed -- rides a normal system update'
+                                 if ansible_facts['distribution'] in ['Fedora', 'MacOSX']
+                                 else 'user-owned -- hyperi-update refreshes it' }}):
+        uv    -- uv venv / uv sync / uv run / uv audit / uv check
+        ruff  -- ruff check . / ruff format .
+        ty    -- ty check
+      uv replaces: pip, pyenv, pipx, virtualenv
+  tags: ['astral']

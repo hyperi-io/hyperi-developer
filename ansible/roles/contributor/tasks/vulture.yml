@@ -1,0 +1,56 @@
+---
+# vulture - finds dead (unused) Python code.
+#
+# Ubuntu ships it in universe (OS-swept). Fedora has no package, so uv-tool
+# (Tier 2 -- hyperi-update refreshes it via `uv tool upgrade --all`). brew on
+# macOS.
+
+- name: Install vulture (macOS)
+  community.general.homebrew:
+    name: vulture
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install vulture (Ubuntu — apt universe)
+  block:
+    - name: Install vulture via apt (Ubuntu)
+      ansible.builtin.apt:
+        name: vulture
+        state: present
+        update_cache: true
+
+  rescue:
+    - name: Record that vulture did not install (Ubuntu)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['vulture: ' ~ (ansible_failed_result.msg | default('apt install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install vulture (Fedora — uv-tool)
+  ansible.builtin.command:
+    cmd: uv tool install vulture
+    creates: "{{ user_home }}/.local/share/uv/tools/vulture"
+  become: true
+  become_user: "{{ actual_user }}"
+  environment:
+    PATH: "/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  register: contributor_vulture
+  changed_when: "'Installed' in contributor_vulture.stdout | default('')"
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Warn if vulture did not install (Fedora)
+  # noqa: var-naming[no-role-prefix] -- shared accumulator, see note above.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['vulture: uv tool install failed -- hyperi-ci check will skip its vulture pass'] }}
+  when:
+    - ansible_facts['distribution'] == 'Fedora'
+    - contributor_vulture.rc | default(0) != 0

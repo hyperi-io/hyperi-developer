@@ -1,0 +1,32 @@
+---
+# maid - Mermaid diagram linter/validator (used by the /docs workflow).
+#
+# npm-only: no distro package and no Homebrew formula, so npm is the single rung
+# on every platform (Tier 2 -- hyperi-update refreshes it via `npm update -g`).
+# A contributor box without Node has no npm, so this is best-effort: it warns
+# rather than failing the run (see docs/resilient-deploy.md). Add the
+# developer-node tag for a box that needs it.
+
+- name: Install maid (mermaid validator) globally via npm
+  ansible.builtin.command:
+    cmd: npm install -g @probelabs/maid
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  environment:
+    NPM_CONFIG_PREFIX: "{{ user_home }}/.npm-global"
+    PATH: "/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.npm-global/bin:{{ ansible_facts['env'].PATH }}"
+  register: contributor_maid
+  changed_when: >-
+    'added' in contributor_maid.stdout | default('')
+    or 'changed' in contributor_maid.stdout | default('')
+  failed_when: false
+
+- name: Warn if maid did not install
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+  # reported by playbooks/main.yml post_tasks.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['maid: npm install failed (needs Node/npm -- add the developer-node '
+            ~ 'tag). /docs mermaid validation will be unavailable.'] }}
+  when: contributor_maid.rc | default(0) != 0

@@ -1,0 +1,24 @@
+---
+galaxy_info:
+  author: HyperI
+  description: Persona meta-role -- full-stack app dev (base + gui + langs + infra)
+  company: HyperI
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Fedora
+      versions: ['42']
+    - name: Ubuntu
+      versions: ['noble']
+
+# Front-to-back app dev: the clean base, GUI editors, the JS/TS + Python
+# toolchains, and the infrastructure CLIs (kubectl/k9s live there). On macOS the
+# container daemon (colima) stays a soe/`--tags colima` choice -- the base
+# installs the Docker CLI and points at it.
+dependencies:
+  - role: developer
+  - role: developer-gui
+  - role: developer-node
+  - role: developer-typescript
+  - role: developer-python
+  - role: infrastructure

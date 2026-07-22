@@ -1,0 +1,16 @@
+[Unit]
+Description=HyperI scheduled update (system packages + language tools + static binaries)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ actual_user }}
+# `--yes`: no prompts, and it never reboots under --yes. hyperi-update uses sudo
+# for the system-package sweep, so unattended it needs NOPASSWD sudo (soe fleet
+# users have it via add-dev-user); without that the sudo step fails and only the
+# user-scoped language tools update. Tier-1 OS packages are also covered
+# independently by unattended-upgrades / dnf-automatic (security.yml).
+ExecStart=/usr/local/bin/hyperi-update --yes
+# A slow mirror or a large upgrade must not be killed mid-run.
+TimeoutStartSec=3600

@@ -39,9 +39,10 @@
       tags: ['infrastructure', 'k8s']
   tags: ['infrastructure', 'k8s']
 
-- name: Install data platform tools (Vector)
+# The `data` group: vector, clickhouse-client, rpk (Redpanda), valkey-cli.
+- name: Install data platform tools (data group)
   ansible.builtin.include_tasks:
     file: data_tools.yml
     apply:
-      tags: ['infrastructure', 'vector']
-  tags: ['infrastructure', 'vector']
+      tags: ['infrastructure', 'data']
+  tags: ['infrastructure', 'data']

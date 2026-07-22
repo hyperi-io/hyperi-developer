@@ -1,0 +1,11 @@
+---
+# rdp-client role -- the RDP CLIENT (the box that connects OUT to a remote
+# desktop). The RDP SERVER side (GNOME Remote Desktop) is the rdp-server role.
+# Opt-in via `--tags rdp-client`; soe-gui pulls it by default for HyperI staff.
+
+- name: Install the desktop RDP client
+  ansible.builtin.include_tasks:
+    file: client.yml
+    apply:
+      tags: ['rdp-client']
+  tags: ['rdp-client']

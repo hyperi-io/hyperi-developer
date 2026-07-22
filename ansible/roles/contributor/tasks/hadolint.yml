@@ -1,0 +1,71 @@
+---
+# hadolint - Dockerfile linter (blocking gate for `hyperi-ci check`).
+#
+# Fedora ships it in dnf (OS-swept). Ubuntu has no distro/repo/snap channel, so
+# it stays a re-fetched GitHub release (Tier 3 -- hyperi-update pulls the latest
+# on each run). brew on macOS.
+#
+# hadolint's release assets use x86_64/arm64, NOT amd64/aarch64, so neither
+# shared arch token fits -- map explicitly like act does.
+
+# ============================================================================
+# MACOS - Install via Homebrew
+# ============================================================================
+
+- name: Install hadolint (macOS)
+  community.general.homebrew:
+    name: hadolint
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# FEDORA - dnf package
+# ============================================================================
+
+- name: Install hadolint (Fedora)
+  block:
+    - name: Install hadolint via dnf (Fedora)
+      ansible.builtin.dnf:
+        name: hadolint
+        state: present
+
+  rescue:
+    - name: Record that hadolint did not install (Fedora)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['hadolint: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# ============================================================================
+# UBUNTU - re-fetched GitHub binary (Tier 3)
+# ============================================================================
+
+- name: Install hadolint (Ubuntu)
+  block:
+    - name: Determine the hadolint asset architecture
+      ansible.builtin.set_fact:
+        contributor_hadolint_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
+
+    - name: Download hadolint binary (Ubuntu)
+      ansible.builtin.get_url:
+        url: "https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-{{ contributor_hadolint_arch }}"
+        dest: /usr/local/bin/hadolint
+        owner: root
+        group: root
+        mode: '0755'
+
+  rescue:
+    - name: Record that hadolint did not install (Ubuntu)
+      # noqa: var-naming[no-role-prefix] -- shared accumulator, see note above.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['hadolint: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'

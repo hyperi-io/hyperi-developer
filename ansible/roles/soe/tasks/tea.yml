@@ -1,0 +1,46 @@
+---
+# tea - the Gitea/Forgejo CLI. `gh` is GitHub-only; tea talks to Forgejo (and
+# Codeberg, the flagship Forgejo instance), which HyperI uses more over time.
+# Linux: Gitea release binary (Tier 3 - no repo/snap, so hyperi-update re-fetches
+# it). macOS: Homebrew.
+# TODO verify: the macOS `tea` brew formula may be pkgx's tool rather than
+# Gitea's CLI - confirm before relying on it (see docs/install-matrix.md).
+
+- name: Install tea (Forgejo/Gitea CLI) (Linux)
+  block:
+    - name: Get the latest tea version
+      ansible.builtin.uri:
+        url: https://gitea.com/api/v1/repos/gitea/tea/releases/latest
+        return_content: true
+      register: soe_tea_latest
+      check_mode: false
+
+    - name: Set the tea version fact
+      ansible.builtin.set_fact:
+        soe_tea_version: "{{ soe_tea_latest.json.tag_name | regex_replace('^v', '') }}"
+
+    - name: Download tea
+      ansible.builtin.get_url:
+        url: "https://dl.gitea.com/tea/{{ soe_tea_version }}/tea-{{ soe_tea_version }}-linux-{{ hyperi_arch_deb }}"
+        dest: /usr/local/bin/tea
+        mode: '0755'
+      when: not ansible_check_mode
+
+  rescue:
+    - name: Record that tea did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator playbooks/main.yml reports from. See docs/resilient-deploy.md.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['tea: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Install tea (Forgejo/Gitea CLI) (macOS)
+  community.general.homebrew:
+    name: tea
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'

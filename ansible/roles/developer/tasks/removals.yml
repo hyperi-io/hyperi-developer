@@ -41,16 +41,24 @@
 # /usr/local/bin/uv was 0.10.2, root-owned, dated Feb 11, while current is
 # 0.11.29. Five months stale, and `which uv` resolved to it, so the host
 # looked fine.
-- name: Remove the retired root-owned uv binary (no update path; shadows the repo install)
+# uv AND its uvx sibling both land in /usr/local/bin (verified on desktop-derek:
+# both root-owned, dated Feb 11, five months stale) -- remove the pair.
+- name: Remove the retired root-owned uv/uvx binaries (no update path; shadow the repo install)
   ansible.builtin.file:
-    path: /usr/local/bin/uv
+    path: "/usr/local/bin/{{ item }}"
     state: absent
+  loop:
+    - uv
+    - uvx
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Remove the retired user-level uv (superseded by the repo install)
+- name: Remove the retired user-level uv/uvx (superseded by the repo install)
   ansible.builtin.file:
-    path: "{{ user_home }}/.cargo/bin/uv"
+    path: "{{ user_home }}/.cargo/bin/{{ item }}"
     state: absent
+  loop:
+    - uv
+    - uvx
   become: false
   when: ansible_facts['distribution'] in ['Fedora', 'MacOSX']
 
@@ -98,12 +106,97 @@
 # ~/.password-store, no credsStore in ~/.docker/config.json). That cascade is
 # intended. If a host DOES use `pass` for real, apt keeps it — it only removes
 # what nothing else needs.
-- name: Remove Docker Desktop (dropped by decision; Engine/CLI replace it)
+- name: Remove Docker Desktop (Ubuntu - dropped by decision; Engine/CLI replace it)
   ansible.builtin.apt:
     name: docker-desktop
     state: absent
     autoremove: true
   when: ansible_facts['distribution'] == 'Ubuntu'
+  failed_when: false
+
+- name: Remove Docker Desktop (Fedora - dropped by decision; Engine/CLI replace it)
+  ansible.builtin.dnf:
+    name: docker-desktop
+    state: absent
+    autoremove: true
+  when: ansible_facts['distribution'] == 'Fedora'
+  failed_when: false
+
+# macOS: the Docker Desktop cask is `docker`; the CLI-only install is the brew
+# FORMULA `docker` (see docker.yml), a different artefact, so removing the cask
+# leaves the CLI intact.
+- name: Remove Docker Desktop (macOS - dropped by decision; CLI-only replaces it)
+  community.general.homebrew_cask:
+    name: docker
+    state: absent
+  become: false
+  environment: "{{ homebrew_cask_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false
+
+# OnlyOffice - retired; LibreOffice is the org office suite now. Remove the
+# native package and the Flatpak fallback from hosts that carried it.
+- name: Remove OnlyOffice desktop editors (Fedora)
+  ansible.builtin.dnf:
+    name: onlyoffice-desktopeditors
+    state: absent
+    autoremove: true
+  when: ansible_facts['distribution'] == 'Fedora'
+  failed_when: false
+
+- name: Remove OnlyOffice desktop editors (Ubuntu)
+  ansible.builtin.apt:
+    name: onlyoffice-desktopeditors
+    state: absent
+    purge: false
+    autoremove: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  failed_when: false
+
+- name: Remove OnlyOffice Flatpak
+  community.general.flatpak:
+    name: org.onlyoffice.desktopeditors
+    state: absent
+    method: system
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  failed_when: false
+
+# Lens / Freelens (Kubernetes desktop GUIs) - retired; no k8s desktop GUI ships
+# now (k9s covers it). Verified on desktop-derek: Freelens present as the
+# app.freelens.Freelens flatpak. Remove every form a host might carry.
+- name: Remove Freelens (Ubuntu apt)
+  ansible.builtin.apt:
+    name: freelens
+    state: absent
+    purge: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  failed_when: false
+
+- name: Remove Freelens (Fedora dnf)
+  ansible.builtin.dnf:
+    name: freelens
+    state: absent
+  when: ansible_facts['distribution'] == 'Fedora'
+  failed_when: false
+
+- name: Remove retired k8s desktop GUI flatpaks (Freelens, OpenLens)
+  community.general.flatpak:
+    name: "{{ item }}"
+    state: absent
+    method: system
+  loop:
+    - app.freelens.Freelens
+    - dev.k8slens.OpenLens
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  failed_when: false
+
+- name: Remove OpenLens (macOS cask - retired)
+  community.general.homebrew_cask:
+    name: openlens
+    state: absent
+  become: false
+  environment: "{{ homebrew_cask_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
   failed_when: false
 
 # Binaries older versions dropped in /usr/local/bin and no longer install.

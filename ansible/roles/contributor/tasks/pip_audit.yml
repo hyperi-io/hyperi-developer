@@ -1,0 +1,38 @@
+---
+# pip-audit - audits Python dependencies against known advisories (blocking
+# gate for `hyperi-ci check`).
+#
+# A Python tool from PyPI: uv-tool on Linux (Tier 2 -- hyperi-update refreshes
+# it via `uv tool upgrade --all`), brew on macOS.
+
+- name: Install pip-audit (macOS)
+  community.general.homebrew:
+    name: pip-audit
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install pip-audit (Linux)
+  ansible.builtin.command:
+    cmd: uv tool install pip-audit
+    creates: "{{ user_home }}/.local/share/uv/tools/pip-audit"
+  become: true
+  become_user: "{{ actual_user }}"
+  environment:
+    PATH: "/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  register: contributor_pip_audit
+  changed_when: "'Installed' in contributor_pip_audit.stdout | default('')"
+  failed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Warn if pip-audit did not install
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+  # reported by playbooks/main.yml post_tasks.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['pip-audit: uv tool install failed -- hyperi-ci check will skip its pip-audit pass'] }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - contributor_pip_audit.rc | default(0) != 0

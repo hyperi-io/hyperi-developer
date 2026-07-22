@@ -16,7 +16,7 @@
     - ../../roles/developer
     - ../../roles/developer_core
     - ../../roles/vm_optimizer
-    - ../../roles/rdp
+    - ../../roles/rdp-server
     - ../../roles/system_cleanup
 
 - name: TEST 2 - Direct Ansible on Ubuntu
@@ -26,7 +26,7 @@
     - ../../roles/developer
     - ../../roles/developer_core
     - ../../roles/vm_optimizer
-    - ../../roles/rdp
+    - ../../roles/rdp-server
     - ../../roles/system_cleanup
 
 - name: Reset VMs for install.sh tests

@@ -1,0 +1,30 @@
+---
+# --pinned mode SSoT. Default is LATEST: hyperi_pinned is false, so every tool
+# installs the newest release. `install.sh --pinned` sets hyperi_pinned=true (a
+# -e extra var, highest precedence), and each retrofitted manual-binary task
+# then fetches the exact tag below instead of /releases/latest.
+#
+# hyperi_versions MIRRORS hyperi-ci's config/versions.yaml `tools:` block, so a
+# pinned local box matches CI exactly. Keep it in sync as hyperi-ci bumps.
+#
+# Pinning is by TAG, exactly as hyperi-ci does today -- a fetched release ASSET
+# cannot be force-moved by a tag rewrite, but it is not yet digest-verified.
+# SHA256-at-download is the planned hardening (tracked upstream as hyperi-ci
+# #66); when it lands, add a `sha256:` per tool here and a `checksum:` on the
+# get_url/unarchive. Tools absent from this map fall back to latest even in
+# pinned mode (they carry no CI-parity pin to mirror).
+hyperi_pinned: false
+
+hyperi_versions:
+  alint: v0.14.0
+  gitleaks: v8.30.1
+  hadolint: v2.14.0
+  kubeconform: v0.8.0
+  kube-linter: v0.8.3
+  osv-scanner: v2.4.0
+  golangci-lint: v2.12.2
+  gosec: v2.27.1
+  govulncheck: v1.1.4
+  cargo-audit: v0.22.2
+  cargo-deny: 0.20.2
+  cargo-chef: v0.1.77

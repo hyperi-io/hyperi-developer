@@ -30,6 +30,8 @@
 # ============================================================================
 # UBUNTU - Install via binary from GitHub releases
 # ============================================================================
+# Tier 3: Ubuntu has no distro/vendor-repo/snap channel for act, so it stays a
+# re-fetched GitHub release -- hyperi-update pulls the latest on each run.
 
 - name: Install act (Ubuntu)
   block:

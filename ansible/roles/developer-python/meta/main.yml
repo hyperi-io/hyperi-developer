@@ -1,8 +1,9 @@
 ---
-# Developer-Python — the Python tier.
+# Developer-Python -- the Python tier.
 #
-# uv lives in its own role (it is needed by non-Python roles too, e.g. gext).
-# Depend on it rather than including its task file across a role boundary.
+# The Astral suite (uv + ruff + ty) lives in the `astral` role, which the base
+# already pulls in. Depend on it so `--tags developer-python` on its own still
+# gets uv/ruff/ty rather than assuming the base ran.
 
 dependencies:
-  - role: uv
+  - role: astral

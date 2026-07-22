@@ -90,7 +90,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --rdp)
-            TAGS="rdp"
+            TAGS="rdp-server"
             shift
             ;;
         --tags)

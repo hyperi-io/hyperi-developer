@@ -112,6 +112,40 @@
   changed_when: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# corepack ships with Node and provides the pnpm/yarn shims. developer-typescript
+# installs typescript/tsx/ts-node via `pnpm install -g`, so pnpm MUST be present
+# -- nothing installed it before, which left that tag broken. Enable corepack,
+# then pin the latest pnpm.
+- name: Enable corepack (pnpm/yarn shims; ships with Node) (Linux)
+  ansible.builtin.command:
+    cmd: corepack enable
+  changed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Enable corepack (macOS)
+  ansible.builtin.command:
+    cmd: corepack enable
+  environment: "{{ homebrew_env }}"
+  become: false
+  changed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Activate the latest pnpm via corepack (Linux)
+  ansible.builtin.command:
+    cmd: corepack prepare pnpm@latest --activate
+  become: false
+  become_user: "{{ actual_user }}"
+  changed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Activate the latest pnpm via corepack (macOS)
+  ansible.builtin.command:
+    cmd: corepack prepare pnpm@latest --activate
+  environment: "{{ homebrew_env }}"
+  become: false
+  changed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
 - name: Install semantic-release globally (Linux)
   community.general.npm:
     name: semantic-release

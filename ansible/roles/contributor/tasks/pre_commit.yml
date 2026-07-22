@@ -1,0 +1,37 @@
+---
+# pre-commit - Git pre-commit hook framework. Distro package on Linux
+# (OS-swept), brew on macOS.
+
+- name: Install pre-commit (macOS)
+  community.general.homebrew:
+    name: pre-commit
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install pre-commit (Linux)
+  block:
+    - name: Install pre-commit (Fedora)
+      ansible.builtin.dnf:
+        name: pre-commit
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install pre-commit (Ubuntu)
+      ansible.builtin.apt:
+        name: pre-commit
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+  rescue:
+    - name: Record that pre-commit did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['pre-commit: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

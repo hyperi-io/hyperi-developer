@@ -63,49 +63,31 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 # ============================================================================
-# AWS CLI V2 (Linux binary install)
+# AWS CLI V2 (Linux - official snap, classic confinement)
 # ============================================================================
-
-- name: Install AWS CLI v2 (Linux)
+# Was the zip installer (`aws/install`): a static unpack with no update path --
+# you must re-run it to upgrade. The official `aws-cli` snap is the highest
+# OS-swept rung (snapd auto-refreshes it). classic confinement is required so
+# the CLI can read ~/.aws and the rest of the host filesystem.
+#
+# Needs snapd present. Ubuntu ships it; on Fedora snapd is not installed by
+# default, so if it is absent this warns and carries on (see
+# docs/resilient-deploy.md) rather than silently falling back to an unmanaged
+# static install.
+- name: Install AWS CLI v2 via snap (Linux)
   block:
-    - name: Download AWS CLI v2 installer
-      ansible.builtin.get_url:
-        url: https://awscli.amazonaws.com/awscli-exe-linux-{{ hyperi_arch_gnu }}.zip
-        dest: /tmp/awscliv2.zip
-        mode: '0644'
-
-    - name: Install unzip for AWS CLI
-      ansible.builtin.package:
-        name: unzip
+    - name: Install the aws-cli snap (classic)
+      community.general.snap:
+        name: aws-cli
+        classic: true
         state: present
-
-    - name: Unzip AWS CLI installer
-      ansible.builtin.unarchive:
-        src: /tmp/awscliv2.zip
-        dest: /tmp/
-        remote_src: true
-      when: not ansible_check_mode
-
-    - name: Install AWS CLI v2 system-wide
-      ansible.builtin.command:
-        cmd: /tmp/aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
-      args:
-        creates: /usr/local/bin/aws
-
-    - name: Remove AWS CLI installer files
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /tmp/awscliv2.zip
-        - /tmp/aws
 
   rescue:
     - name: Record that AWS CLI v2 did not install
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['AWS CLI v2: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+             + ['AWS CLI v2: ' ~ (ansible_failed_result.msg | default('snap install failed (snapd present?)'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
@@ -169,56 +151,53 @@
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
-# HELM (Linux binary install)
+# HELM (Linux - official baltocdn vendor repo)
 # ============================================================================
-
-- name: Install Helm via binary download (Linux)
+# Was a GitHub-release binary (no update path). baltocdn is Helm's own package
+# host: an apt repo on Ubuntu and a yum/dnf repo on Fedora, both OS-swept so the
+# host updater keeps Helm current. Same armored signing key for both.
+- name: Install Helm via the baltocdn repository (Linux)
   block:
-    - name: Get latest Helm version from GitHub API
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/helm/helm/releases/latest
-        return_content: true
-      register: helm_latest_release
-      check_mode: false
-
-    - name: Set Helm version fact
-      ansible.builtin.set_fact:
-        helm_version: "{{ helm_latest_release.json.tag_name }}"
-
-    # Was its own copy of the arch jinja; now uses the shared token set from
-    # playbooks/main.yml. Helm names its tarballs linux-<deb-style-arch>.
-    - name: Determine Helm binary architecture
-      ansible.builtin.set_fact:
-        helm_arch: "linux-{{ hyperi_arch_deb }}"
-
-    - name: Download Helm binary tarball
+    - name: Add the Helm signing key (Ubuntu)
       ansible.builtin.get_url:
-        url: "https://get.helm.sh/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
-        dest: "/tmp/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
+        url: https://baltocdn.com/helm/signing.asc
+        dest: /etc/apt/keyrings/helm.asc
         mode: '0644'
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Extract Helm binary
-      ansible.builtin.unarchive:
-        src: "/tmp/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
-        dest: /tmp
-        remote_src: true
-      when: not ansible_check_mode
+    - name: Add the Helm APT repository (Ubuntu)
+      ansible.builtin.deb822_repository:
+        name: helm
+        types: deb
+        uris: "https://baltocdn.com/helm/stable/debian/"
+        suites: all
+        components: main
+        signed_by: /etc/apt/keyrings/helm.asc
+        state: present
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Install Helm binary
-      ansible.builtin.copy:
-        src: "/tmp/{{ helm_arch }}/helm"
-        dest: /usr/local/bin/helm
-        mode: '0755'
-        remote_src: true
-      when: not ansible_check_mode
+    - name: Install Helm (Ubuntu)
+      ansible.builtin.apt:
+        name: helm
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Remove Helm installation files
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - "/tmp/helm-{{ helm_version }}-{{ helm_arch }}.tar.gz"
-        - "/tmp/{{ helm_arch }}"
+    - name: Add the Helm YUM repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: helm
+        description: Helm
+        baseurl: https://baltocdn.com/helm/stable/rpm
+        enabled: true
+        gpgcheck: true
+        gpgkey: https://baltocdn.com/helm/signing.asc
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install Helm (Fedora)
+      ansible.builtin.dnf:
+        name: helm
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
 
     - name: Install Helm Dashboard plugin
       ansible.builtin.command: helm plugin install https://github.com/komodorio/helm-dashboard.git
@@ -231,7 +210,7 @@
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['Helm: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+             + ['Helm: ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
@@ -242,7 +221,7 @@
 #
 #            tofu                      bao
 #   Fedora   dnf (native)              dnf (native)
-#   Ubuntu   OpenTofu repo (above)     GitHub release .deb (see below)
+#   Ubuntu   OpenTofu repo (above)     openbao snap (see below)
 #   macOS    brew core                 brew core
 #
 # Verified 2026-07-17 against real containers, not from documentation:
@@ -267,47 +246,29 @@
     state: present
   when: ansible_facts['distribution'] == 'Fedora'
 
-# OpenBao publishes no APT repo -- only GitHub release .debs. That is the
-# bottom rung of the packaging ladder (nothing auto-updates it), and it is why
-# hosts out there carry a hand-installed openbao with no update path. We pin an
-# explicit version rather than chase `latest` so a run is reproducible, and
-# hyperi-update refreshes it.
+# OpenBao publishes no APT repo. It was a hand-pinned GitHub release .deb -- the
+# bottom rung of the packaging ladder (nothing auto-updates it), which is why
+# hosts out there carry a hand-installed openbao with no update path. The
+# publisher-verified `openbao` snap is the OS-swept replacement: snapd
+# auto-refreshes it. classic confinement is required. Fedora keeps its native
+# dnf package (a higher rung, above); macOS uses brew.
 #
-# Bump openbao_version when a release lands. Fedora and macOS ignore this.
-- name: Install OpenBao (Ubuntu)
+# (openbao_version / openbao_deb_arch in defaults/main.yml are now unused on
+# Ubuntu -- kept for the opt-in --pinned path, which is out of scope here.)
+- name: Install OpenBao via snap (Ubuntu)
   block:
-    - name: Check the installed OpenBao version
-      ansible.builtin.command:
-        cmd: dpkg-query -W -f='${Version}' openbao
-      register: infrastructure_bao_installed
-      changed_when: false
-      failed_when: false
-
-    - name: Download the OpenBao deb
-      ansible.builtin.get_url:
-        url: >-
-          https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}/openbao_{{ openbao_version }}_linux_{{ openbao_deb_arch }}.deb
-        dest: "/tmp/openbao_{{ openbao_version }}_{{ openbao_deb_arch }}.deb"
-        mode: '0644'
-      when: infrastructure_bao_installed.stdout != openbao_version
-
-    - name: Install the OpenBao deb
-      ansible.builtin.apt:
-        deb: "/tmp/openbao_{{ openbao_version }}_{{ openbao_deb_arch }}.deb"
+    - name: Install the openbao snap (classic)
+      community.general.snap:
+        name: openbao
+        classic: true
         state: present
-      when: infrastructure_bao_installed.stdout != openbao_version
-
-    - name: Remove the downloaded deb
-      ansible.builtin.file:
-        path: "/tmp/openbao_{{ openbao_version }}_{{ openbao_deb_arch }}.deb"
-        state: absent
 
   rescue:
     - name: Record that OpenBao did not install
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['OpenBao: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+             + ['OpenBao: ' ~ (ansible_failed_result.msg | default('snap install failed'))] }}
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 
@@ -359,3 +320,43 @@
   become: false
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# CHECKOV - IaC / config security scanner (CI parity)
+# ============================================================================
+# checkov scans OpenTofu/Terraform, Kubernetes, CloudFormation and more, so it
+# lives with the IaC tools. It is a Python tool that no distro packages, so
+# Linux uses uv (Tier 2 -- hyperi-update refreshes it via `uv tool upgrade
+# --all`). macOS has a brew formula. uv is installed by the base.
+- name: Install checkov (macOS)
+  community.general.homebrew:
+    name: checkov
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install checkov (Linux)
+  ansible.builtin.command:
+    cmd: uv tool install checkov
+    creates: "{{ user_home }}/.local/share/uv/tools/checkov"
+  become: true
+  become_user: "{{ actual_user }}"
+  environment:
+    PATH: "/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  register: infrastructure_checkov
+  changed_when: "'Installed' in infrastructure_checkov.stdout | default('')"
+  failed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Warn if checkov did not install
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+  # that playbooks/main.yml post_tasks reports from; a per-role name would
+  # fragment the summary so almost nothing would be reported.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['checkov: uv tool install failed -- ' ~ (infrastructure_checkov.stderr | default('') | trim | truncate(120))] }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - infrastructure_checkov.rc | default(0) != 0

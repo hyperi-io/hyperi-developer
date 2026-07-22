@@ -1,0 +1,40 @@
+---
+# typos - source-code spell checker (crate `typos-cli`, binary `typos`).
+#
+# Not packaged by any distro, so cargo is the install channel on Linux (Tier 2
+# -- hyperi-update refreshes it via `cargo install-update -a`). Needs a Rust
+# toolchain, so like alint it warns rather than failing the run if cargo is
+# absent. brew on macOS.
+
+- name: Install typos (macOS)
+  community.general.homebrew:
+    name: typos-cli
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install typos (Linux — cargo)
+  ansible.builtin.command:
+    cmd: cargo install typos-cli
+    creates: "{{ user_home }}/.cargo/bin/typos"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  environment:
+    PATH: "{{ user_home }}/.cargo/bin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+  register: contributor_typos
+  changed_when: "'Installed package' in contributor_typos.stdout | default('')"
+  failed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Warn if typos did not install
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+  # reported by playbooks/main.yml post_tasks.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['typos: cargo install failed (needs a Rust toolchain -- add the '
+            ~ 'developer-rust tag). hyperi-ci check will skip its typos pass.'] }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - contributor_typos.rc | default(0) != 0

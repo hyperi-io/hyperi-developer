@@ -1,5 +1,10 @@
 ---
-# Gitleaks - Secret detection tool
+# Gitleaks - Secret detection tool (blocking gate for `hyperi-ci check`).
+#
+# Channel: distro package everywhere, so the host's own updates keep it current
+# (Ubuntu universe apt / Fedora dnf / macOS brew). This drops the old hardcoded
+# `linux_x64` GitHub-binary download, which 404'd on arm64 -- the distro package
+# selects the right architecture itself.
 
 # ============================================================================
 # MACOS - Install via Homebrew
@@ -13,51 +18,33 @@
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================
-# LINUX - Install via binary from GitHub releases
+# LINUX - distro package (Ubuntu universe / Fedora dnf)
 # ============================================================================
 
 - name: Install Gitleaks (Linux)
   block:
-    - name: Get latest Gitleaks version from GitHub API
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/gitleaks/gitleaks/releases/latest
-        return_content: true
-      register: gitleaks_release
-      check_mode: false
+    - name: Install Gitleaks (Fedora)
+      ansible.builtin.dnf:
+        name: gitleaks
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
 
-    - name: Set Gitleaks version fact
+    - name: Install Gitleaks (Ubuntu)
+      ansible.builtin.apt:
+        name: gitleaks
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+  rescue:
+    - name: Record that Gitleaks did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately NOT
+      # role-prefixed: it is the shared accumulator that playbooks/main.yml
+      # post_tasks reports from. A per-role name would give every role its own
+      # list and the summary would report almost nothing.
       ansible.builtin.set_fact:
-        gitleaks_version: "{{ gitleaks_release.json.tag_name }}"
-
-    - name: Download Gitleaks binary tarball
-      ansible.builtin.get_url:
-        url: "https://github.com/gitleaks/gitleaks/releases/download/{{ gitleaks_version }}/gitleaks_{{ gitleaks_version[1:] }}_linux_x64.tar.gz"
-        dest: "/tmp/gitleaks.tar.gz"
-        mode: '0644'
-
-    - name: Extract Gitleaks binary
-      ansible.builtin.unarchive:
-        src: /tmp/gitleaks.tar.gz
-        dest: /tmp
-        remote_src: true
-      when: not ansible_check_mode
-
-    - name: Install Gitleaks binary
-      ansible.builtin.copy:
-        src: /tmp/gitleaks
-        dest: /usr/local/bin/gitleaks
-        mode: '0755'
-        remote_src: true
-      when: not ansible_check_mode
-
-    - name: Remove Gitleaks installation files
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /tmp/gitleaks.tar.gz
-        - /tmp/gitleaks
-        - /tmp/LICENSE
-        - /tmp/README.md
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['gitleaks: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
