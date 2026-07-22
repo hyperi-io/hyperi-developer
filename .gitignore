@@ -81,6 +81,10 @@ ansible/tests/.env
 # is exactly how a live credential once leaked).
 ansible/tests/**/inventory_*.yml
 
+# Ansible runtime cache (galaxy roles/collections + ansible-lint), regenerated
+# on demand -- never commit.
+.ansible/
+
 # Local environment files (never commit -- contain secrets)
 .env.*
 !.env.example
