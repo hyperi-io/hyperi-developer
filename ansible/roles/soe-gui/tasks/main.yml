@@ -47,18 +47,13 @@
   tags: ['soe-gui', 'slack']
   when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
 
-- name: Install OnlyOffice Desktop Editors
-  ansible.builtin.include_tasks:
-    file: onlyoffice.yml
-    apply:
-      tags: ['soe-gui', 'onlyoffice']
-  tags: ['soe-gui', 'onlyoffice']
-  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
-
-- name: Install office suite tasks
+# LibreOffice is the org office suite (Linux desktop; macOS uses native iWork).
+- name: Install LibreOffice office suite
   ansible.builtin.include_tasks:
     file: office.yml
     apply:
-      tags: ['soe-gui', 'office']
-  tags: ['soe-gui', 'office']
-  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
+      tags: ['soe-gui', 'office', 'libreoffice']
+  tags: ['soe-gui', 'office', 'libreoffice']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)

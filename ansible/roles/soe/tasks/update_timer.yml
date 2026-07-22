@@ -1,0 +1,26 @@
+---
+# Scheduled full update via a systemd timer -- runs `hyperi-update --yes` weekly.
+# Tier-1 OS packages are already auto-updated by unattended-upgrades / dnf-automatic
+# (security.yml); this timer adds the Tier-2 language tools and Tier-3 static
+# binaries on the same cadence, so a soe box stays current end to end. The
+# hyperi-update command itself is installed by the developer base (update_command,
+# which fires on a soe run) before this task.
+
+- name: Install the hyperi-update systemd service
+  ansible.builtin.template:
+    src: hyperi-update.service.j2
+    dest: /etc/systemd/system/hyperi-update.service
+    mode: '0644'
+
+- name: Install the hyperi-update systemd timer
+  ansible.builtin.template:
+    src: hyperi-update.timer.j2
+    dest: /etc/systemd/system/hyperi-update.timer
+    mode: '0644'
+
+- name: Enable and start the hyperi-update timer
+  ansible.builtin.systemd:
+    name: hyperi-update.timer
+    enabled: true
+    state: started
+    daemon_reload: true

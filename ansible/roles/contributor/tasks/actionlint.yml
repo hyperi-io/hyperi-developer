@@ -1,0 +1,106 @@
+---
+# actionlint - static checker for GitHub Actions workflow files.
+#
+# Ubuntu has an OS-swept community snap (strict confinement, snapd auto-refresh).
+# Fedora has no channel, so it stays a re-fetched GitHub release (Tier 3 --
+# hyperi-update pulls the latest on each run). brew on macOS.
+
+# ============================================================================
+# MACOS - Install via Homebrew
+# ============================================================================
+
+- name: Install actionlint (macOS)
+  community.general.homebrew:
+    name: actionlint
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# UBUNTU - community snap
+# ============================================================================
+
+- name: Install actionlint (Ubuntu)
+  block:
+    - name: Install actionlint via snap (Ubuntu)
+      community.general.snap:
+        name: actionlint
+        state: present
+
+  rescue:
+    - name: Record that actionlint did not install (Ubuntu)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['actionlint: ' ~ (ansible_failed_result.msg | default('snap install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# ============================================================================
+# FEDORA - re-fetched GitHub release (Tier 3)
+# ============================================================================
+
+- name: Install actionlint (Fedora)
+  block:
+    - name: Get latest actionlint version from GitHub API
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/rhysd/actionlint/releases/latest
+        return_content: true
+      register: contributor_actionlint_release
+      check_mode: false
+
+    - name: Set actionlint version fact
+      ansible.builtin.set_fact:
+        contributor_actionlint_version: "{{ contributor_actionlint_release.json.tag_name }}"
+
+    # Release tags carry a leading `v`; the asset filename drops it
+    # (actionlint_1.7.7_linux_amd64.tar.gz). Assets use amd64/arm64.
+    - name: Build the actionlint asset filename (Fedora)
+      ansible.builtin.set_fact:
+        contributor_actionlint_asset: "actionlint_{{ contributor_actionlint_version[1:] }}_linux_{{ hyperi_arch_deb }}.tar.gz"
+
+    - name: Download actionlint tarball (Fedora)
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/rhysd/actionlint/releases/download/{{ contributor_actionlint_version }}/{{ contributor_actionlint_asset }}
+        dest: /tmp/actionlint.tar.gz
+        mode: '0644'
+
+    - name: Extract actionlint binary (Fedora)
+      ansible.builtin.unarchive:
+        src: /tmp/actionlint.tar.gz
+        dest: /tmp
+        remote_src: true
+      when: not ansible_check_mode
+
+    - name: Install actionlint binary (Fedora)
+      ansible.builtin.copy:
+        src: /tmp/actionlint
+        dest: /usr/local/bin/actionlint
+        mode: '0755'
+        remote_src: true
+      when: not ansible_check_mode
+
+    - name: Remove actionlint installation files (Fedora)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/actionlint.tar.gz
+        - /tmp/actionlint
+        - /tmp/man
+        - /tmp/README.md
+        - /tmp/LICENSE.txt
+
+  rescue:
+    - name: Record that actionlint did not install (Fedora)
+      # noqa: var-naming[no-role-prefix] -- shared accumulator, see note above.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['actionlint: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'

@@ -13,4 +13,8 @@ galaxy_info:
     - name: macOS
       versions: ['all']
 
-dependencies: []
+# The Astral suite (uv + ruff + ty) is a base component -- uv is general-purpose
+# here (runs ansible on macOS, semgrep, hyperi-ci, gext; manages Python
+# versions), so the whole suite installs with the base.
+dependencies:
+  - role: astral

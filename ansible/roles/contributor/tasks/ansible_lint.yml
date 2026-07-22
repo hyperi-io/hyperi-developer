@@ -1,0 +1,40 @@
+---
+# ansible-lint - Ansible playbook/role linter. Distro package on Linux
+# (OS-swept), brew on macOS.
+#
+# This is the real ansible-lint (a dev dependency of THIS repo), NOT the `alint`
+# repository-structure linter that hyperi-ci drives -- see hyperi_ci.yml.
+
+- name: Install ansible-lint (macOS)
+  community.general.homebrew:
+    name: ansible-lint
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install ansible-lint (Linux)
+  block:
+    - name: Install ansible-lint (Fedora)
+      ansible.builtin.dnf:
+        name: ansible-lint
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install ansible-lint (Ubuntu)
+      ansible.builtin.apt:
+        name: ansible-lint
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+  rescue:
+    - name: Record that ansible-lint did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['ansible-lint: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

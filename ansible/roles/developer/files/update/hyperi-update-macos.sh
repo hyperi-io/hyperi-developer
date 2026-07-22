@@ -62,16 +62,10 @@ install_app() {
     return 1
   fi
   local app="/Applications/Hyperi Update.app"
-  # Custom icon kept outside the bundle so re-installs never lose it. The
-  # installer drops it here; fall back to migrating from any legacy app.
+  # Custom icon kept outside the bundle so re-installs never lose it; the
+  # installer drops it here.
   local icon_store="$HOME/.local/share/hyperi-update/AppIcon.icns"
-  local legacy_icon="/Applications/Update Mac.app/Contents/Resources/applet.icns"
   section "Installing clickable app"
-
-  if [[ ! -f "$icon_store" && -f "$legacy_icon" ]]; then
-    mkdir -p "${icon_store:h}"
-    cp "$legacy_icon" "$icon_store" && ok "kept custom icon at $icon_store"
-  fi
 
   rm -rf "$app"
   local tmp; tmp=$(mktemp -d)
@@ -124,6 +118,9 @@ if (( ! ASSUME_YES )); then
   have brew   && print "  - all Homebrew formulae and casks (including --greedy self-updaters)"
   have uv     && print "  - uv tools"
   have rustup && print "  - rust toolchains"
+  have cargo-install-update && print "  - cargo-installed tools"
+  have go     && print "  - go-installed tools (gopls, govulncheck)"
+  have npm    && print "  - npm global tools + pnpm"
   have claude && print "  - Claude Code CLI"
   print "  - macOS system and security updates"
   print "\nIt may take a while, and macOS updates may want to restart.\n"
@@ -171,6 +168,41 @@ if have rustup; then
 else
   warn "rustup not found — skipping"
 fi
+
+# --- cargo tools: rustup updates the toolchain, cargo-update the binaries --
+# (nextest, deny, cargo-audit, cargo-hack, typos, ...). brew does NOT touch
+# cargo-installed binaries.
+if have cargo-install-update; then
+  section "cargo tools"
+  run "cargo install-update -a" cargo install-update -a
+else
+  warn "cargo-install-update not found — skipping"
+fi
+
+# --- go tools: re-install @latest the ones already present ----------------
+if have go; then
+  section "go tools"
+  for gt in gopls:golang.org/x/tools/gopls@latest govulncheck:golang.org/x/vuln/cmd/govulncheck@latest; do
+    bin=${gt%%:*}; mod=${gt#*:}
+    have $bin && run "go install $bin" go install "$mod"
+  done
+else
+  warn "go not found — skipping"
+fi
+
+# --- npm global tools + pnpm ----------------------------------------------
+# maid, semantic-release, typescript, tsx, ts-node; pnpm via corepack.
+if have npm; then
+  section "npm global tools"
+  run "npm update -g" npm update -g
+  have corepack && run "corepack pnpm@latest" corepack prepare pnpm@latest --activate
+else
+  warn "npm not found — skipping"
+fi
+
+# Tier 3 static binaries (kind, argocd, kubeconform, ...) come from Homebrew
+# formulae on macOS, so `brew upgrade` above already refreshed them -- no
+# separate GitHub re-fetch is needed here (that is a Linux-only concern).
 
 # --- Claude Code CLI: self-installed under ~/.local, not brew-managed ------
 if have claude; then

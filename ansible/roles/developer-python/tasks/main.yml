@@ -1,63 +1,31 @@
 ---
-# Developer-Python Role — Python toolchain (CLI only).
+# Developer-Python Role - Python extras beyond the base Astral suite.
 #
-# The Astral stack is the HyperI Python standard:
-#   uv    — package/venv/interpreter manager (replaces pip, pyenv, pipx)
-#   ruff  — lint + format in one fast command (replaces flake8, isort, black)
-#   ty    — type checker (the HyperI default over pyright)
-#
-# uv comes from the `uv` role via meta/main.yml (non-Python roles need it too —
-# gext is a uv tool). ruff and ty are installed SYSTEM-WIDE FROM A REPO, never
-# via `uv tool install`: a uv-tool install lands in ~/.local/bin, is per-user,
-# and does not ride a normal system update. Repo installs do, so `hyperi-update`
-# (or a plain dnf/brew upgrade) keeps them current with no extra step.
-#
-# Fedora ships all three in the MAIN repo; Homebrew has all three as formulae.
+# The Astral stack (uv + ruff + ty) installs with the developer BASE via the
+# `astral` role (uv is general-purpose, so the whole suite is a base component),
+# and `uv audit` / `uv check` are built into uv. This tier therefore adds only
+# the opt-in legacy type checker for repos that still use it; `ty` is the HyperI
+# default. The role is intentionally thin.
 
-- name: Install Astral Python tools (Fedora)
-  ansible.builtin.dnf:
-    name:
-      - ruff                  # lint + format
-      - ty                    # type checker
-    state: present
-  when: ansible_facts['distribution'] == 'Fedora'
-  tags: ['developer-python', 'ruff', 'ty']
-
-- name: Install Astral Python tools (macOS)
-  community.general.homebrew:
-    name:
-      - ruff                  # lint + format
-      - ty                    # type checker
-    state: present
-  become: false
-  environment: "{{ homebrew_env }}"
-  when: ansible_facts['distribution'] == 'MacOSX'
-  tags: ['developer-python', 'ruff', 'ty']
-
-# Ubuntu: Astral publishes no apt repo, and ruff/ty are not reliably in the
-# archive. Falling back to a /usr/local/bin binary would be the WORST option —
-# root-owned with no update path. Prefer a user-owned uv tool install, which
-# `hyperi-update` already refreshes (`uv tool upgrade`), so it still tracks
-# upstream rather than rotting.
-- name: Install Astral Python tools (Ubuntu — user-owned, hyperi-update tracks these)
+# mypy is OPT-IN: `ty` (from the base) is the default type checker. Install mypy
+# only when explicitly requested (`--tags mypy`). uv is present (base astral),
+# so a user-owned uv tool install keeps it refreshable by hyperi-update.
+- name: Install mypy (opt-in legacy type checker; ty is the default)
   ansible.builtin.command:
-    cmd: "uv tool install {{ item }}"
+    cmd: uv tool install mypy
   environment:
     PATH: "{{ user_home }}/.cargo/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
   become: false
-  loop:
-    - ruff
-    - ty
-  register: uv_tool_install
-  changed_when: "'already installed' not in (uv_tool_install.stderr | default(''))"
-  when: ansible_facts['distribution'] == 'Ubuntu'
-  tags: ['developer-python', 'ruff', 'ty']
+  register: devpy_mypy_install
+  changed_when: "'already installed' not in (devpy_mypy_install.stderr | default(''))"
+  failed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'MacOSX']
+  tags: ['mypy', 'never']
 
-- name: Display the installed Python toolchain
+- name: Display the Python tier
   ansible.builtin.debug:
     msg: |
-      Python toolchain ready (Astral stack):
-        uv    — uv venv / uv sync / uv run
-        ruff  — ruff check . / ruff format .
-        ty    — ty check
+      Python tier ready. The Astral suite (uv, ruff, ty) comes from the base;
+      `uv audit` and `uv check` are built in. This tier adds opt-in mypy
+      (`--tags mypy`).
   tags: ['developer-python']

@@ -150,6 +150,40 @@
   when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================
+# Project build dependencies (gRPC + Kafka)
+# ============================================================
+# Not for the cargo tools above -- these build the developer's OWN Rust
+# services: protoc for prost/tonic (gRPC codegen at build time), and the
+# librdkafka headers the rdkafka crate links against. Distro packages, so the
+# host's normal updates keep them current.
+
+- name: Install gRPC/Kafka build dependencies (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - protobuf-compiler
+      - librdkafka-dev
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install gRPC/Kafka build dependencies (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - protobuf-compiler
+      - librdkafka-devel
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install gRPC/Kafka build dependencies (macOS)
+  community.general.homebrew:
+    name:
+      - protobuf
+      - librdkafka
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================
 # Cargo tools installation
 # ============================================================
 
@@ -206,6 +240,26 @@
   ansible.builtin.command:
     cmd: cargo install cargo-chef --locked
     creates: "{{ user_home }}/.cargo/bin/cargo-chef"
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+# cargo-audit + cargo-hack are CI gates (hyperi-ci drives them for Rust):
+# cargo-audit scans deps against the RustSec advisory DB, cargo-hack runs the
+# feature-matrix build. Same cargo channel + `cargo install-update -a` refresh
+# path as the tools above.
+- name: Install cargo-audit (RustSec advisory audit)
+  ansible.builtin.command:
+    cmd: cargo install cargo-audit --locked
+    creates: "{{ user_home }}/.cargo/bin/cargo-audit"
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+- name: Install cargo-hack (feature-matrix testing)
+  ansible.builtin.command:
+    cmd: cargo install cargo-hack --locked
+    creates: "{{ user_home }}/.cargo/bin/cargo-hack"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"

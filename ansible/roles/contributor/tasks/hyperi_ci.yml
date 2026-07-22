@@ -20,16 +20,23 @@
 # right rung here: it is not packaged by any distro, and uv gives it an
 # isolated venv plus an update path (`uv tool upgrade --all`, which
 # hyperi-update already runs).
-- name: Install hyperi-ci
+#
+# `--upgrade` and no `creates:` guard, deliberately: hyperi-ci must be UPGRADED
+# in place, not skipped when already present. `uv tool install --upgrade`
+# installs it if missing and pulls the latest PyPI release if present, so a
+# staff/contributor box that ran an earlier version does not stay pinned to it.
+# (In --pinned mode this instead installs the version from versions.yml.)
+- name: Install or upgrade hyperi-ci to the latest release
   ansible.builtin.command:
-    cmd: uv tool install hyperi-ci
-    creates: "{{ user_home }}/.local/share/uv/tools/hyperi-ci"
+    cmd: uv tool install --upgrade hyperi-ci
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   environment:
     PATH: "/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
   register: contributor_hyperi_ci
-  changed_when: "'Installed' in contributor_hyperi_ci.stdout | default('')"
+  changed_when: >-
+    'Installed' in contributor_hyperi_ci.stdout | default('')
+    or 'Updated' in contributor_hyperi_ci.stdout | default('')
   failed_when: false
 
 - name: Warn if hyperi-ci did not install
@@ -124,8 +131,10 @@
 # ============================================================================
 # osv-scanner
 # ============================================================================
-# hyperi-ci calls it for Rust and TypeScript dependency audits. brew has it;
-# no distro does, so Linux takes the GitHub release.
+# hyperi-ci calls it for Rust and TypeScript dependency audits. brew has it; no
+# distro packages it. Ubuntu has an OS-swept community snap (snapd auto-refresh,
+# classic confinement); Fedora has no channel, so it stays a re-fetched GitHub
+# release (Tier 3 -- hyperi-update pulls the latest on each run).
 - name: Install osv-scanner (macOS)
   community.general.homebrew:
     name: osv-scanner
@@ -134,7 +143,25 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Install osv-scanner (Linux)
+- name: Install osv-scanner (Ubuntu)
+  block:
+    - name: Install osv-scanner via snap (Ubuntu)
+      community.general.snap:
+        name: osv-scanner
+        classic: true
+        state: present
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- see the note above.
+    - name: Record that osv-scanner did not install (Ubuntu)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['osv-scanner: ' ~ (ansible_failed_result.msg | default('snap install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install osv-scanner (Fedora — re-fetched GitHub release, Tier 3)
   block:
     - name: Get latest osv-scanner version
       ansible.builtin.uri:
@@ -154,10 +181,10 @@
 
   rescue:
     # noqa: var-naming[no-role-prefix] -- see the note above.
-    - name: Record that osv-scanner did not install
+    - name: Record that osv-scanner did not install (Fedora)
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
              + ['osv-scanner: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  when: ansible_facts['distribution'] == 'Fedora'

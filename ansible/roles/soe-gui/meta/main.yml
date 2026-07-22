@@ -1,11 +1,10 @@
 ---
-# soe-gui depends on uv — gnome.yml installs gnome-extensions-cli (gext),
-# which is a uv tool, so uv must exist before the extension tasks run.
-#
-# This replaces an include_tasks: uv.yml inside gnome.yml. That include pointed
-# at a file in this role's own tasks/ dir; the role split moved uv.yml to
-# developer-python and the include silently stopped resolving, so --tags winlike
-# failed at runtime. A meta dependency cannot rot that way.
+# soe-gui depends on the astral suite -- gnome.yml installs gnome-extensions-cli
+# (gext), which is a uv tool, so uv must exist before the extension tasks run.
+# A meta dependency cannot rot the way the old include_tasks: uv.yml did.
 
 dependencies:
-  - role: uv
+  - role: astral
+  # Desktop RDP client (Remmina/Thincast) is a GUI org tool -- soe-gui staff get
+  # it by default; anyone else can take it standalone with `--tags rdp-client`.
+  - role: rdp-client

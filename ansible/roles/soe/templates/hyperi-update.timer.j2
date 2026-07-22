@@ -1,0 +1,12 @@
+[Unit]
+Description=Run hyperi-update weekly (Tier-2 language tools + Tier-3 static binaries)
+
+[Timer]
+# Weekly, with a randomised delay so a fleet does not all hit the mirrors at
+# once, and Persistent so a missed run (box was off) fires at next boot.
+OnCalendar=weekly
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

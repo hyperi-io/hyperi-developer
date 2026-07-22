@@ -223,18 +223,29 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['developer-typescript', 'never']
 
-    - role: developer-typescript-gui
-      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['developer-typescript-gui', 'never']
-
     # Generic IaC + cloud CLIs (opt-in).
     - role: infrastructure
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['infrastructure', 'never']
 
-    - role: infrastructure-gui
+    # ========================================================================
+    # PERSONAS (meta-roles) — opinionated bundles that resolve to the roles
+    # above via meta/dependencies. They pull the CLEAN developer base: its
+    # destructive/org extras (removals, admin-scripts, chrome, ...) gate on
+    # ansible_run_tags, so a persona's propagated tag never drags them in.
+    # install.sh maps --languages/--full-stack/--infra onto these tags.
+    # ========================================================================
+    - role: developer-languages
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['infrastructure-gui', 'never']
+      tags: ['developer-languages', 'never']
+
+    - role: full-stack
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['full-stack', 'never']
+
+    - role: infra
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['infra', 'never']
 
     # ========================================================================
     # THE THREE AUDIENCES
@@ -277,9 +288,9 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['vm', 'optimizer', 'never']
 
-    - role: rdp
+    - role: rdp-server
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-      tags: ['rdp', 'never']
+      tags: ['rdp-server', 'never']
 
     # System cleanup — always runs at the end.
     - role: system_cleanup

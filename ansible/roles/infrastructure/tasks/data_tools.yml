@@ -228,3 +228,108 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# ============================================================================
+# RPK - Redpanda / Kafka CLI (data group)
+# ============================================================================
+# The Redpanda vendor repo (linux.pkg.redpanda.com) is OS-swept BUT its
+# `redpanda` package installs the FULL broker to get rpk -- the wrong footprint
+# for a dev workstation. We take the standalone rpk zip from GitHub releases
+# instead (Tier 3: hyperi-update re-fetches it). If you want the OS-swept vendor
+# repo, it is `redpanda` from https://linux.pkg.redpanda.com (broker included).
+- name: Install rpk (Linux)
+  block:
+    - name: Ensure unzip is present for rpk
+      ansible.builtin.package:
+        name: unzip
+        state: present
+
+    - name: Get latest Redpanda release (carries the rpk asset)
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/redpanda-data/redpanda/releases/latest
+        return_content: true
+      register: rpk_latest
+      check_mode: false
+
+    - name: Download and extract rpk
+      ansible.builtin.unarchive:
+        src: "https://github.com/redpanda-data/redpanda/releases/download/{{ rpk_latest.json.tag_name }}/rpk-linux-{{ hyperi_arch_deb }}.zip"
+        dest: /usr/local/bin
+        remote_src: true
+        include: rpk
+        mode: '0755'
+      when: not ansible_check_mode
+
+  rescue:
+    - name: Record that rpk did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['rpk: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Install rpk via Homebrew (macOS)
+  block:
+    # TODO verify: the redpanda-data/tap formula name/availability is UNVERIFIED
+    # (flagged in the plan). If the tap or formula has moved this warns, and the
+    # standalone rpk binary from GitHub is the fallback.
+    - name: Tap redpanda-data formulae (macOS)
+      community.general.homebrew_tap:
+        name: redpanda-data/tap
+        state: present
+
+    - name: Install rpk via the redpanda formula (macOS)
+      community.general.homebrew:
+        name: redpanda-data/tap/redpanda
+        state: present
+
+  rescue:
+    - name: Record that rpk did not install (macOS)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['rpk (macOS): ' ~ (ansible_failed_result.msg | default('brew tap/install failed'))] }}
+
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# VALKEY-CLI - Valkey client (data group)
+# ============================================================================
+# HyperI runs VALKEY, not Redis, so we install Valkey's CLI. valkey-cli speaks
+# the Redis wire protocol, so it also talks to Dragonfly and any Redis server -
+# no need for the (licence-encumbered) Redis client.
+#   Fedora : dnf `valkey`        (ships valkey-cli; Fedora 41+ replaced redis)
+#   Ubuntu : apt `valkey-tools`  (client tools, from the archive)
+#   macOS  : brew `valkey`
+- name: Install valkey-cli (Valkey client; speaks the Redis protocol)
+  block:
+    - name: Install valkey (Fedora - ships valkey-cli)
+      ansible.builtin.dnf:
+        name: valkey
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install valkey-tools (Ubuntu - client tools)
+      ansible.builtin.apt:
+        name: valkey-tools
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Install valkey via Homebrew (macOS)
+      community.general.homebrew:
+        name: valkey
+        state: present
+      become: false
+      environment: "{{ homebrew_env }}"
+      when: ansible_facts['distribution'] == 'MacOSX'
+
+  rescue:
+    - name: Record that valkey-cli did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['valkey-cli: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+

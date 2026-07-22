@@ -16,7 +16,9 @@
 #   --tags-include TAGS  Include specific tags to run (comma-separated)
 #   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
 #   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
+#   --pinned             Pin manual binaries to CI-exact versions (default: latest)
 #   --branch BRANCH      Git branch to use (default: main)
+#   Personas: --soe / --contributor / --full-stack / --infra / --languages [list]
 #   --help               Show this help message
 #
 # SUPPORTED PLATFORMS:
@@ -54,6 +56,9 @@ OPTIONS:
   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
   --branch BRANCH      Git branch to use (default: main)
   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
+  --pinned             Reproducible mode: pin the manual-binary tools to the
+                       exact versions in group_vars (mirrors hyperi-ci) instead
+                       of latest. Latest is the default.
   --soe                Shortcut: HyperI staff workstation defaults
                        (generic dev + CI toolchain + HyperI org policy;
                        no IaC, no language toolchains)
@@ -63,8 +68,15 @@ OPTIONS:
                        The dev base + the toolchain our CI runs, and none of
                        our org policy (no VPN, telemetry, branding, Slack).
                        Equivalent to: --tags contributor
-  --list-apps          Print every per-app sub-tag (slack, vscode, claude, etc.)
-                       for granular --tags X selection
+  --full-stack         App dev, front-to-back: clean base + GUI editors + node +
+                       typescript + python + infrastructure (kubectl/k9s).
+  --infra              SRE / platform box: clean base + infrastructure
+                       (cloud, IaC, k8s, the data group).
+  --languages [LIST]   Language toolchains. Bare installs them all; or pass a
+                       comma list, e.g. --languages rust,go
+                       (rust/go/python/node/typescript/c).
+  --list-apps          Print every per-app / per-group sub-tag (slack, vscode,
+                       data, vpn-clients, ...) for granular --tags X selection
   --help               Show this help message
 
 NOTE:
@@ -88,7 +100,7 @@ EXAMPLES:
     ./install.sh --soe --tags developer-rust
 
   HyperI SRE workstation:
-    ./install.sh --soe --tags infrastructure,infrastructure-gui
+    ./install.sh --soe --tags infrastructure
 
   Outside contributor working on a HyperI product:
     ./install.sh --contributor
@@ -96,8 +108,17 @@ EXAMPLES:
   Install with Australian region (locale, formats, spell-check):
     ./install.sh --region au
 
-  Install RDP support for remote desktop access:
-    ./install.sh --tags rdp
+  SRE / platform workstation:
+    ./install.sh --infra
+
+  Rust + Go toolchains only:
+    ./install.sh --languages rust,go
+
+  Reproducible (CI-exact) install:
+    ./install.sh --contributor --pinned
+
+  Install the RDP server (GNOME Remote Desktop) for inbound access:
+    ./install.sh --tags rdp-server
 
   Dry-run to see what would change:
     ./install.sh --check
@@ -114,18 +135,22 @@ EOF
 
 list_apps() {
     cat << 'EOF'
-Per-app sub-tags - pass via --tags <name> to install just that one app.
+Per-app / per-group sub-tags - pass via --tags <name> to install just that set.
 
-Generic dev base (developer):
+Generic dev base (developer) - the additive default:
     apparmor          Ubuntu AppArmor userns fix
     repository        OS repo mirrors / fastestmirror
     docker            Docker (Engine on Linux, CLI on macOS - no Desktop)
     utilities         CLI utilities (htop, ripgrep, fd, fzf, jq, yq, ...)
     git               Latest Git via PPA / Fedora / brew
     region            Locale + hunspell (gated by --region too)
-    chrome            Google Chrome  (opt-in via --tags chrome)
-    brave             Brave browser  (opt-in via --tags brave)
-    avatar            User avatar    (opt-in via --tags avatar)
+    astral            Astral suite: uv + ruff + ty (base component)
+    chrome            Google Chrome        (opt-in / soe)
+    brave             Brave browser        (opt-in / soe)
+    avatar            User avatar          (opt-in / soe)
+    removals          Remove retired tools (opt-in / soe only)
+    update_command    hyperi-update command + GUI launcher (opt-in / soe)
+    admin-scripts     HyperI fleet admin scripts (opt-in / soe only)
 
 Generic dev GUI (developer-gui):
     desktop           GNOME / ubuntu-desktop-minimal install if missing
@@ -133,45 +158,62 @@ Generic dev GUI (developer-gui):
     ghostty           Ghostty terminal + JetBrains Mono font
     dbeaver           DBeaver Community DB GUI
 
-Languages (developer-<lang>):
-    rust              rustup + cargo + sccache + mold + cargo-sweep
-    uv                UV (Python package manager)
-    go                Go toolchain + gopls + dlv
-    c-tools           C/C++ build tools
-    nodejs            Node.js LTS + pnpm
-    typescript        typescript + tsx + ts-node (depends on nodejs)
-    cursor            Cursor editor (in developer-typescript-gui)
+Languages (developer-<lang>; --languages [list] or developer-languages for all):
+    developer-rust        rustup + cargo tools + protoc/librdkafka build deps
+    developer-go          Go + gopls, dlv, golangci-lint, gosec, govulncheck
+    developer-python      mypy (opt-in; ruff/ty ship in the base astral suite)
+    developer-node        Node.js LTS + npm + pnpm/corepack
+    developer-typescript  typescript + tsx + ts-node (pulls developer-node)
+    developer-c           C/C++ build tools
 
 Infrastructure (infrastructure):
-    cloud             OpenTofu, OpenBao + AWS CLI v2
+    cloud             OpenTofu, OpenBao, AWS CLI v2, checkov
     azure             Azure CLI
     gcloud            Google Cloud CLI
-    k8s               kubectl + helm + k9s + kind + argocd + dive
-    vector            Vector data pipeline tool
-    lens              K8s desktop client (in infrastructure-gui)
+    k8s               kubectl, helm, kubectx/kubens, k9s, kind, argocd,
+                      kustomize, kubeconform, kube-linter, dive
+    data              data group: clickhouse-client, rpk, valkey-cli, vector
 
 Contributor (contributor) - to work ON a HyperI product, no org policy:
-    hyperi-ci         hyperi-ci + the tools its checks drive
-                      (semgrep, alint, osv-scanner)
+    hyperi-ci         hyperi-ci + semgrep, alint
     gitleaks          Secret scanner
+    trivy             Vuln / IaC / secret scanner
+    hadolint          Dockerfile linter
+    pip-audit         Python dependency audit
+    yamllint          YAML linter
+    ansible-lint      Ansible linter
+    pre-commit        pre-commit runner
+    actionlint        GitHub Actions linter
+    vulture           Dead-code finder
+    typos             Source spell-checker
+    maid              Mermaid diagram validator
+    osv-scanner       OSV vulnerability scanner
     act               Run GitHub Actions locally
 
 HyperI SOE (soe, soe-gui) - org policy, includes everything above:
     auto-updates      unattended-upgrades / dnf-automatic
+    update-timer      Weekly hyperi-update systemd timer
     bash-history      bash history auto-commit
     claude            Claude Code CLI
-    openvpn           OpenVPN 3 client
+    forgejo/codeberg  tea (Forgejo/Gitea CLI)
+    colima            macOS container daemon + Apple container (macOS only)
     disk-attach       Sudo tool to mount a newly attached disk
     telemetry-disable Disable Ubuntu Pro/ESM ads + telemetry
     slack             Slack desktop
-    onlyoffice        OnlyOffice Desktop Editors
+    office            LibreOffice org office suite
     nemo              Nemo file manager (replaces Nautilus)
     desktop-cleanup   Hide duplicate apps, dedupe Flatpak/apt
-    gnome-extensions  GNOME extensions (Astra Monitor etc.)
-    office            Office suite tasks
+    gnome-extensions  GNOME extensions (winlike / maclike)
+
+Groups / client bundles (own tag; soe pulls them by default):
+    vpn-clients       OpenVPN 3 + WireGuard + Tunnelblick (macOS)
+      openvpn         just OpenVPN 3
+      wireguard       just WireGuard
+      tunnelblick     just Tunnelblick (macOS)
+    rdp-client        Remmina (Linux) / Thincast (macOS)
 
 Targeted deployment:
-    rdp               GNOME Remote Desktop (RDP server on port 3389)
+    rdp-server        GNOME Remote Desktop (RDP server on port 3389)
     vm                VM guest optimisations (QEMU agent etc.)
 
 macOS-only:
@@ -179,9 +221,10 @@ macOS-only:
 
 Composability examples:
     ./install.sh --tags slack                    Just Slack
-    ./install.sh --tags developer-gui            All of developer-gui
+    ./install.sh --tags data                     The data-tools group
     ./install.sh --tags vscode,ghostty           VS Code + Ghostty only
-    ./install.sh --soe --tags developer-rust        SOE + Rust
+    ./install.sh --soe --languages rust,go       SOE + Rust + Go
+    ./install.sh --infra --pinned                SRE box, CI-exact versions
 EOF
     exit 0
 }
@@ -193,6 +236,16 @@ append_tags() {
         ANSIBLE_TAGS="--tags ${ANSIBLE_TAGS#--tags },$1"
     else
         ANSIBLE_TAGS="--tags $1"
+    fi
+}
+
+# Append one `key=value` Ansible extra var, so --pinned and --region compose
+# instead of clobbering each other.
+append_extra_var() {
+    if [[ -n "$ANSIBLE_EXTRA_VARS" ]]; then
+        ANSIBLE_EXTRA_VARS="$ANSIBLE_EXTRA_VARS -e $1"
+    else
+        ANSIBLE_EXTRA_VARS="-e $1"
     fi
 }
 
@@ -253,6 +306,57 @@ while [[ $# -gt 0 ]]; do
             append_tags "$CONTRIBUTOR_TAGS"
             shift
             ;;
+        --full-stack)
+            # App dev, front-to-back: clean base + GUI editors + node/typescript/
+            # python + infrastructure CLIs. Resolves via the full-stack meta-role.
+            append_tags "full-stack"
+            shift
+            ;;
+        --infra)
+            # SRE / platform box: clean base + infrastructure (cloud, IaC, k8s,
+            # data). Resolves via the infra meta-role.
+            append_tags "infra"
+            shift
+            ;;
+        --languages)
+            # Optional comma list: `--languages rust,go` installs just those
+            # toolchains; bare `--languages` installs them all (the
+            # developer-languages meta-role). Bash 3.2 safe (macOS bootstrap).
+            if [[ -n "${2:-}" && "$2" != -* ]]; then
+                LANG_TAGS=""
+                IFS=',' read -ra _langs <<< "$2"
+                for _l in "${_langs[@]}"; do
+                    _l="$(printf '%s' "$_l" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+                    [[ -z "$_l" ]] && continue
+                    case "$_l" in
+                        rs|rust)          _role="developer-rust" ;;
+                        go|golang)        _role="developer-go" ;;
+                        py|python)        _role="developer-python" ;;
+                        js|node|nodejs)   _role="developer-node" ;;
+                        ts|typescript)    _role="developer-typescript" ;;
+                        c|cpp|c++|c-tools) _role="developer-c" ;;
+                        *)                _role="developer-$_l" ;;
+                    esac
+                    if [[ -n "$LANG_TAGS" ]]; then
+                        LANG_TAGS="$LANG_TAGS,$_role"
+                    else
+                        LANG_TAGS="$_role"
+                    fi
+                done
+                append_tags "$LANG_TAGS"
+                shift 2
+            else
+                append_tags "developer-languages"
+                shift
+            fi
+            ;;
+        --pinned)
+            # Opt-in reproducible mode: pin the manual-binary tools to the exact
+            # versions in inventories/localhost/group_vars/all.yml (which mirrors
+            # hyperi-ci) instead of /releases/latest. Latest stays the default.
+            append_extra_var "hyperi_pinned=true"
+            shift
+            ;;
         --list-apps)
             list_apps
             ;;
@@ -296,8 +400,8 @@ if [[ -n "${REGION_ARG:-}" ]]; then
     # Add region tag
     append_tags "region"
 
-    # Pass desktop_region as extra var
-    ANSIBLE_EXTRA_VARS="-e desktop_region=${DESKTOP_REGION}"
+    # Pass desktop_region as extra var (append so --pinned survives)
+    append_extra_var "desktop_region=${DESKTOP_REGION}"
     print_info "Region: ${DESKTOP_REGION}"
 fi
 
@@ -343,20 +447,6 @@ if ! sudo -n true 2>/dev/null; then
     }
 fi
 print_success "Sudo access verified"
-
-# One-off migration: state directories were historically named "hyperi-developer".
-# Rename any legacy dirs to "hyperi-developer" so machines provisioned by older
-# versions transition cleanly. Idempotent: only moves a legacy dir when it
-# exists and the new name does not (Linux only; these paths don't exist on macOS).
-if [[ "$OS_FAMILY" != "macos" ]]; then
-    for _legacy in /etc/hyperi-developer /var/lib/hyperi-developer; do
-        _new="${_legacy/hyperi-developer/hyperi-developer}"
-        if [[ -d "$_legacy" && ! -e "$_new" ]]; then
-            print_info "Migrating legacy ${_legacy} -> ${_new}"
-            sudo mv "$_legacy" "$_new" || print_warning "Could not migrate ${_legacy}"
-        fi
-    done
-fi
 
 # Install latest Ansible in temporary Python venv (isolated from OS)
 # This avoids circular dependency if playbook updates system Ansible

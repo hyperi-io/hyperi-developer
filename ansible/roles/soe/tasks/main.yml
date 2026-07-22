@@ -3,8 +3,8 @@
 #
 # Tier 1 of the audience model. This holds HyperI POLICY: the things we impose
 # on a HyperI machine and would have no business putting on anyone else's.
-# Auto-updates, bash history auto-commit, OpenVPN, telemetry-disable,
-# disk-attach, Claude Code.
+# Auto-updates, bash history auto-commit, telemetry-disable, disk-attach,
+# Claude Code. (VPN clients moved to the vpn-clients dependency.)
 #
 # It depends on `contributor`, so a HyperI machine gets the CI toolchain
 # (hyperi-ci, gitleaks, act, semgrep, alint, osv-scanner) and, through that,
@@ -33,6 +33,16 @@
       tags: ['soe', 'auto-updates']
   tags: ['soe', 'auto-updates']
 
+# Schedules the full hyperi-update sweep (Tier 2 + Tier 3) on top of the OS-level
+# auto-updates above. Linux only (macOS uses the clickable app).
+- name: Schedule hyperi-update via a systemd timer
+  ansible.builtin.include_tasks:
+    file: update_timer.yml
+    apply:
+      tags: ['soe', 'auto-updates', 'update-timer']
+  tags: ['soe', 'auto-updates', 'update-timer']
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
 - name: Configure shell (bash history auto-commit)
   ansible.builtin.include_tasks:
     file: shell_config.yml
@@ -47,6 +57,13 @@
       tags: ['soe', 'claude']
   tags: ['soe', 'claude']
 
+- name: Install tea (Forgejo/Gitea CLI)
+  ansible.builtin.include_tasks:
+    file: tea.yml
+    apply:
+      tags: ['soe', 'forgejo', 'codeberg']
+  tags: ['soe', 'forgejo', 'codeberg']
+
 # act, gitleaks and hyperi-ci are NOT here: they moved to `contributor`, which
 # this role depends on. They are what you need to work on a HyperI product,
 # not HyperI policy -- so an outside contributor should get them too.
@@ -58,12 +75,14 @@
       tags: ['soe', 'disk-attach']
   tags: ['soe', 'disk-attach']
 
-- name: Install OpenVPN 3
+# macOS container daemon (colima) + Apple's native `container` -- macOS only.
+- name: Install macOS container runtime (colima + Apple container)
   ansible.builtin.include_tasks:
-    file: openvpn.yml
+    file: colima.yml
     apply:
-      tags: ['soe', 'openvpn']
-  tags: ['soe', 'openvpn']
+      tags: ['soe', 'colima']
+  tags: ['soe', 'colima']
+  when: ansible_facts['distribution'] == 'MacOSX'
 
 - name: Disable telemetry and advertising
   ansible.builtin.include_tasks:

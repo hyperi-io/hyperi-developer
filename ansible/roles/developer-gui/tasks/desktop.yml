@@ -12,14 +12,6 @@
     state: present
   when: ansible_facts['distribution'] == 'Fedora'
 
-- name: Install LibreOffice (Fedora)
-  ansible.builtin.dnf:
-    name: '@libreoffice'
-    state: present
-  when:
-    - ansible_facts['distribution'] == 'Fedora'
-    - install_libreoffice | default(false)
-
 - name: Set default target to graphical (Fedora)
   ansible.builtin.command:
     cmd: systemctl set-default graphical.target
@@ -52,14 +44,6 @@
     state: absent
     purge: true
   when: ansible_facts['distribution'] == 'Ubuntu'
-
-- name: Install LibreOffice (Ubuntu)
-  ansible.builtin.apt:
-    name: libreoffice
-    state: present
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - install_libreoffice | default(false)
 
 - name: Set default target to graphical (Ubuntu)
   ansible.builtin.command:

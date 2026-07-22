@@ -1,0 +1,11 @@
+---
+# Tunnelblick -- the macOS OpenVPN GUI client (macOS only; the OpenVPN 3 client
+# above covers Linux).
+
+- name: Install Tunnelblick (macOS)
+  community.general.homebrew_cask:
+    name: tunnelblick
+    state: present
+  become: false
+  environment: "{{ homebrew_cask_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'

@@ -23,23 +23,6 @@
 # Ubuntu 25.04+ rejects the RSA-1024 key. We import both keys into a binary
 # keyring so apt can verify against whichever key the PPA uses.
 
-# Clean up old PPA configuration if exists (migration from legacy method)
-- name: Remove old git-core PPA configuration
-  ansible.builtin.file:
-    path: "/etc/apt/sources.list.d/{{ item }}"
-    state: absent
-  loop:
-    - git-core-ubuntu-ppa-noble.list
-    - git-core-ubuntu-ppa-jammy.list
-    - ppa_git_core_ppa.list
-  when: ansible_facts['distribution'] == 'Ubuntu'
-
-- name: Remove old git-core PPA ASC key (replaced by binary keyring)
-  ansible.builtin.file:
-    path: /etc/apt/keyrings/git-core-ppa.asc
-    state: absent
-  when: ansible_facts['distribution'] == 'Ubuntu'
-
 - name: Install latest Git via PPA (Ubuntu)
   block:
     - name: Import git-core PPA GPG keys via HTTP (more reliable than keyserver)

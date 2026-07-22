@@ -1,0 +1,8 @@
+---
+# Meta-role: the language toolchains come via meta/dependencies. This anchor
+# task exists so the role loads cleanly and the developer-languages tag resolves.
+- name: developer-languages persona
+  ansible.builtin.debug:
+    msg: >-
+      developer-languages: all developer-<lang> toolchains selected via meta
+      dependencies (rust, go, python, node, typescript, c).

@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  author: HyperI
+  description: Meta-role -- all language toolchains (developer-<lang>)
+  company: HyperI
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Fedora
+      versions: ['42']
+    - name: Ubuntu
+      versions: ['noble']
+
+# Pulls every language toolchain. A SUBSET is selected from install.sh
+# (`--languages rust,go` -> `--tags developer-rust,developer-go`), not here.
+# developer-typescript pulls developer-node; developer-python pulls astral.
+dependencies:
+  - role: developer-rust
+  - role: developer-go
+  - role: developer-python
+  - role: developer-node
+  - role: developer-typescript
+  - role: developer-c

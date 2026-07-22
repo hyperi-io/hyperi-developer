@@ -77,11 +77,14 @@ flowchart TD
 | `developer` | Generic CLI dev base (the default: git, docker, shell utilities) |
 | `developer-gui` | VS Code, Ghostty, DBeaver |
 | `developer-rust` / `-go` / `-python` / `-node` / `-typescript` / `-c` | Language toolchains |
-| `infrastructure` | OpenTofu, OpenBao, AWS CLI, and under `k8s`: kubectl, helm, k9s, kind, argocd |
-| `contributor` | hyperi-ci + its check tools (semgrep, alint, osv-scanner), gitleaks, act |
+| `infrastructure` | OpenTofu, OpenBao, AWS CLI, `k8s` (kubectl, helm, k9s, kind, argocd, kustomize, kubeconform, kube-linter), `data` (clickhouse-client, rpk, valkey-cli, vector) |
+| `contributor` | hyperi-ci + its check tools (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, yamllint, ansible-lint, pre-commit, act |
 | `soe` / `soe-gui` | HyperI org policy (opt-in) |
+| `--full-stack` / `--infra` / `--languages [list]` | Persona bundles (see `--help`) |
 | `winlike` / `maclike` | GNOME taskbar (winlike) or dock (maclike), winlike wins if both |
-| `rdp` | GNOME Remote Desktop on port 3389 |
+| `rdp-server` | GNOME Remote Desktop on port 3389 (inbound) |
+| `rdp-client` | RDP client: Remmina (Linux) / Thincast (macOS) |
+| `vpn-clients` | OpenVPN 3, WireGuard, Tunnelblick (macOS) |
 | `vm` | VM guest optimisations (QEMU/SPICE agents) |
 
 ## What Gets Installed
@@ -95,10 +98,10 @@ flowchart TD
 **Opt-in, via tags:**
 
 - `developer-gui`: VS Code, Ghostty (Solarized theme), DBeaver
-- Languages: Rust, uv (Python), Go, C/C++, Node.js, TypeScript
-- `infrastructure`: OpenTofu + OpenBao (the OSS forks, no HashiCorp BUSL tools), AWS CLI v2. Under `k8s`: kubectl + helm + k9s + kind + argocd + dive, and Freelens on a GNOME desktop
-- `contributor`: hyperi-ci and the tools its checks drive (semgrep, alint, osv-scanner), gitleaks, act
-- `soe` / `soe-gui`: HyperI org policy: OpenVPN, Claude Code, Slack, telemetry-disable, auto-updates, GNOME taskbar
+- Languages: Rust, Go, Python, C/C++, Node.js, TypeScript (the Astral suite -- uv, ruff, ty -- ships in the base)
+- `infrastructure`: OpenTofu + OpenBao (the OSS forks, no HashiCorp BUSL tools), AWS CLI v2. Under `k8s`: kubectl + helm + k9s + kind + argocd + kustomize + dive. The `data` group: clickhouse-client, rpk, valkey-cli, vector
+- `contributor`: hyperi-ci and the tools its checks drive (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, ansible-lint, pre-commit, act
+- `soe` / `soe-gui`: HyperI org policy: VPN clients, Claude Code, Slack, LibreOffice, RDP client, telemetry-disable, auto-updates, GNOME taskbar
 
 **Desktop UI** (`winlike` or `maclike` tag): GNOME extensions, a transparent taskbar (winlike) or a dock (maclike).
 

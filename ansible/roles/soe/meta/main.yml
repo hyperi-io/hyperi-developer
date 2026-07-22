@@ -22,3 +22,6 @@ galaxy_info:
 # -- VPN, telemetry-disable, bash history to git, branding.
 dependencies:
   - role: contributor
+  # VPN clients (OpenVPN 3, WireGuard, Tunnelblick) are org policy -- soe machines
+  # get them; anyone else can take them standalone with `--tags vpn-clients`.
+  - role: vpn-clients

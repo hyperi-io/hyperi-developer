@@ -61,7 +61,7 @@
   tags: ['developer-gui', 'ghostty']
   when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
 
-# DBeaver — DB GUI client. Per spec, lives in developer-gui (not infrastructure-gui).
+# DBeaver — DB GUI client. Per spec, lives in developer-gui.
 - name: Install DBeaver Community
   ansible.builtin.include_tasks:
     file: dbeaver.yml

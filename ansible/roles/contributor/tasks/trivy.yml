@@ -1,0 +1,95 @@
+---
+# trivy - vulnerability, misconfiguration and IaC scanner.
+#
+# Official Aqua Security vendor repos on Linux (OS-swept: the host's own updates
+# keep it current), brew on macOS.
+#
+# The apt repo publishes to a single `generic` suite rather than per-codename
+# since trivy v0.72.0 -- a codename suite freezes you at an old version.
+
+# ============================================================================
+# MACOS - Install via Homebrew
+# ============================================================================
+
+- name: Install trivy (macOS)
+  community.general.homebrew:
+    name: trivy
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# FEDORA - official Aqua Security dnf repo
+# ============================================================================
+
+- name: Install trivy (Fedora)
+  block:
+    - name: Add Trivy repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: trivy
+        description: Trivy repository
+        baseurl: https://aquasecurity.github.io/trivy-repo/rpm/releases/$basearch/
+        enabled: true
+        gpgcheck: true
+        gpgkey: https://aquasecurity.github.io/trivy-repo/rpm/public.key
+
+    - name: Install Trivy (Fedora)
+      ansible.builtin.dnf:
+        name: trivy
+        state: present
+
+  rescue:
+    - name: Record that trivy did not install (Fedora)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['trivy: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# ============================================================================
+# UBUNTU - official Aqua Security apt repo
+# ============================================================================
+
+- name: Install trivy (Ubuntu)
+  block:
+    - name: Create APT keyring directory (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add Trivy GPG key (Ubuntu)
+      ansible.builtin.get_url:
+        url: https://aquasecurity.github.io/trivy-repo/deb/public.key
+        dest: /etc/apt/keyrings/trivy.asc
+        mode: '0644'
+
+    - name: Add Trivy APT repository (Ubuntu)
+      ansible.builtin.deb822_repository:
+        name: trivy
+        types: deb
+        uris: https://aquasecurity.github.io/trivy-repo/deb
+        suites: generic
+        components: main
+        signed_by: /etc/apt/keyrings/trivy.asc
+        state: present
+
+    - name: Install Trivy (Ubuntu)
+      ansible.builtin.apt:
+        name: trivy
+        state: present
+        update_cache: true
+
+  rescue:
+    - name: Record that trivy did not install (Ubuntu)
+      # noqa: var-naming[no-role-prefix] -- shared accumulator, see note above.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['trivy: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'

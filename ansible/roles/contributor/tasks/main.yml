@@ -45,6 +45,81 @@
       tags: ['contributor', 'act']
   tags: ['contributor', 'act']
 
+# ============================================================================
+# CI-parity linters/scanners -- the rest of what `hyperi-ci check` drives.
+# Each is snipeable by its own tag (e.g. --tags trivy).
+# ============================================================================
+
+- name: Install Trivy (vulnerability/IaC scanner)
+  ansible.builtin.include_tasks:
+    file: trivy.yml
+    apply:
+      tags: ['contributor', 'trivy']
+  tags: ['contributor', 'trivy']
+
+- name: Install hadolint (Dockerfile linter)
+  ansible.builtin.include_tasks:
+    file: hadolint.yml
+    apply:
+      tags: ['contributor', 'hadolint']
+  tags: ['contributor', 'hadolint']
+
+- name: Install pip-audit (Python dependency audit)
+  ansible.builtin.include_tasks:
+    file: pip_audit.yml
+    apply:
+      tags: ['contributor', 'pip-audit']
+  tags: ['contributor', 'pip-audit']
+
+- name: Install yamllint (YAML linter)
+  ansible.builtin.include_tasks:
+    file: yamllint.yml
+    apply:
+      tags: ['contributor', 'yamllint']
+  tags: ['contributor', 'yamllint']
+
+- name: Install ansible-lint (Ansible linter)
+  ansible.builtin.include_tasks:
+    file: ansible_lint.yml
+    apply:
+      tags: ['contributor', 'ansible-lint']
+  tags: ['contributor', 'ansible-lint']
+
+- name: Install pre-commit (Git hook framework)
+  ansible.builtin.include_tasks:
+    file: pre_commit.yml
+    apply:
+      tags: ['contributor', 'pre-commit']
+  tags: ['contributor', 'pre-commit']
+
+- name: Install actionlint (GitHub Actions workflow linter)
+  ansible.builtin.include_tasks:
+    file: actionlint.yml
+    apply:
+      tags: ['contributor', 'actionlint']
+  tags: ['contributor', 'actionlint']
+
+- name: Install vulture (dead Python code finder)
+  ansible.builtin.include_tasks:
+    file: vulture.yml
+    apply:
+      tags: ['contributor', 'vulture']
+  tags: ['contributor', 'vulture']
+
+- name: Install typos (source-code spell checker)
+  ansible.builtin.include_tasks:
+    file: typos.yml
+    apply:
+      tags: ['contributor', 'typos']
+  tags: ['contributor', 'typos']
+
+- name: Install maid (mermaid diagram validator)
+  ansible.builtin.include_tasks:
+    file: maid.yml
+    apply:
+      tags: ['contributor', 'maid']
+  tags: ['contributor', 'maid']
+
 - name: Verify the contributor toolchain
   ansible.builtin.include_tasks:
     file: verify.yml

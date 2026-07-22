@@ -20,11 +20,11 @@ Optimizes GNOME Remote Desktop for use over RDP connections, including automatic
 
 ```bash
 # Via install.sh
-./install.sh --rdp
+./install.sh --tags rdp-server
 
 # Via Ansible directly
 cd ansible
-ansible-playbook -i inventories/localhost/inventory.yml playbooks/main.yml --tags rdp
+ansible-playbook -i inventories/localhost/inventory.yml playbooks/main.yml --tags rdp-server
 ```
 
 ## Important: RDP Password Configuration

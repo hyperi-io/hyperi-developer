@@ -1,5 +1,5 @@
 ---
-# Kubernetes tools installation (kubectl, k9s, kubectx/kubens, Minikube, ArgoCD, Freelens, dive)
+# Kubernetes tools installation (kubectl, k9s, kubectx/kubens, kind, ArgoCD, dive)
 
 # ============================================================================
 # KUBECTL - Dynamic version detection
@@ -66,47 +66,85 @@
 
 
 # ============================================================================
-# LINUX - Binary downloads for k9s, kubectx/kubens, Minikube, ArgoCD, dive
+# kubectx + kubens - distro packages (Tier 1, OS-swept)
 # ============================================================================
+# Were GitHub-release binaries. Ubuntu ships kubectx in universe, Fedora in its
+# repos; both bundle kubens in the SAME package, so one install covers both.
+- name: Install kubectx and kubens (Linux)
+  block:
+    - name: Install kubectx (Fedora)
+      ansible.builtin.dnf:
+        name: kubectx
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
 
+    - name: Install kubectx (Ubuntu)
+      ansible.builtin.apt:
+        name: kubectx
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+  rescue:
+    - name: Record that kubectx/kubens did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kubectx/kubens: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# ============================================================================
+# k9s - Fedora dnf (Tier 1); Ubuntu keeps the GitHub binary (Tier 3) below
+# ============================================================================
+# Fedora packages k9s natively (verified in the official repo for Fedora 43/44,
+# and 43 is our supported floor). Ubuntu has no apt package or vendor repo for
+# it, so on Ubuntu it stays a GitHub-release binary in the block below and
+# hyperi-update re-fetches it.
+- name: Install k9s (Fedora)
+  block:
+    - name: Install k9s (Fedora)
+      ansible.builtin.dnf:
+        name: k9s
+        state: present
+
+  rescue:
+    - name: Record that k9s did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['k9s: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'
+
+
+# ============================================================================
+# LINUX - GitHub-release binaries (Tier 3: hyperi-update re-fetches these)
+# ============================================================================
+# No apt/dnf repo, snap, or language manager ships these, so they come from
+# GitHub releases and hyperi-update re-pulls the latest each run. k9s is here
+# for Ubuntu only (Fedora took the dnf package above).
 - name: Install Kubernetes CLI tools via binary download (Linux)
   block:
-    # k9s
-    - name: Get latest k9s version
+    # k9s -- Ubuntu only (Fedora uses dnf, above)
+    - name: Get latest k9s version (Ubuntu)
       ansible.builtin.uri:
         url: https://api.github.com/repos/derailed/k9s/releases/latest
         return_content: true
       register: k9s_latest
       check_mode: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Download and extract k9s
+    - name: Download and extract k9s (Ubuntu)
       ansible.builtin.unarchive:
         src: "https://github.com/derailed/k9s/releases/download/{{ k9s_latest.json.tag_name }}/k9s_Linux_{{ hyperi_arch_deb }}.tar.gz"
         dest: /usr/local/bin
         remote_src: true
         include: k9s
         mode: '0755'
-      when: not ansible_check_mode
-
-    # kubectx and kubens
-    - name: Get latest kubectx version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/ahmetb/kubectx/releases/latest
-        return_content: true
-      register: kubectx_latest
-      check_mode: false
-
-    - name: Download kubectx
-      ansible.builtin.get_url:
-        url: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_latest.json.tag_name }}/kubectx"
-        dest: /usr/local/bin/kubectx
-        mode: '0755'
-
-    - name: Download kubens
-      ansible.builtin.get_url:
-        url: "https://github.com/ahmetb/kubectx/releases/download/{{ kubectx_latest.json.tag_name }}/kubens"
-        dest: /usr/local/bin/kubens
-        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not ansible_check_mode
 
     # kind, not minikube. kind runs vanilla kubeadm Kubernetes in docker, which
     # is closer to the real clusters our helm/argocd work targets; minikube is
@@ -167,6 +205,87 @@
         mode: '0755'
       when: not ansible_check_mode
 
+    # kustomize -- a monorepo: /releases/latest can point at a non-CLI component
+    # (api/, cmd/config/), so we take the newest `kustomize/vX` release and use
+    # its own asset URL (which already carries the correctly-encoded tag path).
+    - name: Get kustomize releases
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/kubernetes-sigs/kustomize/releases
+        return_content: true
+      register: kustomize_releases
+      check_mode: false
+
+    - name: Select the latest kustomize CLI asset URL
+      ansible.builtin.set_fact:
+        kustomize_asset_url: >-
+          {{ (kustomize_releases.json | selectattr('tag_name', 'match', 'kustomize/v') | list | first).assets
+             | selectattr('name', 'search', '_linux_' ~ hyperi_arch_deb ~ '.tar.gz')
+             | map(attribute='browser_download_url') | first }}
+
+    - name: Download and extract kustomize
+      ansible.builtin.unarchive:
+        src: "{{ kustomize_asset_url }}"
+        dest: /usr/local/bin
+        remote_src: true
+        include: kustomize
+        mode: '0755'
+      when: not ansible_check_mode
+
+    # kubeconform (CI parity: hyperi-ci runs it as a blocking gate). --pinned
+    # takes the CI-exact tag from group_vars; latest otherwise -- and only then
+    # do we hit the GitHub API, so a pinned install does not depend on it.
+    - name: Get latest kubeconform version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/yannh/kubeconform/releases/latest
+        return_content: true
+      register: kubeconform_latest
+      check_mode: false
+      when: not (hyperi_pinned | default(false) and 'kubeconform' in (hyperi_versions | default({})))
+
+    - name: Resolve the kubeconform tag (pinned or latest)
+      ansible.builtin.set_fact:
+        kubeconform_ref: >-
+          {{ hyperi_versions['kubeconform']
+             if (hyperi_pinned | default(false) and 'kubeconform' in (hyperi_versions | default({})))
+             else kubeconform_latest.json.tag_name }}
+
+    - name: Download and extract kubeconform
+      ansible.builtin.unarchive:
+        src: "https://github.com/yannh/kubeconform/releases/download/{{ kubeconform_ref }}/kubeconform-linux-{{ hyperi_arch_deb }}.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: kubeconform
+        mode: '0755'
+      when: not ansible_check_mode
+
+    # kube-linter (CI parity). Asset naming is uneven: amd64 has no arch suffix
+    # (kube-linter-linux.tar.gz), arm64 does (kube-linter-linux_arm64.tar.gz).
+    # --pinned takes the CI-exact tag from group_vars (see kubeconform above).
+    - name: Get latest kube-linter version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/stackrox/kube-linter/releases/latest
+        return_content: true
+      register: kube_linter_latest
+      check_mode: false
+      when: not (hyperi_pinned | default(false) and 'kube-linter' in (hyperi_versions | default({})))
+
+    - name: Resolve the kube-linter tag (pinned or latest)
+      ansible.builtin.set_fact:
+        kube_linter_ref: >-
+          {{ hyperi_versions['kube-linter']
+             if (hyperi_pinned | default(false) and 'kube-linter' in (hyperi_versions | default({})))
+             else kube_linter_latest.json.tag_name }}
+
+    - name: Download and extract kube-linter
+      ansible.builtin.unarchive:
+        src: >-
+          https://github.com/stackrox/kube-linter/releases/download/{{ kube_linter_ref }}/kube-linter-linux{{ '_arm64' if hyperi_arch_deb == 'arm64' else '' }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: kube-linter
+        mode: '0755'
+      when: not ansible_check_mode
+
   rescue:
     # One dead upstream must not cost the whole k8s toolset. See
     # docs/resilient-deploy.md.
@@ -174,76 +293,10 @@
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['Kubernetes CLI tools (k9s/kubectx/kind/argocd/dive): '
+             + ['Kubernetes CLI tools (k9s/kind/argocd/dive/kustomize/kubeconform/kube-linter): '
                 ~ (ansible_failed_result.msg | default('download failed'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-# Freelens (Kubernetes IDE) - native packages
-# Ubuntu: official APT repository (auto-updates via apt)
-# Fedora: direct .rpm from GitHub releases (no official dnf repo upstream)
-
-- name: Install Freelens (Ubuntu - official apt repo)
-  block:
-    - name: Add Freelens signing key
-      ansible.builtin.get_url:
-        url: https://raw.githubusercontent.com/freelensapp/freelens/refs/heads/main/freelens/build/apt/freelens.asc
-        dest: /etc/apt/keyrings/freelens.asc
-        mode: '0644'
-
-    - name: Add Freelens apt repository (deb822)
-      ansible.builtin.get_url:
-        url: https://raw.githubusercontent.com/freelensapp/freelens/refs/heads/main/freelens/build/apt/freelens.sources
-        dest: /etc/apt/sources.list.d/freelens.sources
-        mode: '0644'
-
-    - name: Install Freelens
-      ansible.builtin.apt:
-        name: freelens
-        state: present
-        update_cache: true
-  rescue:
-    - name: Record that Freelens did not install (Ubuntu)
-      ansible.builtin.set_fact:
-        deploy_warnings: >-
-          {{ deploy_warnings | default([])
-             + ['Freelens: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - has_gnome | default(false)
-
-- name: Install Freelens (Fedora - .rpm from GitHub releases)
-  block:
-    - name: Get latest Freelens release
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/freelensapp/freelens/releases/latest
-        return_content: true
-      register: freelens_latest
-      check_mode: false
-
-    - name: Find Freelens .rpm asset (x86_64)
-      ansible.builtin.set_fact:
-        freelens_rpm_url: "{{ item.browser_download_url }}"
-      loop: "{{ freelens_latest.json.assets }}"
-      when: item.name is search('\\.x86_64\\.rpm$')
-
-    - name: Install Freelens from .rpm
-      ansible.builtin.dnf:
-        name: "{{ freelens_rpm_url }}"
-        state: present
-        disable_gpg_check: true
-      when:
-        - freelens_rpm_url is defined
-        - not ansible_check_mode
-  rescue:
-    - name: Record that Freelens did not install (Fedora)
-      ansible.builtin.set_fact:
-        deploy_warnings: >-
-          {{ deploy_warnings | default([])
-             + ['Freelens: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
-  when:
-    - ansible_facts['distribution'] == 'Fedora'
-    - has_gnome | default(false)
 
 # ============================================================================
 # macOS - Install via Homebrew
@@ -266,9 +319,9 @@
         name: kubectx
         state: present
 
-    - name: Install minikube
+    - name: Install kind
       community.general.homebrew:
-        name: minikube
+        name: kind
         state: present
 
     - name: Install ArgoCD CLI
@@ -279,6 +332,21 @@
     - name: Install dive
       community.general.homebrew:
         name: dive
+        state: present
+
+    - name: Install kustomize
+      community.general.homebrew:
+        name: kustomize
+        state: present
+
+    - name: Install kubeconform
+      community.general.homebrew:
+        name: kubeconform
+        state: present
+
+    - name: Install kube-linter
+      community.general.homebrew:
+        name: kube-linter
         state: present
 
   become: false

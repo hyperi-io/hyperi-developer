@@ -1,0 +1,6 @@
+---
+# Meta-role: base + infrastructure come via meta/dependencies. This anchor task
+# exists so the role loads cleanly and the infra tag resolves.
+- name: infra persona
+  ansible.builtin.debug:
+    msg: "infra: developer base + infrastructure, selected via meta dependencies."

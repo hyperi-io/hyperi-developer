@@ -1,0 +1,29 @@
+---
+# Linux : Remmina + its RDP plugin, from the distro -- so the host's normal
+#         updates keep it current.
+# macOS : Thincast -- direct DMG only, no Homebrew cask, so we point at the
+#         download rather than ship an unverified binary.
+
+- name: Install Remmina + RDP plugin (Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - remmina
+      - remmina-plugin-rdp
+    state: present
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install Remmina + RDP plugin (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - remmina
+      - remmina-plugins-rdp
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Point to the Thincast RDP client download (macOS)
+  ansible.builtin.debug:
+    msg: >-
+      macOS RDP client: install Thincast from
+      https://thincast.com/en/products/client -- there is no Homebrew cask, so
+      it is a manual DMG. Skipped here rather than shipping an unverified binary.
+  when: ansible_facts['distribution'] == 'MacOSX'

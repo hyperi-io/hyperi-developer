@@ -1,0 +1,58 @@
+---
+# macOS container runtime (soe, macOS only). The developer base ships only the
+# Docker CLI (bring-your-own-daemon); HyperI Macs get a daemon by default:
+#   - colima: runs docker-ce in a small Virtualization.framework VM -- the same
+#     engine Linux runs natively. Homebrew formula (Tier 1, brew upgrade sweeps it).
+#   - Apple `container`: native per-container micro-VMs on Apple silicon. Ships
+#     ONLY as a signed .pkg on GitHub releases (no brew channel), so it is a
+#     Tier 3 re-fetch -- hyperi-update pulls the latest. Optional: warn, never abort.
+
+- name: Install colima (Docker daemon for macOS)
+  community.general.homebrew:
+    name: colima
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+
+- name: Install Apple container (native macOS containers)
+  block:
+    - name: Get the latest Apple container release
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/apple/container/releases/latest
+        return_content: true
+      register: soe_container_release
+      check_mode: false
+
+    - name: Select the container installer package (.pkg)
+      ansible.builtin.set_fact:
+        soe_container_pkg_url: >-
+          {{ soe_container_release.json.assets
+             | selectattr('name', 'search', '\.pkg$')
+             | map(attribute='browser_download_url') | first }}
+
+    - name: Download the Apple container installer
+      ansible.builtin.get_url:
+        url: "{{ soe_container_pkg_url }}"
+        dest: /tmp/apple-container.pkg
+        mode: '0644'
+      become: false
+
+    - name: Install Apple container from the signed package
+      ansible.builtin.command:
+        cmd: installer -pkg /tmp/apple-container.pkg -target /
+      become: true
+      register: soe_container_install
+      changed_when: "'successful' in (soe_container_install.stdout | lower)"
+
+    - name: Remove the downloaded installer
+      ansible.builtin.file:
+        path: /tmp/apple-container.pkg
+        state: absent
+      become: false
+
+  rescue:
+    - name: Record that Apple container did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['apple-container: ' ~ (ansible_failed_result.msg | default('download/install failed'))] }}
