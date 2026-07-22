@@ -29,8 +29,6 @@ docker_repo_base_url: "https://download.docker.com/linux"
 docker_distro_name: "{{ ansible_facts['distribution'] | lower }}"
 docker_gpg_url: "{{ docker_repo_base_url }}/{{ docker_distro_name }}/gpg"
 docker_repo_url: "{{ docker_repo_base_url }}/{{ docker_distro_name }}"
-docker_desktop_url_ubuntu: "https://desktop.docker.com/linux/main/amd64/docker-desktop-amd64.deb"
-docker_desktop_url_fedora: "https://desktop.docker.com/linux/main/amd64/docker-desktop-x86_64.rpm"
 # Docker's apt repo is per-arch, and it publishes arm64. Hardcoding amd64 here
 # pinned the repo to the wrong architecture on every arm64 box. Falls back to
 # amd64 only if the playbook-level fact is somehow absent (it is set in

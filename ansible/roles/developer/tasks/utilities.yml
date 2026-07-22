@@ -52,7 +52,6 @@
       - git-delta             # git diff pager. NOT `delta` -- on Ubuntu that
                               # name belongs to an ancient binary-diff tool
       - moreutils             # sponge, ts, vipe, chronic
-      - lazygit               # git TUI
       - miller                # data processing (mlr command)
       - rsync
       - tmux
@@ -126,7 +125,7 @@
     - name: Record that yq did not install
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately not
       # role-prefixed: it is the shared accumulator playbooks/main.yml reports
-      # from. See docs/RESILIENT-DEPLOY.md.
+      # from. See docs/resilient-deploy.md.
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
@@ -169,13 +168,53 @@
     - name: Record that sd did not install
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately not
       # role-prefixed: it is the shared accumulator playbooks/main.yml reports
-      # from. See docs/RESILIENT-DEPLOY.md.
+      # from. See docs/resilient-deploy.md.
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
              + ['sd: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
   when: ansible_facts['distribution'] == 'Fedora'
+
+# lazygit - git TUI. Not in the Ubuntu apt repos, and not in the default Fedora
+# set, so install the GitHub release binary on both Linux distros (macOS gets it
+# from brew above). Asset is lazygit_<ver>_linux_<arch>.tar.gz with the binary
+# at the archive root; the tag carries a leading v the filename drops, and the
+# arch token is x86_64/arm64 (cf. dive's v-strip, act's arch mix).
+- name: Install lazygit (Linux binary)
+  block:
+    - name: Get latest lazygit version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/jesseduffield/lazygit/releases/latest
+        return_content: true
+      register: lazygit_release
+      check_mode: false
+
+    - name: Set the lazygit asset facts
+      ansible.builtin.set_fact:
+        lazygit_version: "{{ lazygit_release.json.tag_name | regex_replace('^v', '') }}"
+        lazygit_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
+        lazygit_base: https://github.com/jesseduffield/lazygit/releases/download
+
+    - name: Download and extract lazygit
+      ansible.builtin.unarchive:
+        src: "{{ lazygit_base }}/{{ lazygit_release.json.tag_name }}/lazygit_{{ lazygit_version }}_linux_{{ lazygit_arch }}.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        include: lazygit
+        mode: '0755'
+      when: not ansible_check_mode
+
+  rescue:
+    - name: Record that lazygit did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator playbooks/main.yml reports from. See docs/resilient-deploy.md.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['lazygit: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
 # GUI UTILITIES (requires GNOME desktop)

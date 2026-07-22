@@ -106,43 +106,6 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
   failed_when: false
 
-# Legacy network tools: telnet is a plaintext relic (nc/curl cover it),
-# net-tools ships deprecated ifconfig/netstat superseded by iproute2, and
-# nmap/whois/traceroute/tree/httpie are rarely used on a dev box (curl covers
-# httpie; fd covers tree).
-#
-# NOTE `tree` is not standalone: `pass` depends on it, and docker-desktop
-# depends on `pass`. Removing tree therefore cascades to both. That is fine
-# here (both are going anyway) but it is why removals get dry-run against a
-# real host before they ship.
-- name: Remove retired CLI utilities (Fedora)
-  ansible.builtin.dnf:
-    name:
-      - telnet
-      - net-tools
-      - nmap
-      - whois
-      - traceroute
-      - tree
-      - httpie
-    state: absent
-  when: ansible_facts['distribution'] == 'Fedora'
-  failed_when: false
-
-- name: Remove retired CLI utilities (Ubuntu)
-  ansible.builtin.apt:
-    name:
-      - telnet
-      - net-tools
-      - nmap
-      - whois
-      - traceroute
-      - tree
-      - httpie
-    state: absent
-  when: ansible_facts['distribution'] == 'Ubuntu'
-  failed_when: false
-
 # Binaries older versions dropped in /usr/local/bin and no longer install.
 # All root-owned with no update path, so they linger indefinitely.
 # Verified still present on a real long-lived host 2026-07-17: bw, linear.
@@ -174,7 +137,11 @@
 #   telnet, nmap        no business on a default developer box
 #   net-tools           superseded by iproute2 (ss, ip) for ~15 years
 #   traceroute, whois   niche; install them when you need them
-#   tree                superseded by eza/fd
+#   tree                superseded by eza/fd. NOT standalone: `pass` depends on
+#                       it and docker-desktop depends on `pass`, so removing
+#                       tree cascades to both (fine here -- both are going
+#                       anyway; it is why removals are dry-run against a real
+#                       host first).
 #   httpie              superseded by curl for our uses
 #
 # NOT purged, only removed: `purge` would also delete config a developer may

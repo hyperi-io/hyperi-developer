@@ -34,27 +34,25 @@ git checkout -b fix/issue-description
 ### 3. Make Your Changes
 
 - Follow the KISS principle (Keep It Simple, Stupid)
-- Use existing code style and conventions
-- Run scripts as regular user with per-command sudo
-- Test on a clean Fedora 42 system if possible
+- Match the existing code style and conventions in the file you are editing
+- Ansible tasks must be idempotent - run twice and the second run is all green
+- Run the playbook as a regular user with per-command sudo
 - Update documentation as needed
 
 ### 4. Test Your Changes
 
+This project is Ansible-first. From `ansible/`:
+
 ```bash
-cd fedora/tests
+# Lint + syntax (required)
+ansible-lint
+ansible-playbook --syntax-check playbooks/main.yml -i inventories/localhost/inventory.yml
 
-# Static analysis (required)
-./01-shellcheck.sh
+# Shell scripts (required if you touched any)
+shellcheck ../install.sh
 
-# Syntax validation
-bats 02-syntax.bats
-
-# Unit tests
-bats 03-lib-functions.bats
-
-# Container tests (optional)
-bats 04-container.bats
+# Container matrix - clean install on Ubuntu + Fedora, current and n-1 (no hosts needed)
+molecule test -s matrix
 ```
 
 ### 5. Commit Your Changes
@@ -89,20 +87,21 @@ Then create a PR via GitHub UI targeting the `main` branch.
 
 ### Shell Script Guidelines
 
-- **Shebang**: Always use `#!/bin/bash`
-- **Error Handling**: Scripts must source lib.sh and use centralized error handling
-- **Execution**: Run as regular user, use sudo only when needed
-- **Idempotency**: Scripts must be safe to run multiple times
-- **Library Functions**: Use lib.sh functions for consistency
-  - `print_info()` - Informational messages
-  - `print_error()` - Error messages
-  - `print_warning()` - Warning messages
-  - `print_success()` - Success messages
+- **Shebang**: `#!/bin/bash`, with `set -euo pipefail` at the top
+- **Portability**: the bootstrap `install.sh` must run on macOS's Bash 3.2 (it
+  runs before any newer bash is installed) - no Bash 4+ features there
+- **Error Handling**: check command results and clean up temp files on exit (trap)
+- **Execution**: run as a regular user, use sudo only when needed
+- **Idempotency**: safe to run multiple times
+- **Output helpers**: each script defines its own `print_info` / `print_error` /
+  `print_warning` / `print_success` (see `install.sh`) - there is no shared `lib.sh`
+- **shellcheck clean**: silence a genuine false positive with a scoped
+  `# shellcheck disable=` plus a reason, never blanket-disable
 
 ### Code Style
 
 ```bash
-# Good - uses lib.sh functions
+# Good - uses the script's print helpers
 print_info "Installing package..."
 sudo dnf install -y package-name
 
@@ -178,9 +177,10 @@ All scripts must have a standardized header:
 
 ### Before Submitting
 
-- [ ] All tests pass (ShellCheck and BATS)
+- [ ] ansible-lint + `--syntax-check` clean, shellcheck clean on any shell touched
+- [ ] molecule matrix passes for playbook changes
 - [ ] Code follows project style guidelines
-- [ ] Documentation updated (README.md, docs/ROLE-TASK-MAPPING.md)
+- [ ] Documentation updated (README.md)
 - [ ] CHANGELOG.md updated if applicable
 - [ ] Commit messages follow conventional format
 - [ ] No merge conflicts with main branch
@@ -231,134 +231,66 @@ git rebase upstream/main
 5. Test frequently
 6. Commit with clear messages
 
-### Working with lib.sh
+### Adding or changing an Ansible role
 
-When adding functions to lib.sh:
-
-1. Add function in appropriate section
-2. Include error handling
-3. Add BATS unit test in `tests/03-lib-functions.bats`
-4. Document the function in the role README
-
-Example:
-
-```bash
-# In lib.sh
-my_new_function() {
-    local param="$1"
-    if [ -z "$param" ]; then
-        print_error "Parameter required"
-        return 1
-    fi
-    # function logic
-    return 0
-}
-
-# In tests/03-lib-functions.bats
-@test "my_new_function works correctly" {
-    run my_new_function "test"
-    [ "$status" -eq 0 ]
-}
-```
+1. Put the task in the right role: generic dev tooling in `developer` (or a
+   `developer-<lang>` / `developer-gui` sibling), IaC/cloud in `infrastructure`,
+   HyperI-only policy in `soe` / `soe-gui`, the CI toolchain in `contributor`.
+2. Tag it so it can be selected on its own (`./install.sh --list-apps` lists every tag).
+3. Make it idempotent, and guard by platform with
+   `when: ansible_facts['distribution'] == ...`.
+4. If you DROP a tool, add a tombstone in `developer/tasks/removals.yml` in the
+   same change - Ansible cannot prune what you stop declaring.
+5. For an optional upstream download, wrap it in `block:`/`rescue:` that records
+   into `deploy_warnings`, so one dead upstream does not abort the whole run
+   (see `docs/resilient-deploy.md`).
 
 ## Testing
 
-### Required Tests
+The test suite needs no HyperI infrastructure. Run everything from `ansible/`.
 
-All contributions must pass:
+### Required
 
-1. **ShellCheck**: Static analysis
+1. **Lint + syntax**
    ```bash
-   cd fedora/tests
-   ./01-shellcheck.sh
+   ansible-lint
+   ansible-playbook --syntax-check playbooks/main.yml -i inventories/localhost/inventory.yml
    ```
 
-2. **Syntax Tests**: Bash syntax validation
+2. **shellcheck** on any shell script you changed
    ```bash
-   bats 02-syntax.bats
+   shellcheck ../install.sh
    ```
 
-3. **Unit Tests**: lib.sh function tests
+3. **Container matrix** - a clean install on Ubuntu + Fedora, current and n-1,
+   in Docker (no VMs, no cloud):
    ```bash
-   bats 03-lib-functions.bats
+   molecule test -s matrix
    ```
+   Other scenarios: `existing-host` (convergence on a long-lived box) and
+   `remediation` (an old host converges to current).
 
-### Optional Tests
+### Optional
 
-4. **Container Tests**: Integration tests
-   ```bash
-   bats 04-container.bats
-   ```
+- **The self-updater**, across the same container matrix:
+  ```bash
+  tests/update/test-hyperi-update.sh
+  ```
+- **A real VM**: `tests/proxmox/` resets Fedora/Ubuntu VMs from a snapshot and
+  runs the playbook. Every host and secret is read from `.env` via
+  `lookup('env', ...)` - copy `tests/.env.sample` to `tests/.env` and fill it
+  in. Nothing internal is ever committed.
 
-### Test Coverage
+### Manual testing
 
-- New functions must have corresponding unit tests
-- Changes to existing functions require test updates
-- Integration tests for installer scripts
-
-### Manual Testing
-
-**Test Systems:**
-
-For HyperI staff, test systems are available internally. Everyone else: point
-the test tooling at your own hosts via the environment (see
-`ansible/inventories/dev/inventory.yml` and `ansible/tests/.env.sample`), or use
-the container matrix, which needs no hosts at all:
+Run the playbook straight on a throwaway machine or VM:
 
 ```bash
-molecule test -s matrix                    # clean install, Ubuntu + Fedora, n and n-1
-ansible/tests/update/test-hyperi-update.sh # hyperi-update across the same matrix
+./install.sh --check     # dry run first
+./install.sh             # the default lightweight base
 ```
 
-**Fedora (clean VM):**
-```bash
-# Reset Fedora test VM (fast - uses snapshot)
-# Contact maintainers for test system access
-
-# Test playbook:
-ansible-playbook -i tests/fedora/inventory.yml playbooks/main.yml
-```
-
-**Ubuntu (clean VM):**
-```bash
-# Reset Ubuntu test VM (fast - uses snapshot)
-# Contact maintainers for test system access
-
-# Test playbook:
-ansible-playbook -i tests/ubuntu/inventory.yml playbooks/main.yml
-```
-
-**macOS (clean system):**
-```bash
-# ⚠️ WARNING: Mac mini provisioning takes 20-30 minutes!
-# Only reset when absolutely necessary (major changes, broken state)
-# Use sparingly to avoid unnecessary costs and time
-# Contact maintainers for test system access
-
-# Reset Mac mini test system (SLOW - full OS install)
-cd ansible
-ansible-playbook -i tests/mac/inventory_scaleway.yml tests/provision_scaleway_mac.yml
-
-# Test playbook:
-ansible-playbook -i tests/mac/inventory_scaleway.yml playbooks/main.yml
-```
-
-**Legacy Fedora Shell Scripts:**
-```bash
-cd fedora
-
-# Standard installation
-./install-hyperi-developer.sh
-
-# Core developer tools
-./install-hyperi-developer-core.sh
-
-# VM optimizations
-./install-vm-optimizer.sh
-
-# RDP optimizations
-./install-rdp-optimizer.sh
-```
+macOS is tested by running `./install.sh` on the Mac itself.
 
 ## Reporting Issues
 
@@ -416,7 +348,7 @@ Report issues to project maintainers via GitHub Issues.
 
 ## Additional Resources
 
-- [docs/ROLE-TASK-MAPPING.md](docs/ROLE-TASK-MAPPING.md) - Role and tag taxonomy
+- `./install.sh --list-apps` - the full role and tag list
 - [README.md](README.md) - Project overview and quick start
 - [CHANGELOG.md](CHANGELOG.md) - Version history
 - [LICENSE](LICENSE) - Apache License 2.0 text
@@ -424,7 +356,7 @@ Report issues to project maintainers via GitHub Issues.
 ## Questions?
 
 - Open a GitHub Issue for questions
-- Check [docs/ROLE-TASK-MAPPING.md](docs/ROLE-TASK-MAPPING.md) for the role and tag taxonomy
+- Run `./install.sh --list-apps` for the role and tag list
 - Review existing PRs for examples
 
 Thank you for contributing to Hyperi Developer Environment!

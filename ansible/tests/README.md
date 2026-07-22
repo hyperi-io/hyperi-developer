@@ -1,6 +1,7 @@
 # Test Infrastructure
 
-Automated testing on Proxmox (Fedora/Ubuntu) and Scaleway (macOS).
+Automated testing on Proxmox (Fedora/Ubuntu). macOS is tested directly on a
+local Mac (run `./install.sh` on the machine itself).
 
 ## Setup
 
@@ -9,32 +10,9 @@ Automated testing on Proxmox (Fedora/Ubuntu) and Scaleway (macOS).
    cp .env.sample .env
    ```
 
-2. Edit `.env` with your credentials:
-   - Scaleway API keys (for macOS testing)
-   - Proxmox server details (for Fedora/Ubuntu testing)
+2. Edit `.env` with your Proxmox server details.
 
 3. **NEVER commit `.env`** - it's gitignored and contains secrets!
-
-## Manual Scaleway CLI Testing
-
-The Scaleway CLI is installed on this machine for manual operations:
-
-```bash
-# Scaleway CLI is installed at /usr/local/bin/scw
-# No venv needed - it's a standalone binary
-
-# List Mac minis
-scw apple-silicon server list zone=fr-par-3
-
-# Get server details
-scw apple-silicon server get <server-id> zone=fr-par-3
-
-# Delete server
-scw apple-silicon server delete <server-id> zone=fr-par-3
-
-# List serverless functions
-scw function function list region=fr-par
-```
 
 ## Usage
 
@@ -44,42 +22,30 @@ scw function function list region=fr-par
 # Reset VMs to clean snapshots and generate inventory
 ansible-playbook tests/proxmox/provision.yml
 
-# Run all 4 comprehensive tests (Ansible + install.sh on both VMs)
+# Run all comprehensive tests (Ansible + install.sh on both VMs)
 ansible-playbook tests/proxmox/test_all.yml
 
 # Or run deployment tests directly
 ansible-playbook -i tests/proxmox/inventory_proxmox.yml playbooks/main.yml
 ```
 
-### Scaleway Tests (macOS)
+### macOS
+
+Run the playbook on the Mac itself:
 
 ```bash
-# One-time: Deploy serverless auto-cleanup function (optional)
-# First, enable in .env: DEPLOY_SCALEWAY_IDLE_FUNCTION=true
-ansible-playbook tests/mac/serverless/deploy_function.yml
-
-# Provision Mac mini (creates or reuses existing)
-ansible-playbook tests/mac/provision.yml
-
-# Run deployment tests
-ansible-playbook -i tests/mac/inventory_scaleway.yml playbooks/main.yml
-
-# Cleanup (delete Mac mini)
-ansible-playbook tests/mac/cleanup.yml
+./install.sh              # or a specific tag set, e.g. ./install.sh --soe
 ```
 
 ## Cost Management
 
-- **Proxmox**: Free (local VMs), instant reset via snapshots
-- **Scaleway Mac mini**: ~$1/hour
-  - Auto-deletes after 24h of IDLE (CPU <5%, low network)
-  - Requires serverless function (one-time setup, ~$0.40/month)
-  - Always cleanup when done!
+- **Proxmox**: Free (local VMs), instant reset via snapshots.
 
 ## Security
 
-- `.env` file contains sensitive credentials
-- All `.env` files are gitignored (root and ansible/tests/)
-- Use `.env.sample` as template only
-- Never hardcode credentials in playbooks
-- Scaleway CLI venv available for manual operations
+- `.env` contains sensitive credentials and is gitignored (root and
+  `ansible/tests/`).
+- Use `.env.sample` as a template only.
+- Never hardcode credentials in playbooks or committed inventories - the
+  playbooks read every host and secret from the environment via
+  `lookup('env', ...)`, so the repo leaks no infra topology.

@@ -6,7 +6,7 @@
 # present and did nothing before; presence is not function.
 #
 # semgrep, alint and osv-scanner are checked but do NOT fail the run: they are
-# optional (see docs/RESILIENT-DEPLOY.md), their installs already record a
+# optional (see docs/resilient-deploy.md), their installs already record a
 # warning if they fail, and failing here would just report the same thing twice
 # and abort. gitleaks IS blocking for `hyperi-ci check`, so it fails.
 

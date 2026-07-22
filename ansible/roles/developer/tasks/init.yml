@@ -53,6 +53,7 @@
     dest: /tmp/askpass.sh
     mode: '0700'
   become: false
+  no_log: true        # the file holds the sudo password -- keep it out of -v/--diff output
   when:
     - ansible_facts['distribution'] == 'MacOSX'
     - ansible_become_password is defined

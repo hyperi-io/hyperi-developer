@@ -182,7 +182,7 @@
   ansible.builtin.debug:
     msg: |
       ✅ Base Developer Tools Verified:
-      - Docker Desktop: Installed (launch manually for CLI access)
+      - Docker CLI: Installed (bring your own daemon -- colima/orbstack/podman)
       - kubectl: {{ verify_kubectl.stdout | regex_search('v[0-9.]+') }}
       - Helm: {{ verify_helm.stdout }}
       - OpenTofu: {{ verify_tofu.stdout_lines[0] }}

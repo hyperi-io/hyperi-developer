@@ -2,7 +2,7 @@
 # Developer Role — Generic CLI dev base (anyone)
 # Lightweight, low disruption to existing environment. No HyperI-specific
 # opinions. GUI tooling lives in developer-gui; languages in developer-<lang>;
-# IaC in infrastructure; org-specific in corporate / corporate-gui.
+# IaC in infrastructure; org-specific in soe / soe-gui.
 
 - name: Initialize - Setup common variables
   ansible.builtin.include_tasks:

@@ -18,6 +18,13 @@
         name: act-cli
         state: present
 
+  rescue:
+    - name: Record that act did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['act: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
   when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
@@ -74,6 +81,13 @@
         - /tmp/act
         - /tmp/LICENSE
         - /tmp/README.md
+
+  rescue:
+    - name: Record that act did not install (Ubuntu)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['act: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 

@@ -9,15 +9,15 @@
 
 Standardised modern auto-updating developer environment with opt-in HyperI-specific sections.
 
-Anyone — HyperI staff, contractors, or external developers — can use it as a clean generic dev base, then opt into language-specific tooling (Rust, Python, Go, C, Node, TypeScript), infrastructure-as-code tools, GUI editors, or HyperI's org-specific stack. The default install is lightweight and won't impose HyperI policies on your environment.
+Anyone - HyperI staff, contractors, or external developers - can use it as a clean generic dev base, then opt into language-specific tooling (Rust, Python, Go, C, Node, TypeScript), infrastructure-as-code tools, GUI editors, or HyperI's org-specific stack. The default install is lightweight and does not impose HyperI policies on your environment.
 
 ## Platform Support
 
 | Platform | Status | Notes |
 |----------|--------|-------|
-| **Ubuntu 24.04** | Fully tested | Primary platform |
-| **Fedora 42** | Fully tested | GNOME 48 compatible |
-| **macOS Sequoia** | Fully tested | Homebrew-based |
+| **Ubuntu 24.04+** | Fully tested | Primary platform |
+| **Fedora 43+** | Fully tested | GNOME desktop |
+| **macOS** | Fully tested | Homebrew-based |
 | **Windows 11** | Productivity host | Hyper-V for Linux VMs |
 
 ## Quick Start
@@ -26,75 +26,85 @@ Anyone — HyperI staff, contractors, or external developers — can use it as a
 git clone https://github.com/hyperi-io/hyperi-developer
 cd hyperi-developer
 
-# Base install (Docker, Git, K8s tools, VS Code, Chrome)
+# Default: lightweight generic CLI dev base (git, docker, shell utilities)
 ./install.sh
 
-# Full install with everything
-./install.sh --all
+# Opt into more via tags - GUI editors, a language, IaC tools, etc.
+./install.sh --tags developer-gui,developer-rust,infrastructure
 
-# Check what would change first
+# Check what would change first (dry run)
 ./install.sh --check
 ```
 
-The installer detects your OS and installs the right packages. Run `./install.sh --help` for all options.
+The installer detects your OS and installs the right packages. Nothing
+HyperI-specific is installed unless you ask for it. Run `./install.sh --help`
+for all options and `./install.sh --list-apps` for every per-app tag.
 
 ### Installation Options
 
-```bash
-# Windows-style taskbar (Dash to Panel)
-./install.sh --tags developer,base,winlike
+Pick your entry point by who you are:
 
-# macOS-style dock
-./install.sh --tags developer,base,maclike
-
-# Core tools (Azure CLI, Node.js, OpenVPN, Claude Code)
-./install.sh --core
-
-# Full install without wallpaper
-./install.sh --all --tags-exclude wallpaper
+```mermaid
+flowchart TD
+    q{Who are you?}
+    q -->|Just want a dev box| base["./install.sh<br/>lightweight CLI base"]
+    q -->|Contributing to a HyperI product| contrib["./install.sh --contributor<br/>base + the CI toolchain"]
+    q -->|HyperI staff| soe["./install.sh --soe<br/>+ org policy + GUI"]
+    q -->|You know the tags you want| tags["./install.sh --tags ...<br/>compose it yourself"]
 ```
 
-### Available Tags
+```bash
+# Outside contributor working on a HyperI product:
+# generic dev base + the toolchain our CI runs, no HyperI org policy
+./install.sh --contributor
+
+# HyperI staff workstation: dev base + CI toolchain + org policy + GUI
+./install.sh --soe
+
+# Compose tags yourself (GUI editors + Rust + IaC tools):
+./install.sh --tags developer-gui,developer-rust,infrastructure
+
+# Just one app:
+./install.sh --tags slack
+```
+
+### Common Tags
+
+`--list-apps` prints every per-app tag. Some of the common ones:
 
 | Tag | Description |
 |-----|-------------|
-| `winlike` | Windows-style taskbar with transparent panel |
-| `maclike` | macOS-style dock (overrides winlike if both specified) |
-| `core` | Azure CLI, Node.js, OpenVPN, Claude Code, Gitleaks |
+| `developer` | Generic CLI dev base (the default: git, docker, shell utilities) |
+| `developer-gui` | VS Code, Ghostty, DBeaver |
+| `developer-rust` / `-go` / `-python` / `-node` / `-typescript` / `-c` | Language toolchains |
+| `infrastructure` | OpenTofu, OpenBao, AWS CLI, and under `k8s`: kubectl, helm, k9s, kind, argocd |
+| `contributor` | hyperi-ci + its check tools (semgrep, alint, osv-scanner), gitleaks, act |
+| `soe` / `soe-gui` | HyperI org policy (opt-in) |
+| `winlike` / `maclike` | GNOME taskbar (winlike) or dock (maclike), winlike wins if both |
 | `rdp` | GNOME Remote Desktop on port 3389 |
-| `vm` | VM guest optimizations (QEMU/SPICE agents) |
-| `ghostty` | Ghostty terminal (included by default) |
-| `wallpaper` | Custom wallpaper (included by default) |
+| `vm` | VM guest optimisations (QEMU/SPICE agents) |
 
 ## What Gets Installed
 
-**Base install** (`./install.sh`):
+**Default** (`./install.sh`) - a lightweight generic CLI dev base, nothing HyperI-specific:
 
-- Docker CE + Docker Desktop
+- Docker (Engine on Linux, CLI-only via Homebrew on macOS, no Docker Desktop, bring your own daemon)
 - Git, GitHub CLI, Git LFS
-- kubectl, k9s, kubectx, minikube, ArgoCD, dive, Freelens
-- AWS CLI, Helm, OpenTofu, OpenBao
-- UV (Python manager)
-- VS Code, Chrome
-- Ghostty terminal (Solarized theme)
-- Development utilities (jq, yq, bat, fzf, ripgrep, htop)
+- CLI utilities: jq, gron, bat, fzf, ripgrep, fd, sd, git-delta, lazygit, moreutils, miller, tmux, htop, age, ...
 
-**Core tools** (`./install.sh --core`):
+**Opt-in, via tags:**
 
-- Azure CLI
-- Node.js, semantic-release
-- OpenVPN 3, Claude Code CLI
-- Slack, Gitleaks, act (GitHub Actions runner)
+- `developer-gui`: VS Code, Ghostty (Solarized theme), DBeaver
+- Languages: Rust, uv (Python), Go, C/C++, Node.js, TypeScript
+- `infrastructure`: OpenTofu + OpenBao (the OSS forks, no HashiCorp BUSL tools), AWS CLI v2. Under `k8s`: kubectl + helm + k9s + kind + argocd + dive, and Freelens on a GNOME desktop
+- `contributor`: hyperi-ci and the tools its checks drive (semgrep, alint, osv-scanner), gitleaks, act
+- `soe` / `soe-gui`: HyperI org policy: OpenVPN, Claude Code, Slack, telemetry-disable, auto-updates, GNOME taskbar
 
-**Desktop** (`winlike` or `maclike` tag):
-
-- GNOME extensions from extensions.gnome.org
-- Transparent taskbar (winlike) or dock (maclike)
-- Custom wallpaper
+**Desktop UI** (`winlike` or `maclike` tag): GNOME extensions, a transparent taskbar (winlike) or a dock (maclike).
 
 ## Requirements
 
-- **Ubuntu 24.04+**, **Fedora 42+**, or **macOS Sequoia**
+- **Ubuntu 24.04+**, **Fedora 43+**, or **macOS**
 - 8GB RAM recommended
 - 20GB disk space
 - Internet connection
@@ -108,7 +118,6 @@ The installer detects your OS and installs the right packages. Run `./install.sh
 - `docs/` - Documentation and guides
 - `VERSION` - Version tracking
 - `CHANGELOG.md` - Release history
-- `TODO.md` - Task tracking
 
 ## Developer Utilities
 

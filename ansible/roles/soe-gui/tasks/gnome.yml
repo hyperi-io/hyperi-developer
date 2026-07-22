@@ -20,7 +20,7 @@
 # DETERMINE UI MODE FROM EXPLICITLY REQUESTED TAGS
 # ============================================================================
 # SSoT for mode selection. This file is only included when winlike or maclike
-# is in ansible_run_tags (see the include guard in corporate-gui/tasks/main.yml),
+# is in ansible_run_tags (see the include guard in soe-gui/tasks/main.yml),
 # so here we just pick the mode: maclike wins if requested, otherwise winlike
 # (the documented default). We deliberately key off ansible_run_tags rather than
 # per-task tag selection: role-level tags are inherited by every task and would

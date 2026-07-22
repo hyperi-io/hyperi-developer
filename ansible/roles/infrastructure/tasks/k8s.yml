@@ -169,7 +169,7 @@
 
   rescue:
     # One dead upstream must not cost the whole k8s toolset. See
-    # docs/RESILIENT-DEPLOY.md.
+    # docs/resilient-deploy.md.
     - name: Record that a Kubernetes CLI tool did not install
       ansible.builtin.set_fact:
         deploy_warnings: >-
@@ -202,6 +202,12 @@
         name: freelens
         state: present
         update_cache: true
+  rescue:
+    - name: Record that Freelens did not install (Ubuntu)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Freelens: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
     - has_gnome | default(false)
@@ -229,6 +235,12 @@
       when:
         - freelens_rpm_url is defined
         - not ansible_check_mode
+  rescue:
+    - name: Record that Freelens did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Freelens: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
   when:
     - ansible_facts['distribution'] == 'Fedora'
     - has_gnome | default(false)

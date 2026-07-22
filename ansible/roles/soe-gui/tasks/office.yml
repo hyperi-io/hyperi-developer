@@ -3,7 +3,7 @@
 # macOS users use native apps (Pages/Numbers/Keynote)
 #
 # Strategy: Prefer apt/dnf packages (faster, native), only use Flatpak as fallback
-# - If apt/dnf package exists: use it (developer/tasks/onlyoffice.yml handles this)
+# - If apt/dnf package exists: use it (soe-gui/tasks/onlyoffice.yml handles this)
 # - If no apt/dnf package: install via Flatpak
 # This avoids duplicate icons in app menus
 
@@ -54,7 +54,10 @@
     - application/vnd.oasis.opendocument.presentation
   become: true
   become_user: "{{ actual_user }}"
-  changed_when: true
+  # xdg-mime default is quiet and idempotent, so we cannot detect a real change
+  # from its output; report unchanged rather than always-changed. failed_when is
+  # false because a missing mime association is cosmetic, not run-fatal.
+  changed_when: false
   failed_when: false
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

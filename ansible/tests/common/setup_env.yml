@@ -2,20 +2,11 @@
 # CRUD operations for .env file
 # Creates .env from .env.sample if missing, updates variables, reads existing
 
-- name: Determine tests directory based on current location
-  ansible.builtin.set_fact:
-    tests_dir: "{{ playbook_dir | regex_replace('/[^/]+/[^/]+$', '') }}"
-  when: "'serverless' in playbook_dir"
-
-- name: Determine tests directory (from mac or proxmox)
+# Proxmox playbooks live one level down (tests/proxmox/*.yml); the shared .env
+# and .env.sample live at tests/. Strip the last path segment to find them.
+- name: Determine tests directory
   ansible.builtin.set_fact:
     tests_dir: "{{ playbook_dir | regex_replace('/[^/]+$', '') }}"
-  when: ("'mac' in playbook_dir or 'proxmox' in playbook_dir") and tests_dir is not defined
-
-- name: Determine tests directory (default)
-  ansible.builtin.set_fact:
-    tests_dir: "{{ playbook_dir }}"
-  when: tests_dir is not defined
 
 - name: Check if .env exists
   ansible.builtin.stat:
@@ -35,7 +26,6 @@
       .env file created from template!
       Please edit ansible/tests/.env with your credentials:
       - Proxmox: PROXMOX_HOST, PROXMOX_USER, PROXMOX_PASSWORD
-      - Scaleway: SCALEWAY_ACCESS_KEY_ID, SCALEWAY_ACCESS_KEY_SECRET
 
       Press Enter when done editing...
   when: not env_file_stat.stat.exists
@@ -45,7 +35,7 @@
     set -a
     source "{{ tests_dir }}/.env"
     set +a
-    env | grep -E '^(SCALEWAY|PROXMOX|DEPLOY|ANSIBLE)_' | jq -R 'split("=") | {(.[0]): .[1:] | join("=")}' | jq -s 'add'
+    env | grep -E '^(PROXMOX|ANSIBLE)_' | jq -R 'split("=") | {(.[0]): .[1:] | join("=")}' | jq -s 'add'
   register: env_raw
   changed_when: false
 

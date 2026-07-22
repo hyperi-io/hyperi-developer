@@ -100,23 +100,41 @@
         - /tmp/awscliv2.zip
         - /tmp/aws
 
+  rescue:
+    - name: Record that AWS CLI v2 did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['AWS CLI v2: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
 # AWS SESSION MANAGER PLUGIN (for aws ssm start-session)
 # ============================================================================
 
-- name: Install Session Manager Plugin (Fedora)
-  ansible.builtin.dnf:
-    name: https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm
-    state: present
-    disable_gpg_check: true
-  when: ansible_facts['distribution'] == 'Fedora'
+- name: Install AWS Session Manager Plugin (Linux)
+  block:
+    - name: Install Session Manager Plugin (Fedora)
+      ansible.builtin.dnf:
+        name: https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm
+        state: present
+        disable_gpg_check: true
+      when: ansible_facts['distribution'] == 'Fedora'
 
-- name: Install Session Manager Plugin (Ubuntu)
-  ansible.builtin.apt:
-    deb: https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    - name: Install Session Manager Plugin (Ubuntu)
+      ansible.builtin.apt:
+        deb: https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+  rescue:
+    - name: Record that the Session Manager Plugin did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Session Manager Plugin: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
 # AWS-VAULT (secure credential storage in OS keychain)
@@ -208,6 +226,13 @@
       failed_when: false
       changed_when: false
 
+  rescue:
+    - name: Record that Helm did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Helm: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
@@ -276,6 +301,13 @@
       ansible.builtin.file:
         path: "/tmp/openbao_{{ openbao_version }}_{{ openbao_deb_arch }}.deb"
         state: absent
+
+  rescue:
+    - name: Record that OpenBao did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['OpenBao: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 

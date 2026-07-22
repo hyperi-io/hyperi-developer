@@ -76,6 +76,11 @@ TODO.md
 ansible/tests/.env
 **/.env
 
+# Generated test inventories are rendered from .env at runtime and can hold real
+# hostnames/credentials -- never commit them (a committed inventory_scaleway.yml
+# is exactly how a live credential once leaked).
+ansible/tests/**/inventory_*.yml
+
 # Local environment files (never commit -- contain secrets)
 .env.*
 !.env.example
@@ -93,6 +98,10 @@ ansible/tests/.env
 docs/superpowers/
 .mcp.json
 .ai-version
+
+# Plans are local by default; only docs/plans/shared/ is committed by choice.
+/docs/plans/*
+!/docs/plans/shared/
 
 # hyperi-ai per-project context + tool-specific equivalents.
 # Real files in project tree (Claude Code / Codex / Gemini / Cursor
