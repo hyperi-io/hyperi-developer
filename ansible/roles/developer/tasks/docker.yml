@@ -60,17 +60,18 @@
 # Linux — remove conflicting packages
 # ============================================================================
 
-- name: Remove Podman (conflicts with Docker on Fedora)
+# Only podman-docker must go: its /usr/bin/docker wrapper file-conflicts with
+# Docker CE's CLI, so docker-ce-cli cannot install alongside it. We do NOT
+# remove podman/buildah/skopeo/toolbox -- they coexist with Docker, and
+# uninstalling a Fedora user's default container stack is not the base's job.
+# (HyperI machines that want them gone use --tags removals.)
+- name: Remove podman-docker (its /usr/bin/docker wrapper conflicts with Docker CE)
   ansible.builtin.dnf:
     name:
-      - podman
       - podman-docker
-      - buildah
-      - skopeo
-      - toolbox
     state: absent
   when: ansible_facts['distribution'] == 'Fedora'
-  failed_when: false  # OK if packages don't exist
+  failed_when: false  # OK if the package is not present
 
 # ============================================================================
 # Linux — install Docker Engine (CLI + daemon + buildx + compose)

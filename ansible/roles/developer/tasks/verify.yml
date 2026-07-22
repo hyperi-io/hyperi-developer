@@ -41,31 +41,10 @@
 
 # Docker group membership requires logout/reboot - skip verification
 
-# Kubernetes tools
-- name: Verify kubectl
-  ansible.builtin.command: kubectl version --client
-  register: verify_kubectl
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_kubectl.rc != 0
-
-- name: Verify Helm
-  ansible.builtin.command: helm version --short
-  register: verify_helm
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_helm.rc != 0
-
-# OpenTofu, not Terraform -- see infrastructure/tasks/cloud.yml for why.
-- name: Verify OpenTofu
-  ansible.builtin.command: tofu version
-  register: verify_tofu
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_tofu.rc != 0
+# kubectl/helm/tofu/uv/aws are NOT verified here: the base `developer` role does
+# not install them (they live in `infrastructure` and the `uv`/`developer-python`
+# roles, which carry their own verify). Checking them here made the default run
+# FAIL on a clean machine that never asked for cloud tooling.
 
 # Git verification
 - name: Verify Git
@@ -100,40 +79,6 @@
   become: false
   become_user: "{{ actual_user }}"
 
-# Python tools
-# Use PATH-resolved `uv` instead of the hard-coded ~/.cargo/bin path:
-# on Linux uv is installed there, but on macOS it's at /opt/homebrew/bin/uv
-# (per uv.yml's macOS-via-brew branch). The PATH below already prepends
-# both locations.
-- name: Verify UV
-  ansible.builtin.command: uv --version
-  register: verify_uv
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_uv.rc != 0
-  become: false
-  become_user: "{{ actual_user }}"
-
-- name: Verify UV can list Python versions
-  ansible.builtin.command: uv python list
-  register: verify_uv_python
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_uv_python.rc != 0
-  become: false
-  become_user: "{{ actual_user }}"
-
-# Cloud tools
-- name: Verify AWS CLI
-  ansible.builtin.command: aws --version
-  register: verify_aws
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-  changed_when: false
-  failed_when: verify_aws.rc != 0
-
 - name: Verify yq
   ansible.builtin.command: yq --version
   register: verify_yq
@@ -167,14 +112,9 @@
       ✅ Base Developer Tools Verified:
       - Docker: {{ verify_docker.stdout }} (service enabled ✅)
       - Docker group: User added (logout required for shell access)
-      - kubectl: {{ verify_kubectl.stdout | regex_search('v[0-9.]+') }}
-      - Helm: {{ verify_helm.stdout }}
-      - OpenTofu: {{ verify_tofu.stdout_lines[0] }}
       - Git: {{ verify_git.stdout }}
       - Git subtree: ✅
       - Git LFS: ✅ Filters installed
-      - UV: {{ verify_uv.stdout }} (can list Python versions ✅)
-      - AWS CLI: {{ verify_aws.stdout }}
       - yq: {{ verify_yq.stdout }}
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
@@ -183,13 +123,8 @@
     msg: |
       ✅ Base Developer Tools Verified:
       - Docker CLI: Installed (bring your own daemon -- colima/orbstack/podman)
-      - kubectl: {{ verify_kubectl.stdout | regex_search('v[0-9.]+') }}
-      - Helm: {{ verify_helm.stdout }}
-      - OpenTofu: {{ verify_tofu.stdout_lines[0] }}
       - Git: {{ verify_git.stdout }}
       - Git subtree: ✅
       - Git LFS: ✅ Filters installed
-      - UV: {{ verify_uv.stdout }} (can list Python versions ✅)
-      - AWS CLI: {{ verify_aws.stdout }}
       - yq: {{ verify_yq.stdout }}
   when: ansible_facts['distribution'] == 'MacOSX'

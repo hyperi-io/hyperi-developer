@@ -26,17 +26,17 @@
       tags: ['developer', 'repository']
   tags: ['developer', 'repository']
 
-# Tombstones — remove what this project used to install and no longer does.
-# Ansible cannot prune what it stops declaring, so removals must be declared.
-# Runs BEFORE the installs: removing OrbStack also removes the docker CLI it
-# provided, and the docker role below reinstalls the CLI from brew. Ordering is
-# load-bearing, not cosmetic.
-- name: Remove retired tools (tombstones)
+# Tombstones (removing retired tools) are OPT-IN (`never`), not part of the base
+# run. Deleting a person's tools is a HyperI-fleet action -- the generic
+# `developer` base is designed to be additive and leave a stranger's machine
+# alone, not uninstall their nmap/whois/pass/uv. Run them explicitly with
+# `--tags removals` (HyperI fleet machines do).
+- name: Remove retired tools (tombstones) (opt-in)
   ansible.builtin.include_tasks:
     file: removals.yml
     apply:
-      tags: ['developer', 'removals']
-  tags: ['developer', 'removals']
+      tags: ['removals', 'soe', 'never']
+  tags: ['removals', 'soe', 'never']
 
 - name: Install Docker
   ansible.builtin.include_tasks:
@@ -103,17 +103,16 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
 
-# One-command "update everything" tool + clickable GUI app.
-#
-# Fedora was excluded HERE, at the include, as well as inside the file -- so
-# fixing the script alone would have changed nothing on Fedora. Both gates had
-# to move.
-- name: Install hyperi-update command and GUI launcher
+# One-command "update everything" tool + clickable GUI app. Opt-in (`never`):
+# it installs a HyperI-branded "Hyperi Update" launcher, which is org furniture,
+# not something the generic base drops on a stranger's app grid. Run explicitly
+# with `--tags update_command`; the soe role selects it for HyperI machines.
+- name: Install hyperi-update command and GUI launcher (opt-in)
   ansible.builtin.include_tasks:
     file: update_command.yml
     apply:
-      tags: ['update_command']
-  tags: ['update_command']
+      tags: ['update_command', 'soe', 'never']
+  tags: ['update_command', 'soe', 'never']
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'MacOSX']
 
 - name: Verify base tools installation

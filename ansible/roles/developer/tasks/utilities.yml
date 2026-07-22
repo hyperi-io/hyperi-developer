@@ -265,41 +265,45 @@
 # Hyperi ADMIN TOOLS
 # ============================================================================
 
-- name: Ensure /usr/local/sbin exists
-  ansible.builtin.file:
-    path: /usr/local/sbin
-    state: directory
-    mode: '0755'
-    owner: root
-    group: root
+# HyperI fleet/admin scripts -- OPT-IN (`never`), not part of the generic base.
+# add-dev-user creates a passwordless-sudo user (a footgun sitting in a
+# stranger's PATH), and these are fleet/VM tooling, not general dev utilities.
+# Run explicitly with `--tags admin-scripts`; HyperI machines select them.
+- name: Install HyperI admin scripts (opt-in)
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  # `soe` so HyperI machines get them; `never` so the generic base does not.
+  # (removals/update_command get `soe` automatically via the soe->developer meta
+  # dependency, but this block is nested in utilities.yml, so it needs it here.)
+  tags: ['admin-scripts', 'soe', 'never']
+  block:
+    - name: Ensure /usr/local/sbin exists
+      ansible.builtin.file:
+        path: /usr/local/sbin
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
 
-# add-dev-user - Script to add new developer users with full environment access
-- name: Install add-dev-user script
-  ansible.builtin.copy:
-    src: add-dev-user
-    dest: /usr/local/sbin/add-dev-user
-    owner: root
-    group: root
-    mode: '0755'
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - name: Install add-dev-user script
+      ansible.builtin.copy:
+        src: add-dev-user
+        dest: /usr/local/sbin/add-dev-user
+        owner: root
+        group: root
+        mode: '0755'
 
-# rename-user - Rename default template user and update RDP credentials
-- name: Install rename-user script
-  ansible.builtin.copy:
-    src: rename-user
-    dest: /usr/local/sbin/rename-user
-    owner: root
-    group: root
-    mode: '0755'
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - name: Install rename-user script
+      ansible.builtin.copy:
+        src: rename-user
+        dest: /usr/local/sbin/rename-user
+        owner: root
+        group: root
+        mode: '0755'
 
-# desktop-mode - Switch desktop UI between winlike and maclike with DBUS auto-detection
-- name: Install desktop-mode script
-  ansible.builtin.copy:
-    src: desktop-mode
-    dest: /usr/local/sbin/desktop-mode
-    owner: root
-    group: root
-    mode: '0755'
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - name: Install desktop-mode script
+      ansible.builtin.copy:
+        src: desktop-mode
+        dest: /usr/local/sbin/desktop-mode
+        owner: root
+        group: root
+        mode: '0755'

@@ -1,6 +1,10 @@
 ---
-# System cleanup and updates - runs at the end of playbook
-# Updates all packages and removes unused dependencies
+# System cleanup - runs at the end of the playbook.
+# By DEFAULT this only cleans package caches. A full "upgrade every package on
+# the machine" is opt-in via `hyperi_system_upgrade=true` (or --tags): the
+# generic base should not dist-upgrade a person's whole system unrequested --
+# that pulls kernels, takes a long time, and can break unrelated things. HyperI
+# fleet machines set the flag.
 
 - name: Load macOS variables
   ansible.builtin.include_vars:
@@ -29,12 +33,16 @@
     name: "*"
     state: latest
     update_cache: true
-  when: ansible_facts['distribution'] == 'Fedora'
+  when:
+    - ansible_facts['distribution'] == 'Fedora'
+    - hyperi_system_upgrade | default(false)
 
 - name: Remove unused packages (Fedora)
   ansible.builtin.dnf:
     autoremove: true
-  when: ansible_facts['distribution'] == 'Fedora'
+  when:
+    - ansible_facts['distribution'] == 'Fedora'
+    - hyperi_system_upgrade | default(false)
 
 - name: Clean DNF cache (Fedora)
   ansible.builtin.command: dnf clean all
@@ -63,13 +71,17 @@
     upgrade: dist
     update_cache: true
     cache_valid_time: 3600
-  when: ansible_facts['distribution'] == 'Ubuntu'
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - hyperi_system_upgrade | default(false)
 
 - name: Remove unused packages (Ubuntu)
   ansible.builtin.apt:
     autoremove: true
     purge: true
-  when: ansible_facts['distribution'] == 'Ubuntu'
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - hyperi_system_upgrade | default(false)
 
 - name: Clean APT cache (Ubuntu)
   ansible.builtin.apt:
@@ -82,7 +94,9 @@
     upgrade_all: true
   become: false
   environment: "{{ homebrew_env }}"
-  when: ansible_facts['distribution'] == 'MacOSX'
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - hyperi_system_upgrade | default(false)
 
 - name: Clean Homebrew cache (macOS)
   ansible.builtin.command: brew cleanup
