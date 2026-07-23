@@ -4,12 +4,23 @@
 
 # Before the installs: removing terraform/vault must not race the tofu/bao
 # install, and the HashiCorp repo has to go before an apt update reads it again.
+#
+# Fire only when one of this include's OWN tags is explicitly requested
+# (infrastructure / cloud / removals), never on a tag PROPAGATED down from a
+# persona meta-role. Without this, `--infra` and `--full-stack` (which depend on
+# infrastructure) would silently delete a generic operator's Terraform + the
+# HashiCorp repo -- the same footgun the developer base guards against. `--tags
+# infrastructure` / `--tags cloud` still remove it (the OpenTofu swap is
+# deliberate for anyone asking for the IaC tools directly).
 - name: Remove the retired HashiCorp tools
   ansible.builtin.include_tasks:
     file: removals.yml
     apply:
       tags: ['infrastructure', 'cloud', 'removals']
   tags: ['infrastructure', 'cloud', 'removals']
+  when: >-
+    'infrastructure' in ansible_run_tags or 'cloud' in ansible_run_tags
+    or 'removals' in ansible_run_tags
 
 - name: Install IaC + AWS cloud tools (OpenTofu, OpenBao, AWS CLI)
   ansible.builtin.include_tasks:

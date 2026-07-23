@@ -6,13 +6,23 @@
 #   - Apple `container`: native per-container micro-VMs on Apple silicon. Ships
 #     ONLY as a signed .pkg on GitHub releases (no brew channel), so it is a
 #     Tier 3 re-fetch -- hyperi-update pulls the latest. Optional: warn, never abort.
+# Both are wrapped warn-and-continue so a single failure does not sink the soe run.
 
 - name: Install colima (Docker daemon for macOS)
-  community.general.homebrew:
-    name: colima
-    state: present
-  become: false
-  environment: "{{ homebrew_env }}"
+  block:
+    - name: Install colima via Homebrew
+      community.general.homebrew:
+        name: colima
+        state: present
+      become: false
+      environment: "{{ homebrew_env }}"
+
+  rescue:
+    - name: Record that colima did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['colima: ' ~ (ansible_failed_result.msg | default('brew install failed'))] }}
 
 - name: Install Apple container (native macOS containers)
   block:
@@ -23,32 +33,43 @@
       register: soe_container_release
       check_mode: false
 
-    - name: Select the container installer package (.pkg)
+    # Prefer the signed/notarized .pkg (avoids a Gatekeeper bypass); fall back to
+    # any .pkg. Concatenating [signed] + [all] and taking `first` gives that
+    # preference in one expression.
+    - name: Select the container installer package (prefer the signed .pkg)
       ansible.builtin.set_fact:
         soe_container_pkg_url: >-
-          {{ soe_container_release.json.assets
-             | selectattr('name', 'search', '\.pkg$')
-             | map(attribute='browser_download_url') | first }}
+          {{ ((soe_container_release.json.assets
+                | selectattr('name', 'search', '(?i)signed.*\.pkg$')
+                | map(attribute='browser_download_url') | list)
+              + (soe_container_release.json.assets
+                | selectattr('name', 'search', '\.pkg$')
+                | map(attribute='browser_download_url') | list)) | first }}
+
+    # Root-owned, randomly-named temp (mkstemp, mode 0600) -- NOT a predictable
+    # world-writable /tmp path a local user could swap before the root installer
+    # reads it (TOCTOU). The `always` block removes it on success OR failure.
+    - name: Create a root-owned temp path for the installer
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .pkg
+      become: true
+      register: soe_container_tmp
 
     - name: Download the Apple container installer
       ansible.builtin.get_url:
         url: "{{ soe_container_pkg_url }}"
-        dest: /tmp/apple-container.pkg
-        mode: '0644'
-      become: false
+        dest: "{{ soe_container_tmp.path }}"
+        mode: '0600'
+        force: true
+      become: true
 
     - name: Install Apple container from the signed package
       ansible.builtin.command:
-        cmd: installer -pkg /tmp/apple-container.pkg -target /
+        cmd: "installer -pkg {{ soe_container_tmp.path }} -target /"
       become: true
       register: soe_container_install
       changed_when: "'successful' in (soe_container_install.stdout | lower)"
-
-    - name: Remove the downloaded installer
-      ansible.builtin.file:
-        path: /tmp/apple-container.pkg
-        state: absent
-      become: false
 
   rescue:
     - name: Record that Apple container did not install
@@ -56,3 +77,11 @@
         deploy_warnings: >-
           {{ deploy_warnings | default([])
              + ['apple-container: ' ~ (ansible_failed_result.msg | default('download/install failed'))] }}
+
+  always:
+    - name: Remove the downloaded installer
+      ansible.builtin.file:
+        path: "{{ soe_container_tmp.path }}"
+        state: absent
+      become: true
+      when: soe_container_tmp.path is defined
