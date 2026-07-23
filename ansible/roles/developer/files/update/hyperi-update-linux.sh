@@ -102,7 +102,7 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     have cargo-install-update && printf '  - cargo-installed tools\n'
     have go       && printf '  - go-installed tools (gopls, govulncheck)\n'
     have npm      && printf '  - npm global tools + pnpm\n'
-    printf '  - static release binaries (kind, argocd, kubeconform, kube-linter)\n'
+    printf '  - static release binaries (kind, argocd, kubeconform, kube-linter, dive, kustomize, k9s)\n'
     have claude   && printf '  - Claude Code CLI\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
     read -r -p "Proceed? [y/N] " confirm
@@ -240,11 +240,11 @@ fi
 
 # --- Tier 3: static binaries with no repo/snap/lang-manager ----------------
 # These ship only as a GitHub release asset, so nothing above refreshes them --
-# re-fetch the latest here. Each downloads to a temp path and is only moved into
-# place on success, so a failed fetch never breaks the working copy. Only tools
-# already installed are touched. (kustomize's monorepo tag selection, aws-vault,
-# tea and the single-distro re-fetch cases are not yet covered here -- re-run the
-# playbook to refresh those.)
+# re-fetch the latest here. Each downloads to a temp path, is checked for the ELF
+# magic, and is only moved into place on success, so a failed or corrupt fetch
+# never breaks the working copy. Only tools already installed are touched, and
+# k9s is Ubuntu-only (Fedora's k9s is the dnf package -- re-fetching would shadow
+# it). Still uncovered: aws-vault and tea -- re-run the playbook to refresh those.
 section "Static binaries (GitHub releases)"
 case "$(uname -m)" in
     x86_64|amd64)  ARCH_DEB=amd64 ;;
@@ -257,6 +257,10 @@ gh_latest_tag() {  # <repo> -> newest release tag (empty on failure)
         | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
 }
 
+is_elf() {  # <file> -> 0 if it begins with the ELF magic (7f 45 4c 46)
+    [[ "$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]]
+}
+
 # refetch_raw <name> <repo> <asset-template>  -- a bare executable asset.
 # Template may use {TAG} and {ARCH}.
 refetch_raw() {
@@ -267,7 +271,7 @@ refetch_raw() {
     asset="${tmpl//\{TAG\}/$tag}"; asset="${asset//\{ARCH\}/$ARCH_DEB}"
     url="https://github.com/$repo/releases/download/$tag/$asset"
     tmp="$(mktemp)"
-    if curl -fsSL "$url" -o "$tmp" && [[ -s "$tmp" ]]; then
+    if curl -fsSL "$url" -o "$tmp" && [[ -s "$tmp" ]] && is_elf "$tmp"; then
         sudo install -m 0755 "$tmp" "/usr/local/bin/$name" && ok "$name -> $tag" \
             || FAILURES+=("$name (install)")
     else
@@ -277,21 +281,42 @@ refetch_raw() {
 }
 
 # refetch_targz <name> <repo> <asset-template> <member>  -- extract <member>
-# from a .tar.gz release asset. Template may use {TAG} and {ARCH}.
+# from a .tar.gz release asset. Template may use {TAG}, {VER} (tag minus a
+# leading v) and {ARCH}.
 refetch_targz() {
-    local name="$1" repo="$2" tmpl="$3" member="$4" tag asset url tmp dir
+    local name="$1" repo="$2" tmpl="$3" member="$4" tag ver asset url tmp dir
     have "$name" || { skip "$name not installed"; return; }
     tag="$(gh_latest_tag "$repo")"
     [[ -n "$tag" ]] || { FAILURES+=("$name (no release tag)"); return; }
-    asset="${tmpl//\{TAG\}/$tag}"; asset="${asset//\{ARCH\}/$ARCH_DEB}"
+    ver="${tag#v}"
+    asset="${tmpl//\{TAG\}/$tag}"; asset="${asset//\{VER\}/$ver}"; asset="${asset//\{ARCH\}/$ARCH_DEB}"
     url="https://github.com/$repo/releases/download/$tag/$asset"
     tmp="$(mktemp)"; dir="$(mktemp -d)"
     if curl -fsSL "$url" -o "$tmp" && tar -xzf "$tmp" -C "$dir" "$member" 2>/dev/null \
-        && [[ -s "$dir/$member" ]]; then
+        && [[ -s "$dir/$member" ]] && is_elf "$dir/$member"; then
         sudo install -m 0755 "$dir/$member" "/usr/local/bin/$name" && ok "$name -> $tag" \
             || FAILURES+=("$name (install)")
     else
         FAILURES+=("$name (download)")
+    fi
+    rm -rf "$tmp" "$dir"
+}
+
+# kustomize is a monorepo: /releases/latest can point at a non-CLI component, so
+# pull the newest kustomize CLI asset URL straight from the releases list.
+refetch_kustomize() {
+    have kustomize || { skip "kustomize not installed"; return; }
+    local url tmp dir
+    url="$(curl -fsSL "https://api.github.com/repos/kubernetes-sigs/kustomize/releases" 2>/dev/null \
+        | grep -oE "https://[^\"]*/kustomize_v[0-9.]+_linux_${ARCH_DEB}\.tar\.gz" | head -1)"
+    [[ -n "$url" ]] || { FAILURES+=("kustomize (no asset)"); return; }
+    tmp="$(mktemp)"; dir="$(mktemp -d)"
+    if curl -fsSL "$url" -o "$tmp" && tar -xzf "$tmp" -C "$dir" kustomize 2>/dev/null \
+        && [[ -s "$dir/kustomize" ]] && is_elf "$dir/kustomize"; then
+        sudo install -m 0755 "$dir/kustomize" /usr/local/bin/kustomize && ok "kustomize (latest)" \
+            || FAILURES+=("kustomize (install)")
+    else
+        FAILURES+=("kustomize (download)")
     fi
     rm -rf "$tmp" "$dir"
 }
@@ -305,6 +330,13 @@ if [[ -n "$ARCH_DEB" ]]; then
         refetch_targz kube-linter stackrox/kube-linter "kube-linter-linux_arm64.tar.gz" kube-linter
     else
         refetch_targz kube-linter stackrox/kube-linter "kube-linter-linux.tar.gz" kube-linter
+    fi
+    refetch_targz dive        wagoodman/dive        "dive_{VER}_linux_{ARCH}.tar.gz" dive
+    refetch_kustomize
+    # k9s: Fedora installs it from dnf (/usr/bin); only Ubuntu carries the
+    # /usr/local/bin binary, so only re-fetch there or we shadow the dnf copy.
+    if [[ "$PKG_MGR" == apt ]]; then
+        refetch_targz k9s derailed/k9s "k9s_Linux_{ARCH}.tar.gz" k9s
     fi
 else
     skip "unknown CPU architecture ($(uname -m)) -- skipping static binaries"
