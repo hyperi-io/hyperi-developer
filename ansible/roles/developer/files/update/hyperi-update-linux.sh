@@ -4,13 +4,22 @@
 # up on this workstation, in one command. Ubuntu/Debian (apt) and Fedora (dnf).
 #
 #   * System packages  (apt or dnf, incl. 3rd-party repos: docker, vscode,
-#                       chrome, brave, git, k8s, azure, gcloud, opentofu, ...)
+#                       chrome, brave, git, gh, node, k8s, azure, gcloud,
+#                       opentofu, ...)
 #   * Snap             (if installed)                   — needs sudo
 #   * Flatpak          (apps + runtimes)                — user
 #   * Firmware         (fwupd)                          — needs sudo
 #   * uv tools         (gnome-extensions-cli, ...)      — user
 #   * rustup           (Rust toolchains)                — user
+#   * Go toolchain     (/usr/local/go, no upstream repo) — needs sudo
+#   * fnm Node majors  (the n-1 Node, per user)         — user
 #   * Claude Code CLI  (self-installed under ~/.local)  — user
+#
+# Note on the dev stacks: node, gh, docker and git come from UPSTREAM signed
+# repos, so "System packages" above already carries them to latest -- there is
+# nothing stack-specific to do for them here. Only the two that have no
+# upstream repo (the Go toolchain, and fnm's Node majors) need their own
+# sections, plus rustup, which manages its own toolchains.
 #
 # Each section is independent and self-guarding: a tool that isn't installed is
 # skipped (printed, not fatal), and a failing step is recorded and reported in
@@ -75,7 +84,21 @@ run() {
     fi
 }
 
+# fail <label> : record a failure the same way run() does, for steps that are
+# not a single command (multi-step fetch-verify-replace sequences).
+fail()    { printf '%s    \xe2\x9c\x97 %s%s\n' "$RED" "$1" "$RESET"; FAILURES+=("$1"); }
+
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# --- architecture ----------------------------------------------------------
+# Debian-style token, used by both the Go toolchain section and the static
+# release binaries further down. Decided once, here, rather than in whichever
+# section happens to run first.
+case "$(uname -m)" in
+    x86_64|amd64)  ARCH_DEB=amd64 ;;
+    aarch64|arm64) ARCH_DEB=arm64 ;;
+    *)             ARCH_DEB='' ;;
+esac
 
 # --- distro ----------------------------------------------------------------
 # Which package manager, decided once. Detect by BINARY, not by /etc/os-release:
@@ -238,6 +261,83 @@ else
     skip "npm not found"
 fi
 
+# --- Go toolchain ----------------------------------------------------------
+# Go publishes no apt/dnf repo, so `apt/dnf upgrade` never moves it -- the
+# playbook installs a pinned tarball into /usr/local/go and this section is what
+# carries it forward. The pin in group_vars is the BOOTSTRAP floor, not the
+# running version; same arrangement as rustup, where the pinned rustup-init
+# bootstraps and `rustup update` tracks stable after that.
+#
+# The checksum is taken from the same go.dev index that gives the URL, so it
+# guards against a corrupt or truncated download rather than against go.dev
+# itself. The install-time pin in group_vars is the one we hold.
+section "Go toolchain"
+if [[ ! -x /usr/local/go/bin/go ]]; then
+    skip "Go toolchain not found in /usr/local/go"
+elif [[ -z "$ARCH_DEB" ]]; then
+    skip "unsupported architecture $(uname -m)"
+else
+    go_installed="$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}')"
+    go_index="$(mktemp)"
+
+    if ! curl -fsSL 'https://go.dev/dl/?mode=json' -o "$go_index" 2>/dev/null; then
+        skip "could not reach go.dev — leaving ${go_installed:-the current toolchain} in place"
+    else
+        # The index lists newest first, so the first "version" is latest stable.
+        go_latest="$(sed -n 's/.*"version": *"\(go[0-9.]*\)".*/\1/p' "$go_index" | head -1)"
+
+        if [[ -z "$go_latest" ]]; then
+            skip "could not parse the go.dev index — leaving $go_installed in place"
+        elif [[ "$go_installed" == "$go_latest" ]]; then
+            ok "$go_installed is current"
+        else
+            go_tgz="${go_latest}.linux-${ARCH_DEB}.tar.gz"
+            # The index is pretty-printed and lists "sha256" a few lines after
+            # the "filename" it belongs to, hence the -A window.
+            go_sha="$(grep -A6 "\"$go_tgz\"" "$go_index" \
+                | sed -n 's/.*"sha256": *"\([a-f0-9]\{64\}\)".*/\1/p' | head -1)"
+            go_tmp="$(mktemp -d)"
+
+            if [[ -z "$go_sha" ]]; then
+                fail "Go toolchain: no checksum published for $go_tgz"
+            elif ! curl -fsSL "https://go.dev/dl/${go_tgz}" -o "$go_tmp/$go_tgz"; then
+                fail "Go toolchain: download of $go_tgz failed"
+            elif ! printf '%s  %s\n' "$go_sha" "$go_tmp/$go_tgz" | sha256sum -c - >/dev/null 2>&1; then
+                fail "Go toolchain: checksum mismatch on $go_tgz"
+            # Only touch the live tree once the tarball is downloaded AND
+            # verified, so a failed update leaves the working toolchain intact.
+            elif sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf "$go_tmp/$go_tgz"; then
+                ok "Go $go_installed -> $go_latest"
+            else
+                fail "Go toolchain: unpack failed"
+            fi
+
+            rm -rf "$go_tmp"
+        fi
+    fi
+
+    rm -f "$go_index"
+fi
+
+# --- fnm Node majors -------------------------------------------------------
+# The SYSTEM node comes from the NodeSource repo and is already updated by the
+# system-packages section. This refreshes the extra major fnm manages (the n-1
+# slot) to its latest patch -- `fnm install <major>` is a no-op when it is
+# already current.
+section "fnm Node majors"
+if have fnm; then
+    fnm_majors="$(fnm list 2>/dev/null | sed -n 's/.*v\([0-9]\{1,\}\)\..*/\1/p' | sort -u)"
+    if [[ -n "$fnm_majors" ]]; then
+        for fm in $fnm_majors; do
+            run "fnm install $fm" fnm install "$fm"
+        done
+    else
+        skip "fnm has no Node versions installed"
+    fi
+else
+    skip "fnm not found"
+fi
+
 # --- Tier 3: static binaries with no repo/snap/lang-manager ----------------
 # These ship only as a GitHub release asset, so nothing above refreshes them --
 # re-fetch the latest here. Each downloads to a temp path, is checked for the ELF
@@ -246,11 +346,6 @@ fi
 # k9s is Ubuntu-only (Fedora's k9s is the dnf package -- re-fetching would shadow
 # it). Still uncovered: aws-vault and tea -- re-run the playbook to refresh those.
 section "Static binaries (GitHub releases)"
-case "$(uname -m)" in
-    x86_64|amd64)  ARCH_DEB=amd64 ;;
-    aarch64|arm64) ARCH_DEB=arm64 ;;
-    *)             ARCH_DEB='' ;;
-esac
 
 gh_latest_tag() {  # <repo> -> newest release tag (empty on failure)
     curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \

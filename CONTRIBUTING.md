@@ -51,6 +51,16 @@ ansible-playbook --syntax-check playbooks/main.yml -i inventories/localhost/inve
 # Shell scripts (required if you touched any)
 shellcheck ../install.sh
 
+# Portability (required if you touched any) - macbash flags GNU/Linux-only
+# constructs that break on macOS. Install it with
+# `cargo install --git https://github.com/hyperi-io/macbash --locked`.
+macbash ../install.sh
+
+# Syntax under BOTH bashes: a stock mac is still bash 3.2, so a bash 4+ construct
+# that passes locally on brew's bash 5 will fail on someone else's machine.
+/bin/bash -n ../install.sh                 # macOS system bash 3.2
+/opt/homebrew/bin/bash -n ../install.sh    # current bash 5.x
+
 # Container matrix - clean install on Ubuntu + Fedora, current and n-1 (no hosts needed)
 molecule test -s matrix
 ```
@@ -97,6 +107,15 @@ Then create a PR via GitHub UI targeting the `main` branch.
   `print_warning` / `print_success` (see `install.sh`) - there is no shared `lib.sh`
 - **shellcheck clean**: silence a genuine false positive with a scoped
   `# shellcheck disable=` plus a reason, never blanket-disable
+- **macbash clean, where macOS can actually run it**: a script that is
+  guaranteed Linux-only does NOT need BSD compatibility, and macbash findings
+  against it are expected rather than defects. `hyperi-update-linux.sh` and
+  `hyperi-update-macos.sh` are split precisely so each can use its own
+  platform's idiom - `sha256sum` and `${var,,}` are CORRECT in the Linux one and
+  must not be rewritten to `shasum -a 256`, which is not what Linux ships.
+  Read every macbash finding against the file's target platform before acting.
+  Note the macOS updater is zsh, which shellcheck refuses outright (SC1071);
+  macbash still checks it
 
 ### Code Style
 
@@ -178,6 +197,7 @@ All scripts must have a standardized header:
 ### Before Submitting
 
 - [ ] ansible-lint + `--syntax-check` clean, shellcheck clean on any shell touched
+- [ ] macbash clean on any shell that macOS runs, and `bash -n` under both 3.2 and 5.x
 - [ ] molecule matrix passes for playbook changes
 - [ ] Code follows project style guidelines
 - [ ] Documentation updated (README.md)

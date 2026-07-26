@@ -1,12 +1,30 @@
 ---
 # Rust toolchain and cargo tools installation
-# Uses rustup for Linux to get latest stable (distro packages are too old)
+#
+# rustup comes from upstream (static.rust-lang.org), pinned by version with a
+# SHA256 we hold -- see hyperi_core_versions in group_vars/all.yml. Not a
+# `curl | sh`: the binary is fetched by get_url and its checksum is VERIFIED
+# before it executes, which is the whole difference the install policy is
+# about. And not the distro package either, on either distro:
+#
+#   Ubuntu's rustup is 1.26.0 and ships NO rustup-init -- only /usr/bin/rustup
+#   plus proxies. `rustup default stable` there installs a toolchain but never
+#   creates ~/.cargo/bin, so the `creates:` guard below would never match and
+#   every later task in this file (which resolves ~/.cargo/bin/rustup) would
+#   fail on a path that does not exist.
+#
+#   Fedora's rustup is current TODAY, but that is a coincidence of timing, not
+#   a guarantee -- it freezes on its own schedule like every distro package.
+#
+# rustup only bootstraps; the toolchain then tracks stable via `rustup update`
+# (hyperi-update runs it), so the pin above ages slowly and never gates the
+# Rust version a developer actually compiles with.
 
 # ============================================================
-# Rust Installation
+# Rust Installation (Linux -- one path for both distros)
 # ============================================================
 
-- name: Install Rust via rustup (Fedora)
+- name: Install Rust via rustup (Linux)
   block:
     - name: Remove distro Rust packages if present (Fedora)
       ansible.builtin.dnf:
@@ -16,31 +34,9 @@
           - rustfmt
           - clippy
         state: absent
-
-    - name: Install Rust via rustup (Fedora)
-      ansible.builtin.shell:
-        cmd: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-        creates: "{{ user_home }}/.cargo/bin/rustup"
       become: true
-      become_user: "{{ actual_user }}"
-      environment:
-        CARGO_HOME: "{{ user_home }}/.cargo"
-        RUSTUP_HOME: "{{ user_home }}/.rustup"
+      when: ansible_facts['distribution'] == 'Fedora'
 
-    - name: Install Rust components via rustup (Fedora)
-      ansible.builtin.command:
-        cmd: "{{ user_home }}/.cargo/bin/rustup component add rustfmt clippy"
-      become: true
-      become_user: "{{ actual_user }}"
-      environment:
-        CARGO_HOME: "{{ user_home }}/.cargo"
-        RUSTUP_HOME: "{{ user_home }}/.rustup"
-      changed_when: true
-
-  when: ansible_facts['distribution'] == 'Fedora'
-
-- name: Install Rust via rustup (Ubuntu)
-  block:
     - name: Remove distro Rust packages if present (Ubuntu)
       ansible.builtin.apt:
         name:
@@ -49,23 +45,49 @@
           - rustfmt
           - rust-clippy
         state: absent
-
-    - name: Install curl for rustup (Ubuntu)
-      ansible.builtin.apt:
-        name: curl
-        state: present
-
-    - name: Install Rust via rustup (Ubuntu)
-      ansible.builtin.shell:
-        cmd: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-        creates: "{{ user_home }}/.cargo/bin/rustup"
       become: true
-      become_user: "{{ actual_user }}"
-      environment:
-        CARGO_HOME: "{{ user_home }}/.cargo"
-        RUSTUP_HOME: "{{ user_home }}/.rustup"
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Install Rust components via rustup (Ubuntu)
+    # rustup owns its own updates after bootstrap (`rustup update`, which
+    # hyperi-update runs), so once ~/.cargo/bin/rustup exists there is nothing
+    # to re-bootstrap. Gating the fetch on that keeps the run idempotent --
+    # otherwise the download-then-delete pair below reports changed every time.
+    - name: Check whether rustup is already installed
+      ansible.builtin.stat:
+        path: "{{ user_home }}/.cargo/bin/rustup"
+      register: developer_rustup_bin
+
+    - name: Bootstrap the Rust toolchain
+      when: not developer_rustup_bin.stat.exists
+      block:
+        # checksum: is the point of this task. A tag or a CDN object can move;
+        # a SHA256 we hold cannot be moved by anyone upstream.
+        - name: Download rustup-init
+          ansible.builtin.get_url:
+            url: >-
+              https://static.rust-lang.org/rustup/archive/{{ rustup_version }}/{{ hyperi_arch_gnu }}-unknown-linux-gnu/rustup-init
+            dest: /tmp/rustup-init
+            mode: '0755'
+            checksum: "sha256:{{ rustup_sha256 }}"
+
+        # --no-modify-path: this role already manages the ~/.cargo/bin PATH
+        # entry in .bashrc below, and letting rustup-init add its own leaves two.
+        - name: Install the Rust toolchain via rustup-init
+          ansible.builtin.command:
+            cmd: /tmp/rustup-init -y --default-toolchain stable --no-modify-path
+            creates: "{{ user_home }}/.cargo/bin/rustup"
+          become: true
+          become_user: "{{ actual_user }}"
+          environment:
+            CARGO_HOME: "{{ user_home }}/.cargo"
+            RUSTUP_HOME: "{{ user_home }}/.rustup"
+
+        - name: Remove the rustup-init download
+          ansible.builtin.file:
+            path: /tmp/rustup-init
+            state: absent
+
+    - name: Install Rust components via rustup
       ansible.builtin.command:
         cmd: "{{ user_home }}/.cargo/bin/rustup component add rustfmt clippy"
       become: true
@@ -73,9 +95,16 @@
       environment:
         CARGO_HOME: "{{ user_home }}/.cargo"
         RUSTUP_HOME: "{{ user_home }}/.rustup"
-      changed_when: true
+      # `component add` already prints "component X is up to date" and no-ops
+      # when present, so key changed off that rather than always reporting it.
+      register: developer_rustup_components
+      # rustup writes its `info: component X is up to date` progress to STDERR,
+      # not stdout -- and prints it even on the first run because rustfmt and
+      # clippy ship in the default profile. So this task is effectively always
+      # "not changed", which is honest: the components are present either way.
+      changed_when: "'is up to date' not in developer_rustup_components.stderr"
 
-  when: ansible_facts['distribution'] == 'Ubuntu'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Install Rust via Homebrew (macOS)
   community.general.homebrew:

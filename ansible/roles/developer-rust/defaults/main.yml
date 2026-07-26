@@ -1,0 +1,10 @@
+---
+# Developer-Rust defaults.
+#
+# The versions themselves live in the SSoT -- hyperi_core_versions in
+# inventories/localhost/group_vars/all.yml. This file only maps them onto the
+# arch token rust-lang.org uses in its paths (the GNU triple spelling), so a
+# bump is still a one-line edit in the SSoT and nothing here changes.
+
+rustup_version: "{{ hyperi_core_versions.rustup }}"
+rustup_sha256: "{{ hyperi_core_versions.rustup_sha256[hyperi_arch_gnu | default('x86_64')] }}"

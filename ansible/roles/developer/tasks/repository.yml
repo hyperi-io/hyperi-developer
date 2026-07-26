@@ -37,6 +37,21 @@
 # UBUNTU REPOSITORY CONFIGURATION
 # ============================================================================
 
+# Every vendor repo we add (docker, git-core, node, gh, k8s, gcloud, azure,
+# trivy, slack) goes in through deb822_repository, and that module fails hard
+# with "python3-debian is not installed" without this package. It is present on
+# an Ubuntu DESKTOP because software-properties-common pulls it in, which is why
+# this never surfaced -- but on a minimal image (container, cloud image, server
+# install) every one of those tasks failed. Installed here because repository
+# configuration runs before any of them.
+- name: Install the deb822 repository prerequisite (Ubuntu)
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+    update_cache: true
+  become: true
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
 - name: Configure Ubuntu APT performance
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/99-performance

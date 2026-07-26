@@ -1,7 +1,12 @@
 ---
-# Developer-Node Role — Node.js / npm / pnpm (CLI only).
+# Developer-Node Role -- JS/TS developer extras.
+#
+# The Node runtime, npm, corepack/pnpm and semantic-release live in the core
+# `developer` role (declared in meta/main.yml as a dependency): they are
+# tooling and CI infrastructure that a Rust or Python developer needs too.
+# This role is only what a JS/TS developer additionally wants.
 
-- name: Install Node.js and pnpm
+- name: Install the JS/TS developer tooling
   ansible.builtin.include_tasks:
     file: nodejs.yml
     apply:

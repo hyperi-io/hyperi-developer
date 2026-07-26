@@ -65,6 +65,16 @@
       tags: ['developer', 'git']
   tags: ['developer', 'git']
 
+# Node is core tooling, not a JS-developer extra: semantic-release, hyperi-ci
+# and our own scripts all need it, so a Rust or Python developer who never
+# selects a JS tag still gets it. developer-node layers the JS/TS extras on top.
+- name: Install Node.js and npm
+  ansible.builtin.include_tasks:
+    file: nodejs.yml
+    apply:
+      tags: ['developer', 'nodejs']
+  tags: ['developer', 'nodejs']
+
 - name: Apply regional settings (locale, formats, spell-check)
   ansible.builtin.include_tasks:
     file: region.yml
