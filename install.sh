@@ -162,7 +162,8 @@ Languages (developer-<lang>; --languages [list] or developer-languages for all):
     developer-rust        rustup + cargo tools + protoc/librdkafka build deps
     developer-go          Go + gopls, dlv, golangci-lint, gosec, govulncheck
     developer-python      mypy (opt-in; ruff/ty ship in the base astral suite)
-    developer-node        Node.js LTS + npm + pnpm/corepack
+    developer-node        eslint + prettier (Node itself is in the base -- it is
+                          core tooling, needed by semantic-release and CI)
     developer-typescript  typescript + tsx + ts-node (pulls developer-node)
     developer-c           C/C++ build tools
 

@@ -1,185 +1,26 @@
 ---
-# Node.js LTS and semantic-release installation
+# JS/TS developer extras -- the layer ON TOP of the core Node runtime.
+#
+# The runtime itself (node n + n-1, npm, corepack/pnpm, semantic-release) moved
+# into the `developer` core role: it is tooling-and-CI infrastructure, needed by
+# a Rust or Python developer who would never select a JS tag. What is left here
+# is what only a JS/TS developer wants -- the lint and format stack.
+#
+# Installed with pnpm, matching developer-typescript, so JS tooling has one
+# global package manager rather than two.
 
-# Fedora - Add Node.js LTS repository
-- name: Add Node.js LTS repository (Fedora)
-  ansible.builtin.shell: curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash -
-  args:
-    creates: /etc/yum.repos.d/nodesource-*.repo
-  when: ansible_facts['distribution'] == 'Fedora'
-
-- name: Install Node.js (Fedora)
-  ansible.builtin.dnf:
-    name: nodejs
-    state: present
-  when: ansible_facts['distribution'] == 'Fedora'
-
-# Ubuntu - Add Node.js LTS repository
-- name: Add Node.js LTS repository (Ubuntu)
-  ansible.builtin.shell: curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-  args:
-    creates: /etc/apt/sources.list.d/nodesource.list
-  when: ansible_facts['distribution'] == 'Ubuntu'
-
-- name: Install Node.js (Ubuntu)
-  ansible.builtin.apt:
-    name: nodejs
-    state: present
-    update_cache: true
-  when: ansible_facts['distribution'] == 'Ubuntu'
-
-# macOS
-- name: Install Node.js via Homebrew (macOS)
-  community.general.homebrew:
-    name: node
-    state: present
-  become: false
-  environment: "{{ homebrew_env }}"
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-# Configure npm for user-specific global packages
-- name: Create npm global directory for user (Linux)
-  ansible.builtin.file:
-    path: "{{ user_home }}/.npm-global"
-    state: directory
-    mode: '0755'
-    owner: "{{ actual_user }}"
-    group: "{{ actual_user }}"
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Create npm global directory for user (macOS)
-  ansible.builtin.file:
-    path: "{{ user_home }}/.npm-global"
-    state: directory
-    mode: '0755'
-  become: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-- name: Configure npm prefix for user (Linux)
+- name: Install the JS/TS lint and format tooling (eslint, prettier)
   ansible.builtin.command:
-    cmd: npm config set prefix "{{ user_home }}/.npm-global"
+    cmd: pnpm install -g eslint prettier
+  # pnpm_env is set by the core role -- it carries PNPM_HOME and puts pnpm's
+  # global bin on PATH, without which pnpm refuses `install -g` entirely.
+  environment: "{{ pnpm_env }}"
   become: false
-  become_user: "{{ actual_user }}"
-  changed_when: false
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Configure npm prefix for user (macOS)
-  ansible.builtin.command:
-    cmd: npm config set prefix "{{ user_home }}/.npm-global"
-  become: false
-  environment: "{{ homebrew_env }}"
-  changed_when: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-- name: Add npm global bin to PATH in .bashrc (Linux)
-  ansible.builtin.lineinfile:
-    path: "{{ user_home }}/.bashrc"
-    regexp: "^export PATH=.*\\.npm-global/bin"
-    line: 'export PATH="{{ user_home }}/.npm-global/bin:$PATH"'
-    state: present
-    owner: "{{ actual_user }}"
-    group: "{{ actual_user }}"
-    create: true
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Add npm global bin to PATH in .zshrc (macOS)
-  ansible.builtin.lineinfile:
-    path: "{{ user_home }}/.zshrc"
-    regexp: "^export PATH=.*\\.npm-global/bin"
-    line: 'export PATH="{{ user_home }}/.npm-global/bin:$PATH"'
-    state: present
-    create: true
-  become: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-# Install semantic-release and plugins (user-specific)
-- name: Update npm to latest (Linux)
-  ansible.builtin.command:
-    cmd: npm install -g npm@latest
-  environment:
-    PATH: "{{ user_home }}/.npm-global/bin:{{ ansible_facts['env'].PATH }}"
-  become: false
-  become_user: "{{ actual_user }}"
-  changed_when: false
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Update npm to latest (macOS)
-  ansible.builtin.command:
-    cmd: npm install -g npm@latest
-  environment:
-    PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.npm-global/bin:{{ ansible_facts['env'].PATH }}"
-  become: false
-  changed_when: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-# corepack ships with Node and provides the pnpm/yarn shims. developer-typescript
-# installs typescript/tsx/ts-node via `pnpm install -g`, so pnpm MUST be present
-# -- nothing installed it before, which left that tag broken. Enable corepack,
-# then pin the latest pnpm.
-- name: Enable corepack (pnpm/yarn shims; ships with Node) (Linux)
-  ansible.builtin.command:
-    cmd: corepack enable
-  changed_when: false
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Enable corepack (macOS)
-  ansible.builtin.command:
-    cmd: corepack enable
-  environment: "{{ homebrew_env }}"
-  become: false
-  changed_when: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-- name: Activate the latest pnpm via corepack (Linux)
-  ansible.builtin.command:
-    cmd: corepack prepare pnpm@latest --activate
-  become: false
-  become_user: "{{ actual_user }}"
-  changed_when: false
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Activate the latest pnpm via corepack (macOS)
-  ansible.builtin.command:
-    cmd: corepack prepare pnpm@latest --activate
-  environment: "{{ homebrew_env }}"
-  become: false
-  changed_when: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-- name: Install semantic-release globally (Linux)
-  community.general.npm:
-    name: semantic-release
-    global: true
-    state: present
-  environment:
-    NPM_CONFIG_PREFIX: "{{ user_home }}/.npm-global"
-  become: false
-  become_user: "{{ actual_user }}"
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Install semantic-release globally (macOS)
-  community.general.npm:
-    name: semantic-release
-    global: true
-    state: present
-  environment: "{{ npm_config_env }}"
-  become: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-# Semantic-release plugins - same for all platforms, only environment differs
-- name: Install semantic-release plugins globally
-  community.general.npm:
-    name: "{{ item }}"
-    global: true
-    state: present
-  loop:
-    - '@semantic-release/changelog'
-    - '@semantic-release/git'
-    - '@semantic-release/github'
-    - '@semantic-release/commit-analyzer'
-    - '@semantic-release/release-notes-generator'
-    - '@semantic-release/exec'
-    - conventional-changelog-conventionalcommits
-  environment: "{{ npm_config_env if ansible_facts['distribution'] == 'MacOSX' else {'NPM_CONFIG_PREFIX': user_home + '/.npm-global'} }}"
-  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_node_pnpm_lint
+  # pnpm prints the same summary either way; the only honest signal that it did
+  # anything is the added count, which reads "added 0," on a repeat run.
+  # `changed_when: true` here made every run report changed forever.
+  changed_when: "'added 0,' not in developer_node_pnpm_lint.stdout"
+  failed_when:
+    - developer_node_pnpm_lint.rc != 0
+    - "'already installed' not in developer_node_pnpm_lint.stderr"

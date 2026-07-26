@@ -103,16 +103,63 @@
 # GITHUB CLI (all platforms)
 # ============================================================================
 
-- name: Install GitHub CLI (Fedora)
-  ansible.builtin.dnf:
-    name: gh
-    state: present
+# gh comes from GitHub's own signed repo on both distros, not the distro
+# package. Ubuntu 24.04 ships 2.45.0 against upstream's 2.96.0 -- 51 minors of
+# `gh` behind, on the tool our whole workflow drives. Fedora's 2.87.3 is close
+# today, but it freezes on its own schedule, so both distros use the repo
+# rather than only the one that hurts right now.
+
+- name: Configure the GitHub CLI repository (Fedora)
+  block:
+    - name: Add the GitHub CLI repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: gh-cli
+        description: GitHub CLI
+        baseurl: "{{ gh_rpm_repo_url }}"
+        gpgcheck: true
+        gpgkey: "{{ gh_rpm_gpg_url }}"
+        enabled: true
+
+    - name: Install the GitHub CLI (Fedora)
+      ansible.builtin.dnf:
+        name: gh
+        state: present
+
+  become: true
   when: ansible_facts['distribution'] == 'Fedora'
 
-- name: Install GitHub CLI (Ubuntu)
-  ansible.builtin.apt:
-    name: gh
-    state: present
+- name: Configure the GitHub CLI repository (Ubuntu)
+  block:
+    - name: Create the apt keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add the GitHub CLI GPG key
+      ansible.builtin.get_url:
+        url: "{{ gh_deb_gpg_url }}"
+        dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
+        mode: '0644'
+
+    - name: Add the GitHub CLI repository
+      ansible.builtin.deb822_repository:
+        name: github-cli
+        types: deb
+        uris: "{{ gh_deb_repo_url }}"
+        suites: stable
+        components: main
+        signed_by: /etc/apt/keyrings/githubcli-archive-keyring.gpg
+        architectures: "{{ hyperi_arch_deb | default('amd64') }}"
+        state: present
+
+    - name: Install the GitHub CLI (Ubuntu)
+      ansible.builtin.apt:
+        name: gh
+        state: present
+        update_cache: true
+
+  become: true
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 - name: Install GitHub CLI (macOS)

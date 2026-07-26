@@ -1,27 +1,95 @@
 ---
-# Go toolchain — installs Go + gopls + dlv.
+# Go toolchain -- installs Go + gopls + dlv.
 #
-# Linux: package-manager Go (or rely on official tarball if PM version lags)
-# macOS: Homebrew
+# Linux: the official tarball from go.dev, pinned by version with a SHA256 we
+# hold (see hyperi_core_versions in group_vars/all.yml). Go publishes no apt or
+# dnf repo, so this is the best rung of the trust ladder available for it.
+# macOS: Homebrew, which tracks upstream.
+#
+# NOT the distro package. Ubuntu 24.04 ships golang-go 1.22, which upstream
+# stopped supporting long ago -- Go maintains only the last two majors -- so a
+# box provisioned from the distro cannot build against a current toolchain and
+# gets no security fixes for the one it has. The old comment here already
+# admitted the version "lags" and pointed at the official tarball as the
+# fallback; nothing implemented it, so the lag was simply shipped.
+#
+# Installs to /usr/local/go, the layout go.dev documents and every Go tool
+# expects. delve stays a distro package: it is a debugger, not the toolchain,
+# and it tracks whatever Go the distro built it against.
 
-- name: Install Go (Fedora)
-  ansible.builtin.dnf:
-    name:
-      - golang
-      - delve
-    state: present
-  become: true
-  when: ansible_facts['distribution'] == 'Fedora'
+- name: Install the Go toolchain (Linux)
+  block:
+    # `go version` prints e.g. "go version go1.26.5 linux/arm64". If the pinned
+    # version is already in place there is nothing to remove or unpack, so the
+    # run stays idempotent instead of re-downloading a ~70MB tarball each time.
+    - name: Check the installed Go version
+      ansible.builtin.command:
+        cmd: /usr/local/go/bin/go version
+      register: developer_go_installed
+      changed_when: false
+      failed_when: false
 
-- name: Install Go (Ubuntu)
-  ansible.builtin.apt:
-    name:
-      - golang-go
-      - delve
-    state: present
-    update_cache: true
+    - name: Note whether the pinned Go is already installed
+      ansible.builtin.set_fact:
+        go_installed_current: >-
+          {{ ('go' ~ go_version ~ ' ') in (developer_go_installed.stdout | default('')) }}
+
+    - name: Download the Go tarball
+      ansible.builtin.get_url:
+        url: "https://go.dev/dl/go{{ go_version }}.linux-{{ hyperi_arch_deb }}.tar.gz"
+        dest: "/tmp/go{{ go_version }}.linux-{{ hyperi_arch_deb }}.tar.gz"
+        mode: '0644'
+        checksum: "sha256:{{ go_sha256 }}"
+      when: not go_installed_current
+
+    # Upgrading in place leaves files from the previous toolchain behind --
+    # go.dev's own instructions say to remove the old tree first.
+    - name: Remove any previous Go toolchain
+      ansible.builtin.file:
+        path: /usr/local/go
+        state: absent
+      when: not go_installed_current
+
+    - name: Unpack Go into /usr/local
+      ansible.builtin.unarchive:
+        src: "/tmp/go{{ go_version }}.linux-{{ hyperi_arch_deb }}.tar.gz"
+        dest: /usr/local
+        remote_src: true
+        owner: root
+        group: root
+      when: not go_installed_current
+
+    - name: Remove the Go tarball download
+      ansible.builtin.file:
+        path: "/tmp/go{{ go_version }}.linux-{{ hyperi_arch_deb }}.tar.gz"
+        state: absent
+
+    - name: Add the Go toolchain to PATH (system-wide)
+      ansible.builtin.copy:
+        content: |
+          # Managed by hyperi-developer. Go is installed from the upstream
+          # tarball into /usr/local/go -- see developer-go/tasks/go.yml.
+          export PATH="/usr/local/go/bin:$PATH"
+        dest: /etc/profile.d/hyperi-go.sh
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install delve (Fedora)
+      ansible.builtin.dnf:
+        name: delve
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install delve (Ubuntu)
+      ansible.builtin.apt:
+        name: delve
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
   become: true
-  when: ansible_facts['distribution'] == 'Ubuntu'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Install Go (macOS)
   community.general.homebrew:
@@ -37,8 +105,7 @@
 - name: Install gopls (Go language server)
   ansible.builtin.command:
     cmd: go install golang.org/x/tools/gopls@latest
-  environment:
-    GOPATH: "{{ user_home }}/go"
+  environment: "{{ go_bin_env }}"
   become: false
   changed_when: true
   failed_when: false
@@ -106,8 +173,7 @@
 - name: Install gosec (Ubuntu — go install)
   ansible.builtin.command:
     cmd: go install github.com/securego/gosec/v2/cmd/gosec@latest
-  environment:
-    GOPATH: "{{ user_home }}/go"
+  environment: "{{ go_bin_env }}"
   become: false
   changed_when: true
   failed_when: false
@@ -125,8 +191,7 @@
 - name: Install govulncheck (Linux — go install)
   ansible.builtin.command:
     cmd: go install golang.org/x/vuln/cmd/govulncheck@latest
-  environment:
-    GOPATH: "{{ user_home }}/go"
+  environment: "{{ go_bin_env }}"
   become: false
   changed_when: true
   failed_when: false

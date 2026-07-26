@@ -1,0 +1,484 @@
+---
+# Node.js -- CORE, not a JS-developer extra.
+#
+# semantic-release, hyperi-ci and a pile of our own tooling need node, so the
+# runtime and npm belong in the base that every persona pulls, not behind a
+# language tag a Rust or Python developer would never select. The JS/TS roles
+# layer their language tooling ON TOP of what lands here.
+#
+# Node comes from NodeSource's signed repo, never the distro package. Ubuntu
+# 24.04 ships 18.19.1 -- EOL since 2025-04-30 and below semantic-release's
+# >=20.8.1 floor -- and Fedora freezes on its own schedule. This is not a
+# relaxation of the install policy: an upstream signed repo is the same rung of
+# the trust ladder as a distro one. The sin was the `curl | bash` that used to
+# bootstrap it, and that is what is gone.
+#
+# n system-wide + n-1 per user. NodeSource's per-major repos BOTH provide the
+# package `nodejs`, so apt can hold only one of them; side-by-side genuinely
+# needs a version manager, which is what fnm is doing here.
+#
+# npm is NOT installed as a separate package: NodeSource's nodejs bundles npm
+# and corepack. On Ubuntu the distro `npm` package pulls node 18 as a
+# dependency and apt refuses the pair outright ("held broken packages"), so
+# asking for it by name breaks the run.
+
+# ============================================================================
+# Ubuntu -- NodeSource apt repo
+# ============================================================================
+
+- name: Configure NodeSource repository (Ubuntu)
+  block:
+    - name: Create the apt keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Add the NodeSource GPG key
+      ansible.builtin.get_url:
+        url: "{{ nodesource_deb_gpg_url }}"
+        dest: /etc/apt/keyrings/nodesource.asc
+        mode: '0644'
+
+    # `nodistro` is NodeSource's own suite name -- it publishes one distro-
+    # agnostic suite rather than per-codename ones, so there is no release
+    # mapping to do here (contrast docker.yml and the git-core PPA).
+    - name: Add the NodeSource repository
+      ansible.builtin.deb822_repository:
+        name: nodesource
+        types: deb
+        uris: "{{ nodesource_deb_base_url }}/node_{{ node_major }}.x"
+        suites: nodistro
+        components: main
+        signed_by: /etc/apt/keyrings/nodesource.asc
+        architectures: "{{ hyperi_arch_deb | default('amd64') }}"
+        state: present
+
+    - name: Install Node.js (Ubuntu)
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+  become: true
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# ============================================================================
+# Fedora -- NodeSource dnf repo
+# ============================================================================
+
+- name: Configure NodeSource repository (Fedora)
+  block:
+    - name: Add the NodeSource GPG key (Fedora)
+      ansible.builtin.rpm_key:
+        key: "{{ nodesource_rpm_gpg_url }}"
+        state: present
+
+    - name: Add the NodeSource repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: nodesource
+        description: "Node.js {{ node_major }}.x"
+        baseurl: "{{ nodesource_rpm_base_url }}/pub_{{ node_major }}.x/nodistro/nodejs/$basearch"
+        gpgcheck: true
+        gpgkey: "{{ nodesource_rpm_gpg_url }}"
+        enabled: true
+        # Fedora's own nodejs (22 today) would otherwise win on version
+        # comparison for some majors. Priority keeps the repo we chose
+        # authoritative for the package regardless of what Fedora ships.
+        priority: 10
+
+    - name: Install Node.js (Fedora)
+      ansible.builtin.dnf:
+        name: nodejs
+        state: present
+
+  become: true
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# ============================================================================
+# macOS -- Homebrew, pinned to the same major
+# ============================================================================
+
+- name: Install Node.js (macOS)
+  community.general.homebrew:
+    name: "node@{{ node_major }}"
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# Versioned brew formulae are keg-only, so `node@24` installs WITHOUT linking
+# and `node` never appears on PATH -- every npm/corepack/semantic-release task
+# below would then fail on a Mac. Linking it is what makes the pin usable.
+#
+# The unversioned `node` formula is not an option: it tracks Current (26.x
+# today), not the LTS major this file exists to pin.
+- name: Link the pinned Node major into the Homebrew prefix (macOS)
+  ansible.builtin.command:
+    cmd: brew link --overwrite --force node@{{ node_major }}
+  become: false
+  environment: "{{ homebrew_env }}"
+  register: developer_node_link
+  changed_when: "'Linking' in developer_node_link.stdout"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# n-1 major, per user, via fnm
+# ============================================================================
+# Only the n major can be a system package (see the header). fnm gives a
+# developer the previous major for a project that has not moved yet, without
+# disturbing the system node that CI and tooling resolve.
+
+- name: Install fnm and the previous Node major (Linux)
+  block:
+    - name: Download fnm
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/Schniz/fnm/releases/download/{{ fnm_version }}/{{ fnm_asset }}
+        dest: /tmp/fnm.zip
+        mode: '0644'
+
+    - name: Ensure unzip is present (Ubuntu)
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+      become: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Ensure unzip is present (Fedora)
+      ansible.builtin.dnf:
+        name: unzip
+        state: present
+      become: true
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Unpack fnm
+      ansible.builtin.unarchive:
+        src: /tmp/fnm.zip
+        dest: /usr/local/bin
+        remote_src: true
+        include:
+          - fnm
+        mode: '0755'
+        owner: root
+        group: root
+      become: true
+
+    - name: Install the previous Node major via fnm
+      ansible.builtin.command:
+        cmd: /usr/local/bin/fnm install {{ node_major_previous }}
+      become: false
+      environment:
+        FNM_DIR: "{{ user_home }}/.local/share/fnm"
+      register: developer_fnm_install
+      # fnm prints `warning: Version already installed at "..."` and still
+      # exits 0 when the major is present, so the message is the only signal.
+      changed_when: "'already installed' not in developer_fnm_install.stderr"
+
+    # fnm sets the FIRST version it installs as its `default` alias, so without
+    # this the base shell (which has no per-project pin) would resolve `node` to
+    # the n-1 major and shadow the system n -- backwards. Pinning default to
+    # `system` keeps the NodeSource node authoritative everywhere except a
+    # project that pins otherwise. Verified: base shell -> system 24.
+    - name: Point the fnm default at the system Node
+      ansible.builtin.command:
+        cmd: /usr/local/bin/fnm default system
+      become: false
+      environment:
+        FNM_DIR: "{{ user_home }}/.local/share/fnm"
+      register: developer_fnm_default
+      changed_when: false
+
+    # fnm is opt-in per shell: sourcing its env would otherwise shadow the
+    # system node for every command, which is exactly what we do NOT want for
+    # tooling and CI. `--use-on-cd` only switches when a project pins a
+    # version, so the system major stays the default.
+    - name: Wire fnm into the shell (Linux)
+      ansible.builtin.lineinfile:
+        path: "{{ user_home }}/.bashrc"
+        regexp: '^eval "\$\(fnm env'
+        line: 'eval "$(fnm env --use-on-cd)"'
+        state: present
+        owner: "{{ actual_user }}"
+        group: "{{ actual_user }}"
+        mode: '0644'
+        create: true
+
+  rescue:
+    # A second node major is a convenience, not a prerequisite. The system
+    # major is already installed by this point, so a failure here must not
+    # abort the whole run.
+    - name: Record that fnm did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['fnm/node ' ~ node_major_previous ~ ': '
+                ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Install fnm and the previous Node major (macOS)
+  block:
+    - name: Install fnm (macOS)
+      community.general.homebrew:
+        name: fnm
+        state: present
+      become: false
+      environment: "{{ homebrew_env }}"
+
+    - name: Install the previous Node major via fnm (macOS)
+      ansible.builtin.command:
+        cmd: fnm install {{ node_major_previous }}
+      become: false
+      environment: "{{ homebrew_env }}"
+      register: developer_fnm_install_macos
+      # See the Linux note above -- fnm exits 0 either way.
+      changed_when: "'already installed' not in developer_fnm_install_macos.stderr"
+
+    # See the Linux note -- keep the system (Homebrew node@N) major as fnm's
+    # default so the base shell is not silently switched to n-1.
+    - name: Point the fnm default at the system Node (macOS)
+      ansible.builtin.command:
+        cmd: fnm default system
+      become: false
+      environment: "{{ homebrew_env }}"
+      changed_when: false
+
+    - name: Wire fnm into the shell (macOS)
+      ansible.builtin.lineinfile:
+        path: "{{ user_home }}/.zshrc"
+        regexp: '^eval "\$\(fnm env'
+        line: 'eval "$(fnm env --use-on-cd)"'
+        state: present
+        mode: '0644'
+        create: true
+      become: false
+
+  rescue:
+    - name: Record that fnm did not install (macOS)
+      # noqa: var-naming[no-role-prefix] -- shared accumulator, see note above.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['fnm/node ' ~ node_major_previous ~ ': '
+                ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# npm global prefix -- user-owned, so `npm install -g` never needs sudo
+# ============================================================================
+
+- name: Create the npm global directory (Linux)
+  ansible.builtin.file:
+    path: "{{ user_home }}/.npm-global"
+    state: directory
+    mode: '0755'
+    owner: "{{ actual_user }}"
+    group: "{{ actual_user }}"
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Create the npm global directory (macOS)
+  ansible.builtin.file:
+    path: "{{ user_home }}/.npm-global"
+    state: directory
+    mode: '0755'
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Configure the npm prefix (Linux)
+  ansible.builtin.command:
+    cmd: npm config set prefix "{{ user_home }}/.npm-global"
+  become: false
+  become_user: "{{ actual_user }}"
+  changed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Configure the npm prefix (macOS)
+  ansible.builtin.command:
+    cmd: npm config set prefix "{{ user_home }}/.npm-global"
+  become: false
+  environment: "{{ homebrew_env }}"
+  changed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Add the npm global bin to PATH in .bashrc (Linux)
+  ansible.builtin.lineinfile:
+    path: "{{ user_home }}/.bashrc"
+    regexp: "^export PATH=.*\\.npm-global/bin"
+    line: 'export PATH="{{ user_home }}/.npm-global/bin:$PATH"'
+    state: present
+    owner: "{{ actual_user }}"
+    group: "{{ actual_user }}"
+    mode: '0644'
+    create: true
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Add the npm global bin to PATH in .zshrc (macOS)
+  ansible.builtin.lineinfile:
+    path: "{{ user_home }}/.zshrc"
+    regexp: "^export PATH=.*\\.npm-global/bin"
+    line: 'export PATH="{{ user_home }}/.npm-global/bin:$PATH"'
+    state: present
+    mode: '0644'
+    create: true
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# corepack / pnpm -- package managers, core rather than JS-specific
+# ============================================================================
+# corepack ships WITH node (NodeSource bundles it) and provides the pnpm/yarn
+# shims. developer-typescript installs its tooling via `pnpm install -g`, so
+# pnpm must exist before that role runs -- nothing installed it before, which
+# left that tag broken.
+
+- name: Enable corepack (Linux)
+  ansible.builtin.command:
+    cmd: corepack enable
+  become: true
+  changed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Enable corepack (macOS)
+  ansible.builtin.command:
+    cmd: corepack enable
+  environment: "{{ homebrew_env }}"
+  become: false
+  changed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Activate the latest pnpm via corepack (Linux)
+  ansible.builtin.command:
+    cmd: corepack prepare pnpm@latest --activate
+  become: false
+  become_user: "{{ actual_user }}"
+  changed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Activate the latest pnpm via corepack (macOS)
+  ansible.builtin.command:
+    cmd: corepack prepare pnpm@latest --activate
+  environment: "{{ homebrew_env }}"
+  become: false
+  changed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# pnpm refuses `install -g` outright unless its global bin directory is on PATH
+# ("The configured global bin directory is not in PATH -- run pnpm setup"), so
+# every downstream `pnpm install -g` needs PNPM_HOME set AND present in PATH.
+# Exported as a fact so developer-node and developer-typescript use the same
+# environment instead of each rebuilding it.
+- name: Create the pnpm global directory
+  ansible.builtin.file:
+    path: "{{ user_home }}/.local/share/pnpm"
+    state: directory
+    mode: '0755'
+    owner: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+    group: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+
+- name: Set the pnpm environment
+  # noqa: var-naming[no-role-prefix] -- consumed by developer-node and
+  # developer-typescript, so it is deliberately play-scoped, not role-scoped.
+  ansible.builtin.set_fact:
+    pnpm_env:
+      PNPM_HOME: "{{ user_home }}/.local/share/pnpm"
+      # BOTH PNPM_HOME and PNPM_HOME/bin: pnpm reports its global bin directory
+      # as the `bin` subdirectory and checks THAT is on PATH, while its own
+      # binary lives in PNPM_HOME itself.
+      PATH: >-
+        {{ user_home }}/.local/share/pnpm:{{ user_home }}/.local/share/pnpm/bin:{{
+        user_home }}/.npm-global/bin:{{
+        '/opt/homebrew/bin:/usr/local/bin:' if ansible_facts['distribution'] == 'MacOSX' else ''
+        }}{{ ansible_facts['env'].PATH }}
+
+- name: Add PNPM_HOME to .bashrc (Linux)
+  ansible.builtin.lineinfile:
+    path: "{{ user_home }}/.bashrc"
+    regexp: '^export PNPM_HOME='
+    line: 'export PNPM_HOME="{{ user_home }}/.local/share/pnpm"; export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"'
+    state: present
+    owner: "{{ actual_user }}"
+    group: "{{ actual_user }}"
+    mode: '0644'
+    create: true
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Add PNPM_HOME to .zshrc (macOS)
+  ansible.builtin.lineinfile:
+    path: "{{ user_home }}/.zshrc"
+    regexp: '^export PNPM_HOME='
+    line: 'export PNPM_HOME="{{ user_home }}/.local/share/pnpm"; export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"'
+    state: present
+    mode: '0644'
+    create: true
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# ============================================================================
+# semantic-release -- release tooling, needed on every hyperi-ci repo
+# ============================================================================
+# Not JS-specific: the Rust, Python and Ansible repos all release through it,
+# which is precisely why it sits in the core role rather than a language one.
+
+- name: Install semantic-release globally (Linux)
+  community.general.npm:
+    name: semantic-release
+    global: true
+    state: present
+  environment:
+    NPM_CONFIG_PREFIX: "{{ user_home }}/.npm-global"
+  become: false
+  become_user: "{{ actual_user }}"
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Install semantic-release globally (macOS)
+  community.general.npm:
+    name: semantic-release
+    global: true
+    state: present
+  environment: "{{ npm_config_env }}"
+  become: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install the semantic-release plugins globally
+  community.general.npm:
+    name: "{{ item }}"
+    global: true
+    state: present
+  loop:
+    - '@semantic-release/changelog'
+    - '@semantic-release/git'
+    - '@semantic-release/github'
+    - '@semantic-release/commit-analyzer'
+    - '@semantic-release/release-notes-generator'
+    - '@semantic-release/exec'
+    - conventional-changelog-conventionalcommits
+  environment: "{{ npm_config_env if ansible_facts['distribution'] == 'MacOSX' else {'NPM_CONFIG_PREFIX': user_home + '/.npm-global'} }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+# ============================================================================
+# Verification
+# ============================================================================
+
+- name: Verify the installed Node major
+  ansible.builtin.command:
+    cmd: node --version
+  register: developer_node_version
+  changed_when: false
+  failed_when: false
+
+- name: Fail if the distro node shadowed the one we installed
+  ansible.builtin.fail:
+    msg: >-
+      Expected Node {{ node_major }}.x but found
+      {{ developer_node_version.stdout | default('nothing') }}. A distro node
+      package is probably shadowing the NodeSource one -- check that no other
+      repo provides `nodejs` at a higher priority.
+  when:
+    - developer_node_version.rc | default(1) == 0
+    - not developer_node_version.stdout.startswith('v' ~ node_major ~ '.')
