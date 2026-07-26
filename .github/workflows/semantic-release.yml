@@ -7,10 +7,15 @@
 name: Semantic Release
 
 on:
-  # Only release after CI passes — prevents publishing broken code.
-  # workflow_run fires when the named workflow completes on main.
+  # Release only after the CodeQL scan passes on main -- gates on the one
+  # workflow this repo actually runs. This used to name "CI", a workflow that
+  # does not exist here, so the trigger never fired and nothing released for the
+  # ~56 commits between v2.23.14 (Feb) and this fix. CodeQL is GitHub's default
+  # setup rather than a committed file; if workflow_run proves unreliable
+  # against it, fall back to `push: branches: [main]` (how every release up to
+  # v2.23.14 was cut). workflow_dispatch stays as the manual escape hatch.
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CodeQL"]
     branches: [main]
     types: [completed]
   workflow_dispatch:
