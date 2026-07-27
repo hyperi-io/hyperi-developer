@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# [2.24.0](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.14...v2.24.0) (2026-07-27)
+
+
+### Bug Fixes
+
+* **ansible:** add tombstones and molecule remediation tests ([bfb770b](https://github.com/hyperi-io/hyperi-developer/commit/bfb770b82ca7a4c4c87f578122d43fe1a75a8cb9))
+* **ansible:** finish deb822_repository port and drop stale .list files ([28179ca](https://github.com/hyperi-io/hyperi-developer/commit/28179cab1fb054dccc6e1ccfa7b22a3fd1b96f77))
+* **ansible:** promote uv to its own role and repo-install the Astral tools ([89cb95b](https://github.com/hyperi-io/hyperi-developer/commit/89cb95bc8ad2fc4edc5bd71b628635f4f7a74a57))
+* clear ansible-core deprecation warnings ([4344aec](https://github.com/hyperi-io/hyperi-developer/commit/4344aec84de5aff128fa654cd34ee6038b05bb0b))
+* **cloud:** use hashicorp/tap for Terraform on macOS ([932a557](https://github.com/hyperi-io/hyperi-developer/commit/932a55766c80a1b25e185131cde5622786e97e37))
+* **corporate:** add disk-attach as a sudo tool, no boot service ([86a8a2c](https://github.com/hyperi-io/hyperi-developer/commit/86a8a2cb46cfd67a072b464b6065b9ee0530ee50))
+* **data_tools:** skip Vector/ClickHouse on macOS; tap Confluent before install ([000add0](https://github.com/hyperi-io/hyperi-developer/commit/000add0cb581053c8c1d78a5515352c889f2e075))
+* **developer:** dry-run check + Docker Desktop ([b1fb3a1](https://github.com/hyperi-io/hyperi-developer/commit/b1fb3a18fa18a354e32155517d493e6f0327c43e))
+* **developer:** make GNOME desktop opt-in and resolve winlike/maclike correctly ([a5a085f](https://github.com/hyperi-io/hyperi-developer/commit/a5a085f884a2bb25a91c38826c33ea9cf7a162e5))
+* **developer:** self-contained ghostty Solarized theme; drop Mailspring ([1da38e5](https://github.com/hyperi-io/hyperi-developer/commit/1da38e5006e2e8800965af5d12e618aa47104809))
+* **developer:** stop applying enterprise (org) policies to Chrome and Brave ([013f2bb](https://github.com/hyperi-io/hyperi-developer/commit/013f2bbc380ff153c42c96830cdd0fe2f6bc71d3))
+* gate semantic-release on CodeQL, the workflow that actually runs ([ad92d12](https://github.com/hyperi-io/hyperi-developer/commit/ad92d120c0fdf8f90c86997b2055dc2f51b2e676))
+* **ghostty:** use iTerm2 Solarized themes (Builtin variants removed) ([70f6fd1](https://github.com/hyperi-io/hyperi-developer/commit/70f6fd141bdd38db6e17dae3a79b1dcb2e9878c9))
+* install core runtimes from upstream repos, not the distro's frozen packages ([5d32f7e](https://github.com/hyperi-io/hyperi-developer/commit/5d32f7e6375311ffead3faa145a02ccebf07ce5b))
+* **macos:** guard init askpass on undefined ansible_become_password ([9af1a15](https://github.com/hyperi-io/hyperi-developer/commit/9af1a15769cc8ed5f5b47bdb3a5cb3bc6914a5b5))
+* **macos:** reachable chrome/brave, and install uv via Homebrew ([2765d6d](https://github.com/hyperi-io/hyperi-developer/commit/2765d6d67487ebe2706be1995e739c6345c80f12))
+* make hyperi-update work on Fedora, and finish the HyperSec rebrand ([641e4c0](https://github.com/hyperi-io/hyperi-developer/commit/641e4c07a32ac84bfa468e4ed9ba816061e94d2b))
+* make the default install additive, not invasive ([ff2ce90](https://github.com/hyperi-io/hyperi-developer/commit/ff2ce90cc53c51b31e43c910f9327894e0a69267))
+* make VA-API driver install non-fatal for IPv6 environments ([10fc48f](https://github.com/hyperi-io/hyperi-developer/commit/10fc48f3c5bb709db62948b716b688ae263f2cee))
+* point installer at hyperi-developer; elevate DFE product naming to Hyperi ([e551f49](https://github.com/hyperi-io/hyperi-developer/commit/e551f49b645782b6e859ce7bbe3dcef924a1b19c))
+* port rdp-grd value, take over rust build setup, scrub public-repo leaks ([b2f5e48](https://github.com/hyperi-io/hyperi-developer/commit/b2f5e48334aec388aefb3733f1f24a084944896b))
+* **rdp:** generate a per-host RDP password instead of shipping a shared one ([a6fb46e](https://github.com/hyperi-io/hyperi-developer/commit/a6fb46e7d46f1c90af5038d3e1945e009d40511e))
+* **rdp:** GPU-aware VA-API, group-based GPU access, no VM sysctls on bare metal ([3db2bfa](https://github.com/hyperi-io/hyperi-developer/commit/3db2bfacc55a0cde730473a3269bf0fc7e2ab2b6))
+* **rdp:** support Ubuntu 26.04 and gnome-remote-desktop 50 ([439adc3](https://github.com/hyperi-io/hyperi-developer/commit/439adc315b0d7143ad89b42d00a5f35a5d81ef72))
+* release with the built-in GITHUB_TOKEN, not an unconfigured GitHub App ([3edfa09](https://github.com/hyperi-io/hyperi-developer/commit/3edfa097b292b7d4de44a8813b9a5fa6e2f51e48))
+* replace HashiCorp BUSL tools with their open-source forks ([7f13ed9](https://github.com/hyperi-io/hyperi-developer/commit/7f13ed9dae49518e10631f6752ae8281219015a9))
+* **shell_config:** scope macOS zsh history settings to user-level ~/.zshrc ([a60e775](https://github.com/hyperi-io/hyperi-developer/commit/a60e775d183a779ba423bfda800ed7df8598aeeb))
+* stop personas nuking terraform, harden colima + the updater ([a589ef8](https://github.com/hyperi-io/hyperi-developer/commit/a589ef8822c8539790b51b91cd9e68dbc3e95b20))
+* unbreak arm64, add the hyperi-ci check tools, cull the retired ones ([29d1539](https://github.com/hyperi-io/hyperi-developer/commit/29d1539d0e9d9e868fd79067c5260dbee4be4151))
+* unbreak default Ubuntu install, remove a committed credential, correct the docs ([50b3c71](https://github.com/hyperi-io/hyperi-developer/commit/50b3c71218aaa482b88da0d80e4c1d23fad8d207))
+* unbreak docker compose on macOS, drop the EOL Fedora minimum ([d9bdb6a](https://github.com/hyperi-io/hyperi-developer/commit/d9bdb6ada9fb88aa1beecc02114478414e584e02))
+* **utilities:** drop ansible and python@3 from macOS list (uv-managed) ([bd067b0](https://github.com/hyperi-io/hyperi-developer/commit/bd067b0d9926b4df09c8ff28c4aaf27b64d8f79f))
+* **verify:** check the docker CLI on macOS, not OrbStack ([3c87a9b](https://github.com/hyperi-io/hyperi-developer/commit/3c87a9b0c76ccb61f32930d406dcbbfeef6d2274))
+* **verify:** stat OrbStack on macOS; allow absence in check_mode ([d8180eb](https://github.com/hyperi-io/hyperi-developer/commit/d8180eb7da53c8969784803fdcbfc0d2d4dd5ba7))
+* **verify:** use PATH-resolved `uv` instead of hard-coded ~/.cargo/bin path ([94c80b0](https://github.com/hyperi-io/hyperi-developer/commit/94c80b07208321240e0c6e40a8a110667898f798))
+* **vm_optimizer:** never install VM guest tools on physical hosts ([ae225e5](https://github.com/hyperi-io/hyperi-developer/commit/ae225e5a17788de32d96c28f702a76d3f30c8514))
+
+
+### Features
+
+* **developer:** one-command "hyperi-update" system updater + GUI app ([b251b87](https://github.com/hyperi-io/hyperi-developer/commit/b251b87be8dfedaa8ee11e95b08ca93bd1380977)), closes [#8](https://github.com/hyperi-io/hyperi-developer/issues/8)
+* install Slack/Freelens/Remmina from native repos; remove Bitwarden ([741e4b2](https://github.com/hyperi-io/hyperi-developer/commit/741e4b236d4e1d03466972fff83b1deece0c8194))
+* personas, client roles, pinned mode and a 3-tier updater ([ca841da](https://github.com/hyperi-io/hyperi-developer/commit/ca841da4445b7c11dd14d9eaedb29615753e9996))
+* **vscode:** raise Linux inotify limits with idempotent guards ([157b879](https://github.com/hyperi-io/hyperi-developer/commit/157b879d4dff812f0054686c6b9b552039e9d278))
+
 ## [2.23.14](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.13...v2.23.14) (2026-02-20)
 
 
