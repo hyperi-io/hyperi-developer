@@ -19,10 +19,114 @@
 
   rescue:
     - name: Record that colima did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # cross-role accumulator the play summarises at the end; prefixing it
+      # per-role would break the accumulation.
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
              + ['colima: ' ~ (ansible_failed_result.msg | default('brew install failed'))] }}
+
+# Installing colima is not enough to make it usable. Two things bite otherwise,
+# and both look like application faults rather than environment faults:
+#
+#   1. It does not start at login. After a reboot the daemon is simply down, and
+#      every container-backed integration test fails on a missing socket. This
+#      is a LaunchAgent, not a LaunchDaemon: colima's VM is per-user (state in
+#      ~/.colima), so starting it as root at boot would build a DIFFERENT VM
+#      whose socket nobody's DOCKER_HOST points at -- it would look fine and
+#      silently not work.
+#   2. Its socket lives under $HOME, not /var/run/docker.sock. The `docker` CLI
+#      finds it via the docker context, but anything speaking to the daemon
+#      directly does NOT -- testcontainers (bollard) hardcodes the conventional
+#      path and dies with SocketNotFoundError("/var/run/docker.sock") while
+#      `docker ps` works fine two lines earlier.
+#
+# Set unconditionally: colima is the only macOS daemon we run (docker-ce on
+# Linux, colima here), so there is no other socket to defer to.
+- name: Make colima usable (autostart + socket discovery)
+  block:
+    - name: Locate the colima binary
+      ansible.builtin.command:
+        cmd: command -v colima
+      register: soe_colima_bin
+      changed_when: false
+      failed_when: soe_colima_bin.rc != 0
+
+    - name: Start colima at login
+      ansible.builtin.copy:
+        dest: "{{ ansible_env.HOME }}/Library/LaunchAgents/io.hyperi.colima.plist"
+        mode: '0644'
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>Label</key>
+              <string>io.hyperi.colima</string>
+              <key>ProgramArguments</key>
+              <array>
+                  <string>{{ soe_colima_bin.stdout | trim }}</string>
+                  <string>start</string>
+              </array>
+              <key>EnvironmentVariables</key>
+              <dict>
+                  <key>PATH</key>
+                  <string>{{ (soe_colima_bin.stdout | trim | dirname) }}:/usr/bin:/bin:/usr/sbin:/sbin</string>
+              </dict>
+              <key>RunAtLoad</key>
+              <true/>
+              <!-- colima is a VM, so KeepAlive would fight a deliberate stop. -->
+              <key>KeepAlive</key>
+              <false/>
+              <key>StandardOutPath</key>
+              <string>{{ ansible_env.HOME }}/.cache/hyperi-ai/colima-launchagent.log</string>
+              <key>StandardErrorPath</key>
+              <string>{{ ansible_env.HOME }}/.cache/hyperi-ai/colima-launchagent.log</string>
+          </dict>
+          </plist>
+      become: false
+
+    - name: Load the colima launch agent
+      ansible.builtin.command:
+        cmd: >-
+          launchctl bootstrap gui/{{ ansible_user_uid }}
+          {{ ansible_env.HOME }}/Library/LaunchAgents/io.hyperi.colima.plist
+      become: false
+      register: soe_colima_bootstrap
+      # Runs every time, not just when the plist changed: 37 is "already
+      # bootstrapped", so a re-run is a no-op, and it also re-loads the agent if
+      # someone unloaded it by hand. Gating on `changed` would leave that broken.
+      failed_when: soe_colima_bootstrap.rc not in [0, 37]
+      changed_when: soe_colima_bootstrap.rc == 0
+
+    # .zshenv, NOT .zshrc: zsh reads .zshrc only for interactive shells, so a
+    # build script, CI runner or agent tool invoking `zsh -c` would still miss
+    # it and fail on the socket. .zshenv is read by every shell.
+    #
+    # Per-user rather than /etc/zshenv on purpose. colima's VM and socket are
+    # per-user even though the binary is shared -- the socket path is under
+    # $HOME -- so this is user state, not machine state.
+    - name: Point DOCKER_HOST at colima's socket
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_env.HOME }}/.zshenv"
+        create: true
+        mode: '0644'
+        marker: "# {mark} colima docker socket (hyperi-developer)"
+        block: |
+          # colima is the macOS container daemon (docker-ce on Linux, colima on
+          # the Mac -- nothing else), and its socket is not at the conventional
+          # /var/run/docker.sock that testcontainers and friends look for.
+          export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+      become: false
+
+  rescue:
+    - name: Record that the colima autostart/socket wiring did not apply
+      # noqa: var-naming[no-role-prefix] -- shared cross-role accumulator
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['colima-wiring: ' ~ (ansible_failed_result.msg | default('autostart/socket setup failed'))] }}
 
 - name: Install Apple container (native macOS containers)
   block:
@@ -73,6 +177,7 @@
 
   rescue:
     - name: Record that Apple container did not install
+      # noqa: var-naming[no-role-prefix] -- shared cross-role accumulator
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
