@@ -31,7 +31,11 @@
 # and both look like application faults rather than environment faults:
 #
 #   1. It does not start at login. After a reboot the daemon is simply down, and
-#      every container-backed integration test fails on a missing socket.
+#      every container-backed integration test fails on a missing socket. This
+#      is a LaunchAgent, not a LaunchDaemon: colima's VM is per-user (state in
+#      ~/.colima), so starting it as root at boot would build a DIFFERENT VM
+#      whose socket nobody's DOCKER_HOST points at -- it would look fine and
+#      silently not work.
 #   2. Its socket lives under $HOME, not /var/run/docker.sock. The `docker` CLI
 #      finds it via the docker context, but anything speaking to the daemon
 #      directly does NOT -- testcontainers (bollard) hardcodes the conventional
@@ -96,9 +100,16 @@
       failed_when: soe_colima_bootstrap.rc not in [0, 37]
       changed_when: soe_colima_bootstrap.rc == 0
 
+    # .zshenv, NOT .zshrc: zsh reads .zshrc only for interactive shells, so a
+    # build script, CI runner or agent tool invoking `zsh -c` would still miss
+    # it and fail on the socket. .zshenv is read by every shell.
+    #
+    # Per-user rather than /etc/zshenv on purpose. colima's VM and socket are
+    # per-user even though the binary is shared -- the socket path is under
+    # $HOME -- so this is user state, not machine state.
     - name: Point DOCKER_HOST at colima's socket
       ansible.builtin.blockinfile:
-        path: "{{ ansible_env.HOME }}/.zshrc"
+        path: "{{ ansible_env.HOME }}/.zshenv"
         create: true
         mode: '0644'
         marker: "# {mark} colima docker socket (hyperi-developer)"
