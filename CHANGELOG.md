@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.1](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.0...v2.24.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **soe:** start colima at login and point DOCKER_HOST at its socket ([#23](https://github.com/hyperi-io/hyperi-developer/issues/23)) ([7dbc494](https://github.com/hyperi-io/hyperi-developer/commit/7dbc4948e564b02fba04a760fc697c2128c17281))
+
 # [2.24.0](https://github.com/hyperi-io/hyperi-developer/compare/v2.23.14...v2.24.0) (2026-07-27)
 
 
