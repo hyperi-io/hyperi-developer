@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.4](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.3...v2.24.4) (2026-07-30)
+
+
+### Bug Fixes
+
+* scope hyperi-ci to what this repo is, and correct the declared licence ([bb6a080](https://github.com/hyperi-io/hyperi-developer/commit/bb6a080e42edb653993abb8fab1463e1f5025cf3))
+
 ## [2.24.3](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.2...v2.24.3) (2026-07-30)
 
 
