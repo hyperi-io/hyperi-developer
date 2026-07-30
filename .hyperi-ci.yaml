@@ -1,0 +1,31 @@
+# hyperi-ci configuration.
+#
+# This repo is Ansible and shell. The only JavaScript is package.json, which
+# carries the semantic-release scripts, and that marker alone is enough for
+# hyperi-ci to run the whole TypeScript stage against a repo with no JS source.
+# Ansible is linted by ansible-lint and molecule (see CONTRIBUTING.md), which
+# hyperi-ci has no handler for.
+
+quality:
+  typescript:
+    # Warn rather than block. Both open advisories are in `tar` and
+    # `brace-expansion`, bundled inside the `npm` that @semantic-release/npm
+    # vendors -- npm cannot patch a bundled dependency, and the only offered
+    # remedy downgrades semantic-release.
+    #
+    # The release workflow installs semantic-release globally at @latest and
+    # never installs from this tree, so nothing CI runs is built from the
+    # audited dependency graph.
+    #
+    # Kept visible rather than disabled, and `hyperi-ci check --strict`
+    # promotes it back to blocking.
+    audit: warn
+
+test:
+  # No JavaScript tests exist. package.json carries a `test` script that says
+  # so and exits clean, because the TypeScript test handler runs `npm test`
+  # unconditionally -- hyperi-ci names `test.enabled: false` as the escape
+  # hatch but does not read that key. Kept so it takes effect if that lands.
+  enabled: false
+  # Stops `-- --coverage` being appended to a script that takes no flags.
+  coverage: false

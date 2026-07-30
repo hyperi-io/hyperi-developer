@@ -51,7 +51,7 @@ You will see one of these screens:
 #### Remote Login Screen (Configure This)
 ![Remote Login - Enable and Set Password](docs/remote-login-on.png)
 
-**Action:** 
+**Action:**
 - Ensure "Remote Login" toggle is **ON**
 - Click "Set Password" button
 - Create an RDP-specific password (different from your user password)
