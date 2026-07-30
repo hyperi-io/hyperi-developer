@@ -28,3 +28,62 @@ hyperi_versions:
   cargo-audit: v0.22.2
   cargo-deny: 0.20.2
   cargo-chef: v0.1.77
+
+# ============================================================================
+# Core component versions -- the ONE place to bump them
+# ============================================================================
+# Core components (language runtimes, docker, git, gh) come from the UPSTREAM
+# repo at latest, NEVER the distro's frozen package. Ubuntu 24.04 ships node
+# 18.19.1 (EOL 2025-04-30, below semantic-release's floor) and go 1.22
+# (unsupported -- Go keeps the last two majors). Fedora is fresher today, but
+# it freezes on its own schedule and will rot the same way, so the rule is
+# uniform across both distros rather than applied where the pain shows first.
+#
+# This does NOT relax the install policy -- it applies it properly. An upstream
+# signed repo is rung 1 of the trust ladder, the same rung a distro repo sits
+# on. The sin was never NodeSource; it was the `curl | bash` that bootstrapped
+# it. Adding the same repo declaratively keeps the verification AND the version.
+#
+# Two shapes, decided by what upstream actually publishes:
+#
+#   signed repo      node, gh, docker, git. The repo keeps the box current on
+#                    its own via `apt/dnf upgrade`, so only the MAJOR is pinned
+#                    here -- there is no patch version to chase, and routine OS
+#                    updates carry the tool forward for free.
+#   pinned artefact  go, rustup, fnm. Upstream publishes no repo, so we pin an
+#                    exact version (rung 3) and `hyperi-update` refreshes them.
+#
+# Bumping a major in a year is editing a number here. Nothing below is repeated
+# in a role.
+hyperi_core_versions:
+  # Node n and n-1. n is installed system-wide from the NodeSource repo, so
+  # root, systemd units, semantic-release and CI all resolve the same node;
+  # n-1 is per-user via fnm, for projects not yet moved to n. 24 is Active LTS
+  # (Krypton), 22 is in maintenance. When 26 goes LTS in Oct 2026 these become
+  # 26 and 24.
+  node_major: 24
+  node_major_previous: 22
+
+  # Go publishes tarballs only -- no apt/dnf repo exists -- so this is the
+  # pinned-artefact rung: exact version plus a SHA256 we hold, per arch. This
+  # is the hardening the `hyperi_versions` note above calls planned; for these
+  # two tools it is done.
+  go: "1.26.5"
+  go_sha256:
+    amd64: "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+    arm64: "fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49"
+
+  # rustup-init only BOOTSTRAPS; the toolchain then tracks stable via `rustup
+  # update`, so this pin ages slowly and does not gate the Rust version.
+  # Upstream on both distros, not the distro package: Ubuntu's rustup is 1.26.0
+  # and ships no rustup-init at all, so it never creates ~/.cargo/bin -- the
+  # layout every later task in the rust role assumes.
+  rustup: "1.29.0"
+  rustup_sha256:
+    x86_64: "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
+    aarch64: "9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792"
+
+  # fnm installs the n-1 Node major per user. Pinned by TAG, on the same
+  # reasoning as hyperi_versions above: a fetched release asset cannot be
+  # force-moved by a tag rewrite.
+  fnm: "v1.39.0"

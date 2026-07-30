@@ -1,0 +1,21 @@
+---
+# Developer-Node depends on the core `developer` role -- the Node runtime, npm
+# and pnpm now live there (node is tooling/CI infrastructure, not a JS-only
+# concern), and the extras in this role install through pnpm.
+#
+# Same shape as developer-typescript depending on this role.
+
+galaxy_info:
+  author: HyperI
+  description: JS/TS developer extras layered on the core Node runtime
+  company: HyperI
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Fedora
+      versions: ['43', '44']
+    - name: Ubuntu
+      versions: ['noble', 'resolute']
+
+dependencies:
+  - role: developer

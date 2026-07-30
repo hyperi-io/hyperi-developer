@@ -7,10 +7,15 @@
 name: Semantic Release
 
 on:
-  # Only release after CI passes — prevents publishing broken code.
-  # workflow_run fires when the named workflow completes on main.
+  # Release only after the CodeQL scan passes on main -- gates on the one
+  # workflow this repo actually runs. This used to name "CI", a workflow that
+  # does not exist here, so the trigger never fired and nothing released for the
+  # ~56 commits between v2.23.14 (Feb) and this fix. CodeQL is GitHub's default
+  # setup rather than a committed file; if workflow_run proves unreliable
+  # against it, fall back to `push: branches: [main]` (how every release up to
+  # v2.23.14 was cut). workflow_dispatch stays as the manual escape hatch.
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CodeQL"]
     branches: [main]
     types: [completed]
   workflow_dispatch:
@@ -30,20 +35,20 @@ jobs:
     runs-on: ${{ vars.GH_RUNNER_DEFAULT || 'ubuntu-latest' }}
 
     steps:
-      - name: Generate GitHub App Token
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-
+      # The built-in GITHUB_TOKEN, not a GitHub App: main is unprotected, so it
+      # can push the VERSION/CHANGELOG bump and the tags. The App approach this
+      # replaced needed GH_APP_ID / GH_APP_PRIVATE_KEY secrets that were never
+      # configured here, so the release could not authenticate at all. Trade-off
+      # accepted: release commits are attributed to github-actions[bot] and do
+      # not trigger downstream workflows -- the @semantic-release/git commit
+      # carries [skip ci] anyway, so nothing is lost.
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -64,7 +69,7 @@ jobs:
 
       - name: Run semantic-release
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           semantic-release
 

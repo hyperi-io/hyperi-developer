@@ -35,6 +35,35 @@ docker_repo_url: "{{ docker_repo_base_url }}/{{ docker_distro_name }}"
 # pre_tasks under `always`, so it should not be).
 docker_arch: "{{ hyperi_arch_deb | default('amd64') }}"
 
+# Node.js configuration
+#
+# NodeSource publishes a repo PER MAJOR (node_24.x, node_22.x) and both provide
+# the package `nodejs`, so a box can hold exactly one system-wide major. That is
+# the n slot; fnm covers n-1 per user. Majors come from the SSoT -- see
+# hyperi_core_versions in inventories/localhost/group_vars/all.yml.
+#
+# The deb and rpm repos are signed by DIFFERENT keys, so both URLs are carried.
+node_major: "{{ hyperi_core_versions.node_major }}"
+node_major_previous: "{{ hyperi_core_versions.node_major_previous }}"
+nodesource_deb_base_url: "https://deb.nodesource.com"
+nodesource_rpm_base_url: "https://rpm.nodesource.com"
+nodesource_deb_gpg_url: "{{ nodesource_deb_base_url }}/gpgkey/nodesource-repo.gpg.key"
+nodesource_rpm_gpg_url: "{{ nodesource_rpm_base_url }}/gpgkey/ns-operations-public.key"
+# fnm ships one asset per arch, and its arm64 asset is not named with the
+# Debian token, so it gets its own mapping rather than reusing hyperi_arch_deb.
+fnm_version: "{{ hyperi_core_versions.fnm }}"
+fnm_asset: "{{ 'fnm-arm64.zip' if hyperi_arch_deb | default('amd64') == 'arm64' else 'fnm-linux.zip' }}"
+
+# GitHub CLI -- GitHub's own signed repo on both distros. No version is pinned:
+# the repo always carries latest, which is the point of using it over the
+# distro package.
+gh_deb_repo_url: "https://cli.github.com/packages"
+gh_deb_gpg_url: "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+# The rpm repo signs with the ASCII-armoured key, not the binary keyring the
+# apt repo uses -- these two URLs are taken from GitHub's own gh-cli.repo.
+gh_rpm_repo_url: "https://cli.github.com/packages/rpm"
+gh_rpm_gpg_url: "https://cli.github.com/packages/githubcli-archive-keyring.asc"
+
 # ============================================================================
 # BRANDING / CUSTOMIZATION
 # ============================================================================

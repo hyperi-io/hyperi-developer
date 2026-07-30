@@ -1,0 +1,21 @@
+---
+# Developer-Go defaults.
+#
+# The version lives in the SSoT -- hyperi_core_versions in
+# inventories/localhost/group_vars/all.yml. This file only selects the checksum
+# for the running architecture, so a Go bump stays a one-line edit there.
+
+go_version: "{{ hyperi_core_versions.go }}"
+go_sha256: "{{ hyperi_core_versions.go_sha256[hyperi_arch_deb | default('amd64')] }}"
+
+# Go is installed to /usr/local/go, so it is NOT on a non-login shell's PATH
+# during the run itself -- /etc/profile.d is only sourced by login shells, and
+# the `go install` tasks below would silently no-op (they carry
+# failed_when: false). Tasks that invoke `go` carry this explicitly instead.
+# macOS keeps Homebrew's prefix, where its `go` actually lives.
+go_bin_env:
+  PATH: >-
+    {{ '/opt/homebrew/bin:/usr/local/bin:'
+       if ansible_facts['distribution'] == 'MacOSX'
+       else '/usr/local/go/bin:' }}{{ user_home }}/go/bin:{{ ansible_facts['env'].PATH }}
+  GOPATH: "{{ user_home }}/go"
