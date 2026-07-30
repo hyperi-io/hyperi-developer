@@ -1,0 +1,93 @@
+---
+# Arcane -- container management UI (https://getarcane.app), OPT-IN.
+#
+# Off by default: it is a web UI holding the Docker socket, so it goes on only
+# where someone asked for it. Enable with `-e soe_arcane_enabled=true` or in
+# group_vars. When enabled it is a daemon -- survives a reboot, keeps itself
+# current, answers on loopback only.
+soe_arcane_enabled: false
+
+# Loopback-bound host port. The container always listens on 3552 internally.
+soe_arcane_port: 3552
+
+# Per-user, not system-wide: colima's VM and Docker socket belong to one user,
+# so the macOS case is forced and Linux matches it to keep one code path.
+soe_arcane_dir: "{{ ansible_facts['env'].HOME }}/.config/hyperi/arcane"
+
+# Arcane's own per-container updater, which skips Arcane itself -- hyperi-update
+# pulls and recreates the stack to cover that gap.
+#
+# Asserted over the REST API, not the compose environment: `autoUpdate` is a
+# database setting, and only fields tagged `envOverride` upstream read the
+# environment. That is why the stack carries an admin API key at all.
+soe_arcane_auto_update: true
+
+# Containers the auto-updater must leave alone, by name. The local spike
+# instances take latest at `local-services up`, which is their owner's decision
+# point -- moving them at any other time recreates a daemon out from under
+# whoever is mid-spike. Single containers can also opt out with the label
+# `com.getarcaneapp.arcane.updater=false`.
+soe_arcane_auto_update_exclude:
+  - "{{ soe_local_clickhouse_name }}"
+  - "{{ soe_local_redpanda_name }}"
+
+# Zone Arcane schedules its background jobs against. IANA name, not an
+# abbreviation.
+soe_arcane_timezone: UTC
+
+# Admin password, set once while the seeded credential is still known.
+#
+# Arcane seeds `arcane` / `arcane-admin` with a forced password change on first
+# login. The role performs that change itself straight after the first deploy,
+# which clears the flag, so nobody meets the dialog. Minimum 8 characters.
+#
+# Left at upstream's own default: this is a loopback-only UI and a password
+# the developer already knows beats one they have to go and look up. Override
+# it in group_vars on any machine where that trade does not hold.
+soe_arcane_admin_password: arcane-admin
+
+# ============================================================================
+# Local services -- persistent ClickHouse + Redpanda for ad-hoc work, OPT-IN.
+# ============================================================================
+#
+# Spike instances: somewhere to poke at a query or hand-feed a topic without
+# waiting for a suite to build. Integration and e2e suites create and tear down
+# their own containers and must not reach for these -- a shared daemon makes a
+# suite non-hermetic and order-dependent.
+#
+# Deployed but stopped. `restart: no` keeps them off after a reboot; they cost
+# nothing until `local-services up`, which is seconds because the images are
+# already pulled.
+soe_local_services_enabled: false
+
+# Per-user for the same reason Arcane is: colima's VM and socket belong to one
+# user, so the macOS case is forced and Linux matches it.
+soe_local_services_dir: "{{ ansible_facts['env'].HOME }}/.config/hyperi/local-services"
+
+soe_local_clickhouse_name: local-clickhouse
+soe_local_redpanda_name: local-redpanda
+
+# Latest on every `up`. A spike box tracking upstream finds breakage early, and
+# is expected to run ahead of what any product formally supports.
+soe_local_clickhouse_tag: latest
+soe_local_redpanda_tag: latest
+
+# Off the default ports so these never collide with a project's own compose
+# stack, which is free to use 8123/9000.
+soe_local_clickhouse_http_port: 18123
+soe_local_clickhouse_native_port: 19000
+soe_local_redpanda_kafka_port: 9092
+soe_local_redpanda_admin_port: 9644
+
+soe_local_clickhouse_password: proofadmin
+
+# Tenant-isolation custom-settings prefix, e.g. SET DFE_current_tenant_id.
+soe_local_clickhouse_custom_settings_prefix: DFE_
+
+# Hard cap per container. These share a laptop with an IDE and a browser, and
+# an uncapped ClickHouse sizes its caches to the whole VM.
+soe_local_memory_limit: 1g
+
+# Seastar's own allocator reservation, which must stay under the container cap
+# or the broker is OOM-killed while warming up.
+soe_local_redpanda_seastar_memory: 700M

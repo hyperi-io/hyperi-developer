@@ -1,0 +1,289 @@
+---
+# Arcane -- container management UI (https://getarcane.app), opt-in.
+#
+# Runs as a container against whichever daemon the machine already has:
+# docker-ce natively on Linux, colima's VM on macOS. Nothing here is
+# runtime-specific except the socket the CLI is pointed at.
+#
+# Wrapped warn-and-continue, like the rest of soe: an optional UI failing to
+# come up must not sink the run that also configures auto-updates and disks.
+
+- name: Deploy Arcane (container management UI)
+  block:
+    # Absent from hyperi_versions, so this is `latest` unless someone pins it.
+    # Adding a pin there is only correct once hyperi-ci carries the same one.
+    - name: Resolve the Arcane image tag (pinned or latest)
+      # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
+      ansible.builtin.set_fact:
+        soe_arcane_ref: >-
+          {{ hyperi_versions['arcane']
+             if (hyperi_pinned | default(false) and 'arcane' in (hyperi_versions | default({})))
+             else 'latest' }}
+
+    # macOS keeps its socket under $HOME rather than /var/run, and the SOE run
+    # does not inherit the .zshenv that fixes that for interactive shells.
+    - name: Work out which daemon socket to talk to
+      ansible.builtin.set_fact:
+        soe_arcane_docker_env:
+          DOCKER_HOST: "unix://{{ ansible_facts['env'].HOME }}/.colima/default/docker.sock"
+          PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+      when: ansible_facts['distribution'] == 'MacOSX'
+
+    - name: Use the default socket on Linux
+      ansible.builtin.set_fact:
+        soe_arcane_docker_env: {}
+      when: ansible_facts['distribution'] != 'MacOSX'
+
+    # 0700: the environment file below holds the encryption key, the JWT secret
+    # and an admin API key.
+    - name: Create the Arcane stack directory
+      ansible.builtin.file:
+        path: "{{ soe_arcane_dir }}"
+        state: directory
+        mode: '0700'
+      become: false
+
+    - name: Read the environment file this host already has
+      ansible.builtin.slurp:
+        src: "{{ soe_arcane_dir }}/arcane.env"
+      register: soe_arcane_env_raw
+      become: false
+      failed_when: false
+      no_log: true
+
+    - name: Index the secrets already on this host
+      # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
+      ansible.builtin.set_fact:
+        soe_arcane_env_map: >-
+          {{ dict((soe_arcane_env_raw.content | default('') | b64decode).splitlines()
+                  | select('match', '^[A-Z_]+=')
+                  | map('split', '=', 1)) }}
+      no_log: true
+
+    # Regenerating these on a re-run would lock Arcane out of its own database,
+    # so a value is only minted when the host has none.
+    - name: Mint an encryption key if this host has none
+      ansible.builtin.command:
+        cmd: openssl rand -base64 32
+      register: soe_arcane_gen_enc
+      changed_when: false
+      no_log: true
+      when: soe_arcane_env_map.ENCRYPTION_KEY is not defined
+
+    - name: Mint a JWT secret if this host has none
+      ansible.builtin.command:
+        cmd: openssl rand -base64 32
+      register: soe_arcane_gen_jwt
+      changed_when: false
+      no_log: true
+      when: soe_arcane_env_map.JWT_SECRET is not defined
+
+    # `arc_` + 32 random bytes hex-encoded is the shape upstream's own
+    # `arcane generate api-key` produces.
+    - name: Mint an admin API key if this host has none
+      ansible.builtin.command:
+        cmd: openssl rand -hex 32
+      register: soe_arcane_gen_key
+      changed_when: false
+      no_log: true
+      when: soe_arcane_env_map.ADMIN_STATIC_API_KEY is not defined
+
+    - name: Settle the Arcane secrets (an existing value always wins)
+      # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
+      ansible.builtin.set_fact:
+        soe_arcane_encryption_key: >-
+          {{ soe_arcane_env_map.ENCRYPTION_KEY | default(soe_arcane_gen_enc.stdout | default('') | trim) }}
+        soe_arcane_jwt_secret: >-
+          {{ soe_arcane_env_map.JWT_SECRET | default(soe_arcane_gen_jwt.stdout | default('') | trim) }}
+        soe_arcane_admin_api_key: >-
+          {{ soe_arcane_env_map.ADMIN_STATIC_API_KEY
+             | default('arc_' ~ (soe_arcane_gen_key.stdout | default('') | trim)) }}
+      no_log: true
+
+    - name: Install the Arcane environment file
+      ansible.builtin.template:
+        src: arcane.env.j2
+        dest: "{{ soe_arcane_dir }}/arcane.env"
+        mode: '0600'
+      become: false
+      no_log: true
+
+    - name: Install the Arcane compose file
+      ansible.builtin.template:
+        src: arcane-compose.yaml.j2
+        dest: "{{ soe_arcane_dir }}/compose.yaml"
+        mode: '0600'
+      become: false
+
+    # Skipped under --check along with the rest of the runtime steps: the stack
+    # directory the templates above would have created does not exist there.
+    - name: Pull the Arcane image
+      ansible.builtin.command:
+        cmd: docker compose pull
+        chdir: "{{ soe_arcane_dir }}"
+      environment: "{{ soe_arcane_docker_env }}"
+      become: false
+      register: soe_arcane_pull
+      # compose reports "Pulled" whether or not a layer moved, so a new image is
+      # only visible as the recreate below.
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start Arcane
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ soe_arcane_dir }}"
+      environment: "{{ soe_arcane_docker_env }}"
+      become: false
+      register: soe_arcane_up
+      changed_when: >-
+        soe_arcane_up.stderr is search('Started|Recreated|Created')
+      when: not ansible_check_mode
+
+    # Also the authentication check: a 200 here proves the admin API key in the
+    # environment file is the one the running container booted with.
+    - name: Wait for Arcane to answer on loopback
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ soe_arcane_port }}/api/environments/0/settings"
+        method: GET
+        headers:
+          X-Api-Key: "{{ soe_arcane_admin_api_key }}"
+        status_code: [200]
+      register: soe_arcane_health
+      until: soe_arcane_health.status == 200
+      retries: 30
+      delay: 5
+      changed_when: false
+      no_log: true
+      when: not ansible_check_mode
+
+    # Upstream seeds the admin with RequiresPasswordChange set, and ONLY a
+    # completed password change clears it -- an admin-side user update sets the
+    # password but leaves the flag standing. Retiring the prompt therefore takes
+    # both calls: set the password to a value this run knows, then spend it on
+    # the change endpoint that clears the flag.
+    #
+    # Gated on the flag, so it is a one-shot. Once a developer has changed their
+    # own password the flag is down and neither call fires again.
+    - name: Read the Arcane admin user
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ soe_arcane_port }}/api/users"
+        method: GET
+        headers:
+          X-Api-Key: "{{ soe_arcane_admin_api_key }}"
+        status_code: [200]
+      register: soe_arcane_users
+      changed_when: false
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Work out whether Arcane still wants a password change
+      # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
+      ansible.builtin.set_fact:
+        soe_arcane_admin: >-
+          {{ (soe_arcane_users.json.data | default([])
+              | selectattr('username', 'equalto', 'arcane')
+              | list | first) | default({}) }}
+      when: not ansible_check_mode
+
+    # No currentPassword needed on the admin path, so this works whatever the
+    # password happens to be now.
+    - name: Set the Arcane admin password
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ soe_arcane_port }}/api/users/{{ soe_arcane_admin.id }}"
+        method: PUT
+        headers:
+          X-Api-Key: "{{ soe_arcane_admin_api_key }}"
+        body_format: json
+        body:
+          password: "{{ soe_arcane_admin_password }}"
+        status_code: [200]
+      register: soe_arcane_pwset
+      changed_when: soe_arcane_pwset.status == 200
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - soe_arcane_admin.requiresPasswordChange | default(false)
+
+    - name: Retire the forced password change
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ soe_arcane_port }}/api/auth/password"
+        method: POST
+        headers:
+          X-Api-Key: "{{ soe_arcane_admin_api_key }}"
+        body_format: json
+        body:
+          currentPassword: "{{ soe_arcane_admin_password }}"
+          newPassword: "{{ soe_arcane_admin_password }}"
+        status_code: [200]
+      register: soe_arcane_pwchange
+      changed_when: soe_arcane_pwchange.status == 200
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - soe_arcane_admin.requiresPasswordChange | default(false)
+
+    # The settings endpoint answers with a flat [{key, value}] list.
+    - name: Index Arcane's current settings
+      # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
+      ansible.builtin.set_fact:
+        soe_arcane_settings_now: >-
+          {{ dict(soe_arcane_health.json | default([])
+                  | map(attribute='key') | zip(soe_arcane_health.json | default([])
+                  | map(attribute='value'))) }}
+      when: not ansible_check_mode
+
+    - name: Work out the auto-update settings this host should have
+      # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
+      ansible.builtin.set_fact:
+        soe_arcane_settings_want:
+          autoUpdate: "{{ soe_arcane_auto_update | bool | lower }}"
+          autoUpdateExcludedContainers: "{{ soe_arcane_auto_update_exclude | join(',') }}"
+
+    # `autoUpdate` is a database setting rather than an environment override, so
+    # asserting it needs the API. Values are strings upstream, not booleans.
+    # Only PUT on a real difference, otherwise every run reports changed.
+    - name: Assert Arcane's auto-update settings
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ soe_arcane_port }}/api/environments/0/settings"
+        method: PUT
+        headers:
+          X-Api-Key: "{{ soe_arcane_admin_api_key }}"
+        body_format: json
+        body: "{{ soe_arcane_settings_want }}"
+        status_code: [200]
+      register: soe_arcane_settings
+      changed_when: soe_arcane_settings.status == 200
+      no_log: true
+      when:
+        - not ansible_check_mode
+        - soe_arcane_settings_now | default({}) | dict2items
+          | selectattr('key', 'in', soe_arcane_settings_want)
+          | items2dict != soe_arcane_settings_want
+
+    - name: Display the Arcane hint
+      ansible.builtin.debug:
+        msg: |
+          Arcane is on http://localhost:{{ soe_arcane_port }} (loopback only).
+
+          Login is arcane / the configured admin password. The forced first-login
+          change has already been retired by this run.
+
+          There is still a login: auto-login sits behind a `buildables` Go build
+          tag that no published image is compiled with.
+
+          Stack: {{ soe_arcane_dir }}
+          Updates: hyperi-update pulls and recreates it; Arcane's own updater
+          keeps the containers it manages current.
+
+  rescue:
+    # Names the failed task as well as its message: the tasks carrying the API
+    # key are no_log, so their message reduces to a censorship notice.
+    - name: Record that Arcane did not deploy
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # cross-role accumulator the play summarises at the end
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['arcane: ' ~ (ansible_failed_task.name | default('deploy'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('failed'))] }}

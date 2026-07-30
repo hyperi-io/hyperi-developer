@@ -88,6 +88,9 @@ elif have apt-get; then
     PKG_MGR="apt"
 fi
 
+# Opt-in stack, absent on a machine that never enabled it.
+ARCANE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/arcane"
+
 # --- confirm ---------------------------------------------------------------
 # This touches every package on the box, so say so before doing it. --yes is
 # how Ansible and any other unattended caller skips this.
@@ -104,6 +107,7 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     have npm      && printf '  - npm global tools + pnpm\n'
     printf '  - static release binaries (kind, argocd, kubeconform, kube-linter, dive, kustomize, k9s)\n'
     have claude   && printf '  - Claude Code CLI\n'
+    [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
     read -r -p "Proceed? [y/N] " confirm
     case "${confirm,,}" in
@@ -349,6 +353,17 @@ if have claude; then
     run "claude update" claude update
 else
     skip "claude not found in PATH"
+fi
+
+# --- Arcane ----------------------------------------------------------------
+# Arcane's own auto-updater deliberately skips Arcane's container, so the stack
+# is pulled and recreated here instead. Only acts on a machine that opted in --
+# the compose file is absent everywhere else. Unlike the tools above, Arcane is
+# opt-in, so a machine without it is not a gap worth reporting -- no section.
+if [[ -f "$ARCANE_DIR/compose.yaml" ]] && have docker; then
+    section "Arcane"
+    run "arcane pull"     docker compose --project-directory "$ARCANE_DIR" pull
+    run "arcane recreate" docker compose --project-directory "$ARCANE_DIR" up -d
 fi
 
 # --- Summary ---------------------------------------------------------------

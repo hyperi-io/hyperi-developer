@@ -204,6 +204,22 @@ fi
 # formulae on macOS, so `brew upgrade` above already refreshed them -- no
 # separate GitHub re-fetch is needed here (that is a Linux-only concern).
 
+# --- Arcane ----------------------------------------------------------------
+# Arcane's own auto-updater deliberately skips Arcane's container, so the stack
+# is pulled and recreated here instead. Only acts on a machine that opted in --
+# the compose file is absent everywhere else.
+ARCANE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/arcane"
+if [[ -f "$ARCANE_DIR/compose.yaml" ]] && have docker; then
+  section "Arcane"
+  # colima's socket is not at /var/run/docker.sock, and a GUI-launched run does
+  # not necessarily carry the .zshenv that points DOCKER_HOST at it.
+  if [[ -z "${DOCKER_HOST:-}" && -S "$HOME/.colima/default/docker.sock" ]]; then
+    export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+  fi
+  run "arcane pull"     docker compose --project-directory "$ARCANE_DIR" pull
+  run "arcane recreate" docker compose --project-directory "$ARCANE_DIR" up -d
+fi
+
 # --- Claude Code CLI: self-installed under ~/.local, not brew-managed ------
 if have claude; then
   section "Claude Code CLI"

@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+#
+# local-services - persistent local ClickHouse + Redpanda for ad-hoc work.
+#
+# Managed by hyperi-developer (ansible/roles/soe/tasks/local_services.yml).
+# Edits are overwritten on the next SOE run -- change the soe_local_* vars.
+#
+# Spike instances, not test fixtures. An integration or e2e suite creates and
+# tears down its own containers, so it stays hermetic whether these are up or
+# down.
+#
+# Ready, not running: `restart: no` means a reboot leaves them stopped and they
+# cost nothing until `local-services up`. The images stay pulled, so starting
+# takes seconds.
+#
+# `up` pulls first, so a spike box tracks upstream and finds breakage early.
+# Being ahead of what a product supports is the intent, not a defect.
+#
+# Linux (docker-ce) and macOS (colima). bash 3.2+, no GNU-only flags.
+#
+set -eu
+
+STACK_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/local-services"
+
+# colima's socket is not at /var/run/docker.sock, and a GUI-launched shell does
+# not necessarily carry the .zshenv that points DOCKER_HOST at it.
+if [ -z "${DOCKER_HOST:-}" ] && [ -S "$HOME/.colima/default/docker.sock" ]; then
+    DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+    export DOCKER_HOST
+fi
+
+if [ ! -f "$STACK_DIR/compose.yaml" ]; then
+    echo "local-services: no stack at $STACK_DIR" >&2
+    echo "Deploy it with: install.sh --soe -e soe_local_services_enabled=true" >&2
+    exit 1
+fi
+
+dc() { docker compose --project-directory "$STACK_DIR" "$@"; }
+
+print_endpoints() {
+    cat <<EOF
+
+Endpoints:
+  ClickHouse HTTP    localhost:{{ soe_local_clickhouse_http_port }}
+  ClickHouse native  localhost:{{ soe_local_clickhouse_native_port }}
+  ClickHouse auth    user=default  pw={{ soe_local_clickhouse_password }}
+  Redpanda Kafka     localhost:{{ soe_local_redpanda_kafka_port }}  (PLAINTEXT dev, no SASL)
+  Redpanda admin     localhost:{{ soe_local_redpanda_admin_port }}
+EOF
+}
+
+cmd_up() {
+    # Best-effort pull: latest when online, cached images when not. A failed
+    # pull must not ground a laptop that is off the network.
+    if ! dc pull; then
+        echo "[warn]   pull failed -- starting on the cached images" >&2
+    fi
+    dc up -d
+    print_endpoints
+}
+
+# Containers go, volumes stay. `purge` is the verb that destroys data.
+cmd_down() {
+    dc down
+}
+
+cmd_status() {
+    echo "== containers =="
+    dc ps -a
+    echo ""
+    echo "== stats (running only) =="
+    ids=$(dc ps -q)
+    if [ -n "$ids" ]; then
+        # word-split intentional: one arg per container id.
+        # shellcheck disable=SC2086
+        docker stats --no-stream $ids
+    else
+        echo "(none running)"
+    fi
+}
+
+cmd_logs() {
+    dc logs -f
+}
+
+cmd_purge() {
+    printf 'This destroys all ClickHouse and Redpanda data in the local stack.\n'
+    printf 'Type the word purge to confirm: '
+    read -r reply
+    if [ "$reply" != "purge" ]; then
+        echo "Nothing done."
+        exit 0
+    fi
+    dc down -v
+}
+
+case "${1:-}" in
+    up)     cmd_up ;;
+    down)   cmd_down ;;
+    status) cmd_status ;;
+    logs)   cmd_logs ;;
+    purge)  cmd_purge ;;
+    *)
+        cat >&2 <<EOF
+Usage: local-services {up|down|status|logs|purge}
+
+  up      pull latest, then start both
+  down    stop and remove the containers, keep the data
+  status  what is running, and what it costs in CPU/memory
+  logs    follow both logs
+  purge   down, and destroy the data volumes (asks first)
+EOF
+        exit 2
+        ;;
+esac

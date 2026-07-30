@@ -1,0 +1,66 @@
+---
+# Managed by hyperi-developer (ansible/roles/soe/tasks/local_services.yml).
+# Edits are overwritten on the next SOE run -- change the soe_local_* vars.
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:{{ soe_local_clickhouse_tag }}
+    container_name: {{ soe_local_clickhouse_name }}
+    # Stopped after a reboot until `local-services up`.
+    restart: "no"
+    ports:
+      - "127.0.0.1:{{ soe_local_clickhouse_http_port }}:8123"
+      - "127.0.0.1:{{ soe_local_clickhouse_native_port }}:9000"
+    # ClickHouse opens a lot of files and fails its own startup check without
+    # this on a default docker ulimit.
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    # A capped daemon on a working laptop. Uncapped, ClickHouse sizes its caches
+    # to the whole VM and starves everything else on the machine.
+    mem_limit: {{ soe_local_memory_limit }}
+    volumes:
+      - ./clickhouse/custom_settings.xml:/etc/clickhouse-server/config.d/custom_settings.xml:ro
+      - ./clickhouse/access.xml:/etc/clickhouse-server/users.d/access.xml:ro
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
+  redpanda:
+    image: redpandadata/redpanda:{{ soe_local_redpanda_tag }}
+    container_name: {{ soe_local_redpanda_name }}
+    restart: "no"
+    ports:
+      - "127.0.0.1:{{ soe_local_redpanda_kafka_port }}:9092"
+      - "127.0.0.1:{{ soe_local_redpanda_admin_port }}:9644"
+    mem_limit: {{ soe_local_memory_limit }}
+    # dev-container mode drops the production sizing checks; --memory must stay
+    # under mem_limit or the broker is OOM-killed as it warms its allocator.
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory={{ soe_local_redpanda_seastar_memory }}
+      - --default-log-level=warn
+      - --kafka-addr=0.0.0.0:9092
+      - --advertise-kafka-addr=localhost:{{ soe_local_redpanda_kafka_port }}
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health", "-X", "admin.hosts=localhost:9644"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  clickhouse-data:
+    name: {{ soe_local_clickhouse_name }}-data
+  redpanda-data:
+    name: {{ soe_local_redpanda_name }}-data

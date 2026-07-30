@@ -84,6 +84,26 @@
   tags: ['soe', 'colima']
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# Persistent local ClickHouse + Redpanda for ad-hoc work. Opt-in
+# (soe_local_services_enabled), and after colima so a Mac has a daemon.
+- name: Deploy the local services stack (ClickHouse + Redpanda)
+  ansible.builtin.include_tasks:
+    file: local_services.yml
+    apply:
+      tags: ['soe', 'local-services']
+  tags: ['soe', 'local-services']
+  when: soe_local_services_enabled | bool
+
+# Container management UI. Opt-in (soe_arcane_enabled), and after colima so a
+# Mac has a daemon to deploy against.
+- name: Deploy Arcane (container management UI)
+  ansible.builtin.include_tasks:
+    file: arcane.yml
+    apply:
+      tags: ['soe', 'arcane']
+  tags: ['soe', 'arcane']
+  when: soe_arcane_enabled | bool
+
 - name: Disable telemetry and advertising
   ansible.builtin.include_tasks:
     file: telemetry-disable.yml

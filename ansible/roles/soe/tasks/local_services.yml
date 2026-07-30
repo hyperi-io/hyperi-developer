@@ -1,0 +1,110 @@
+---
+# Local services -- persistent ClickHouse + Redpanda for ad-hoc work, opt-in.
+#
+# Deploys the stack and the `local-services` command, and leaves both
+# containers STOPPED. Starting them is a decision the developer makes, not
+# something a provisioning run imposes on a laptop.
+#
+# Runs against whichever daemon the machine already has: docker-ce natively on
+# Linux, colima's VM on macOS.
+#
+# Wrapped warn-and-continue, like the rest of soe.
+
+- name: Deploy the local services stack (ClickHouse + Redpanda)
+  block:
+    - name: Work out which daemon socket to talk to
+      ansible.builtin.set_fact:
+        soe_local_docker_env:
+          DOCKER_HOST: "unix://{{ ansible_facts['env'].HOME }}/.colima/default/docker.sock"
+          PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+      when: ansible_facts['distribution'] == 'MacOSX'
+
+    - name: Use the default socket on Linux
+      ansible.builtin.set_fact:
+        soe_local_docker_env: {}
+      when: ansible_facts['distribution'] != 'MacOSX'
+
+    - name: Create the local services stack directory
+      ansible.builtin.file:
+        path: "{{ soe_local_services_dir }}/clickhouse"
+        state: directory
+        mode: '0755'
+      become: false
+
+    - name: Install the ClickHouse custom-settings config
+      ansible.builtin.template:
+        src: local-clickhouse-custom-settings.xml.j2
+        dest: "{{ soe_local_services_dir }}/clickhouse/custom_settings.xml"
+        mode: '0644'
+      become: false
+
+    - name: Install the ClickHouse access config
+      ansible.builtin.template:
+        src: local-clickhouse-access.xml.j2
+        dest: "{{ soe_local_services_dir }}/clickhouse/access.xml"
+        mode: '0644'
+      become: false
+
+    - name: Install the local services compose file
+      ansible.builtin.template:
+        src: local-services-compose.yaml.j2
+        dest: "{{ soe_local_services_dir }}/compose.yaml"
+        mode: '0644'
+      become: false
+
+    - name: Create the user bin directory
+      ansible.builtin.file:
+        path: "{{ ansible_facts['env'].HOME }}/.local/bin"
+        state: directory
+        mode: '0755'
+      become: false
+
+    # ~/.local/bin, not /usr/local/bin: the stack it drives is per-user, and a
+    # dev convenience should not need root to install. The SOE shell config
+    # already puts this directory on PATH.
+    - name: Install the local-services command
+      ansible.builtin.template:
+        src: local-services.j2
+        dest: "{{ ansible_facts['env'].HOME }}/.local/bin/local-services"
+        mode: '0755'
+      become: false
+
+    # Pulled at provision time so the first `up` is seconds rather than a
+    # multi-hundred-MB wait. Not started: that is the developer's call.
+    - name: Pull the local services images
+      ansible.builtin.command:
+        cmd: docker compose pull
+        chdir: "{{ soe_local_services_dir }}"
+      environment: "{{ soe_local_docker_env }}"
+      become: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Display the local services hint
+      ansible.builtin.debug:
+        msg: |
+          Local services deployed and left STOPPED (by design).
+
+            local-services up       start both, pulling latest first
+            local-services status   what is running and what it costs
+            local-services down     stop and remove, keep the data
+            local-services purge    destroy the data too
+
+          ClickHouse  localhost:{{ soe_local_clickhouse_http_port }} (HTTP)
+                      localhost:{{ soe_local_clickhouse_native_port }} (native)
+                      user=default pw={{ soe_local_clickhouse_password }}
+          Redpanda    localhost:{{ soe_local_redpanda_kafka_port }} (Kafka)
+                      localhost:{{ soe_local_redpanda_admin_port }} (admin)
+
+          These are for spikes. Integration and e2e suites must create and tear
+          down their own containers.
+
+  rescue:
+    - name: Record that the local services stack did not deploy
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # cross-role accumulator the play summarises at the end
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['local-services: ' ~ (ansible_failed_task.name | default('deploy'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('failed'))] }}

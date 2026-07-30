@@ -262,6 +262,8 @@ hyperi-ci.
 | LibreOffice (org office suite) | Linux | distro repo | version |
 | Nemo, GNOME extensions (gext), fonts | Linux | distro / uv-tool / vendored | version |
 | colima + Apple `container` (macOS only) | macOS | brew / github-binary | version / SHA256 |
+| Arcane container UI (opt-in `soe_arcane_enabled`) | all | container image | tag |
+| Local ClickHouse + Redpanda (opt-in `soe_local_services_enabled`) | all | container image | latest, always |
 | removals / update_command / admin-scripts (opt-in `never`, on for soe) | Linux | tombstones + scripts | n/a |
 
 ## Two install modes

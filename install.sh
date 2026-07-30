@@ -197,6 +197,11 @@ HyperI SOE (soe, soe-gui) - org policy, includes everything above:
     claude            Claude Code CLI
     forgejo/codeberg  tea (Forgejo/Gitea CLI)
     colima            macOS container daemon + Apple container (macOS only)
+    arcane            Container management UI, localhost-only (OPT-IN:
+                      -e soe_arcane_enabled=true)
+    local-services    Persistent local ClickHouse + Redpanda for spikes,
+                      deployed stopped (OPT-IN:
+                      -e soe_local_services_enabled=true)
     disk-attach       Sudo tool to mount a newly attached disk
     telemetry-disable Disable Ubuntu Pro/ESM ads + telemetry
     slack             Slack desktop
