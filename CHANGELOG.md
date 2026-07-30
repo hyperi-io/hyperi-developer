@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.2](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.1...v2.24.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **soe:** add opt-in Arcane UI and local ClickHouse/Redpanda services ([8799347](https://github.com/hyperi-io/hyperi-developer/commit/879934711a9aff4603d9531149b7812cb8225181))
+* **soe:** put DOCKER_HOST in .zshenv, not .zshrc ([bbbfa97](https://github.com/hyperi-io/hyperi-developer/commit/bbbfa975e1d86c7c617628f5e9b62fc84445f291))
+* **soe:** size the colima VM to the Mac instead of taking its default ([4065509](https://github.com/hyperi-io/hyperi-developer/commit/40655093beb4c076f4e72e8a95d8f59fc665ce85))
+* **soe:** start colima at login and point DOCKER_HOST at its socket ([3da1fb9](https://github.com/hyperi-io/hyperi-developer/commit/3da1fb99c92cfecabe512f2f819e0f5c66bcb968))
+
 ## [2.24.1](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.0...v2.24.1) (2026-07-29)
 
 
