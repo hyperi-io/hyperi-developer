@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.3](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.2...v2.24.3) (2026-07-30)
+
+
+### Bug Fixes
+
+* exempt the decommissioned Scaleway test credential from gitleaks ([9731de0](https://github.com/hyperi-io/hyperi-developer/commit/9731de02e5b04672d2e97be5de1130d48604b344))
+
 ## [2.24.2](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.1...v2.24.2) (2026-07-30)
 
 
