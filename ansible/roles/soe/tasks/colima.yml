@@ -87,6 +87,39 @@
           </plist>
       become: false
 
+    # Sizing has to be asserted explicitly. colima's default VM is small, and
+    # the always-on dev daemons (ClickHouse, Redpanda) already reserve several
+    # GB of it, so a testcontainers suite gets what is left -- which is not
+    # enough to bring a broker up inside its 60s readiness budget. Every test
+    # then fails at once, looking like a broker fault rather than a starved VM.
+    #
+    # CPUs are not pinned, so leaving two for macOS is enough. Memory is
+    # reserved, so take half and no more.
+    - name: Work out the VM sizing this Mac should give colima
+      # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
+      ansible.builtin.set_fact:
+        soe_colima_cpu: "{{ [ansible_processor_vcpus | int - 2, 2] | max }}"
+        soe_colima_mem_gb: "{{ [ansible_memtotal_mb | int // 2048, 4] | max }}"
+
+    - name: Read colima's persisted VM sizing
+      ansible.builtin.slurp:
+        src: "{{ ansible_env.HOME }}/.colima/default/colima.yaml"
+      register: soe_colima_cfg
+      failed_when: false
+
+    # Only ever grows the VM. A hand-tuned larger allocation is a deliberate
+    # choice and this must not quietly claw it back.
+    - name: Resize the colima VM when it is smaller than this Mac can afford
+      ansible.builtin.command:
+        cmd: "colima start --cpu {{ soe_colima_cpu }} --memory {{ soe_colima_mem_gb }}"
+      become: false
+      register: soe_colima_resize
+      changed_when: soe_colima_resize.rc == 0
+      when: >-
+        soe_colima_cfg.content is not defined
+        or ((soe_colima_cfg.content | b64decode | from_yaml).cpu | default(0) | int < soe_colima_cpu | int)
+        or ((soe_colima_cfg.content | b64decode | from_yaml).memory | default(0) | int < soe_colima_mem_gb | int)
+
     - name: Load the colima launch agent
       ansible.builtin.command:
         cmd: >-
