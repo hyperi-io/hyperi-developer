@@ -1,0 +1,21 @@
+# gitleaks configuration.
+#
+# Extends the default rule set rather than replacing it, so every upstream rule
+# still applies and only the entries below are exempted.
+
+[extend]
+useDefault = true
+
+# A Scaleway Apple-silicon test VM password, committed 2025-11-03 and removed
+# from the tree in 50b3c71. Only the historical blobs still carry it, and
+# gitleaks scans full history, so the finding recurs on every run.
+#
+# Exempted rather than rewritten: the Scaleway account and that Mac mini are
+# decommissioned, so the credential authenticates nothing. Rewriting history to
+# excise it would need a force-push to main, which costs more than it buys for
+# a dead secret.
+#
+# Scoped to the one dead path. A new secret anywhere else still fails the scan.
+[[allowlists]]
+description = "Decommissioned Scaleway Mac mini test credential (history only)"
+paths = ['''ansible/tests/mac/inventory_scaleway\.yml''']
