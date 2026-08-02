@@ -1,0 +1,56 @@
+# Project:   hyperi-developer
+# File:      .github/workflows/ci.yml
+# Purpose:   CI pipeline
+#
+# License:   Apache-2.0
+# Copyright: (c) 2026 HYPERI PTY LIMITED
+#
+# Calls hyperi-ci's shared pipeline rather than hand-rolling one. There is no
+# reusable workflow for an Ansible repo, so this uses the TypeScript one:
+# package.json makes hyperi-ci resolve the project as JavaScript, and
+# .hyperi-ci.yaml scopes those stages back to what this tree actually is. The
+# test stage runs tools/ci/run-tests.sh, which exercises the Ansible.
+#
+# Publishing is gated on a `Publish: true` commit trailer, written by
+# `hyperi-ci push --publish`. Every other push validates only.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        required: false
+        default: ""
+        description: "Tag to re-publish (existing tag). Omit + set from-head to release HEAD."
+      from-head:
+        type: string
+        required: false
+        default: ""
+        description: "'true' to release/retry the current HEAD -- the CI creates the tag."
+      bump:
+        type: string
+        required: false
+        default: "auto"
+        description: "Version resolution for from-head: auto | patch | minor (forced) | X.Y.Z (exact version)."
+
+permissions:
+  contents: write
+  issues: write
+  packages: write
+  pull-requests: write
+
+jobs:
+  ci:
+    uses: hyperi-io/hyperi-ci/.github/workflows/ts-ci.yml@main
+    with:
+      publish-target: oss
+      tag: ${{ inputs.tag || '' }}
+      from-head: ${{ inputs.from-head || '' }}
+      bump: ${{ inputs.bump || 'auto' }}
+    secrets: inherit

@@ -3,10 +3,16 @@
 # This repo is Ansible and shell. The only JavaScript is package.json, which
 # carries the semantic-release scripts, and that marker alone is enough for
 # hyperi-ci to run the whole TypeScript stage against a repo with no JS source.
-# Ansible is linted by ansible-lint and molecule (see CONTRIBUTING.md), which
-# hyperi-ci has no handler for.
+# There is no Ansible handler, so the test stage is pointed at the real checks
+# through the `test` script (see the test section below).
 
 quality:
+  # The Windows 11 SOE is PowerShell and is not currently maintained. Excluded
+  # from the scanners until it is picked back up, rather than carrying findings
+  # nobody is acting on.
+  exclude_paths:
+    - windows
+
   typescript:
     # Warn rather than block. Both open advisories are in `tar` and
     # `brace-expansion`, bundled inside the `npm` that @semantic-release/npm
@@ -22,10 +28,13 @@ quality:
     audit: warn
 
 test:
-  # No JavaScript tests exist. package.json carries a `test` script that says
-  # so and exits clean, because the TypeScript test handler runs `npm test`
-  # unconditionally -- hyperi-ci names `test.enabled: false` as the escape
-  # hatch but does not read that key. Kept so it takes effect if that lands.
-  enabled: false
+  # The TypeScript handler runs `npm test`, which here is tools/ci/run-tests.sh
+  # -- the playbook syntax check, an advisory ansible-lint pass and shellcheck.
+  # Each step skips when its tool is absent, so a bare Node runner stays green.
+  #
+  # molecule and tests/proxmox are deliberately outside it: the first is
+  # delegated against a real workstation it mutates, the second needs a Proxmox
+  # endpoint.
+  #
   # Stops `-- --coverage` being appended to a script that takes no flags.
   coverage: false

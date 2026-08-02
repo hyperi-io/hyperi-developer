@@ -8,7 +8,7 @@
     "url": "https://github.com/hyperi-io/hyperi-developer.git"
   },
   "scripts": {
-    "test": "echo 'No JavaScript tests. This repo is Ansible and shell -- see CONTRIBUTING.md for ansible-lint, molecule and shellcheck.'",
+    "test": "bash tools/ci/run-tests.sh",
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run",
     "release:no-ci": "semantic-release --no-ci"

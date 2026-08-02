@@ -19,3 +19,9 @@ useDefault = true
 [[allowlists]]
 description = "Decommissioned Scaleway Mac mini test credential (history only)"
 paths = ['''ansible/tests/mac/inventory_scaleway\.yml''']
+
+# The Windows 11 SOE is PowerShell and is not currently maintained. Excluded
+# until it is picked back up. Anything moved out of windows/ is scanned again.
+[[allowlists]]
+description = "Unmaintained Windows SOE"
+paths = ['''windows/''']
