@@ -73,6 +73,16 @@
     file: pam_nice.yml
   tags: ['pam_nice']
 
+# `apply:` as well as the include's own tag -- without it a `--tags
+# handover-watchdog` run includes the file and then filters out every task in
+# it.
+- name: Recover the RDP daemon after a failed handover
+  ansible.builtin.include_tasks:
+    file: handover_watchdog.yml
+    apply:
+      tags: ['handover-watchdog']
+  tags: ['handover-watchdog']
+
 - name: Verify RDP optimizations
   ansible.builtin.include_tasks:
     file: verify.yml

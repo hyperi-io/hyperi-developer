@@ -76,7 +76,7 @@
     PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
   changed_when: false
   failed_when: verify_git_lfs.rc != 0
-  become: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user }}"
 
 - name: Verify yq

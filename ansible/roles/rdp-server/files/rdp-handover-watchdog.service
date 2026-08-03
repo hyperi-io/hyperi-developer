@@ -1,0 +1,19 @@
+[Unit]
+Description=Restart GNOME Remote Desktop after a failed RDP handover
+Documentation=file:/usr/local/sbin/rdp-handover-watchdog
+After=gdm.service gnome-remote-desktop.service
+Wants=gnome-remote-desktop.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/rdp-handover-watchdog
+# The watchdog exits if journalctl --follow ever dies; without this the host
+# silently loses its only route back in after a failed handover.
+Restart=always
+RestartSec=5
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

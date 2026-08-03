@@ -15,7 +15,8 @@
     cmd: uv tool install mypy
   environment:
     PATH: "{{ user_home }}/.cargo/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
-  become: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
   register: devpy_mypy_install
   changed_when: "'already installed' not in (devpy_mypy_install.stderr | default(''))"
   failed_when: false

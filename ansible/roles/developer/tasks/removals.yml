@@ -56,6 +56,11 @@
 # user-owned in ~/.local/bin there -- ~/.cargo/bin is a retired location on all
 # three, and it sits AHEAD of ~/.local/bin on PATH, so a copy left there
 # shadows the real install.
+#
+# Runs as the owner of that home, not as whoever connected. Under `become:
+# false` on a machine where they differ, the file module cannot read the path
+# and reports "Insufficient permissions ... Treating as absent" -- a green
+# tombstone over a binary that is still there and still shadowing.
 - name: Remove the retired user-level uv/uvx (superseded by the current install)
   ansible.builtin.file:
     path: "{{ user_home }}/.cargo/bin/{{ item }}"
@@ -63,7 +68,8 @@
   loop:
     - uv
     - uvx
-  become: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
 
 # ============================================================================
 # CANNOT CO-EXIST — the old thing actively conflicts with its replacement.
@@ -136,6 +142,52 @@
   environment: "{{ homebrew_cask_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
   failed_when: false
+
+# The package uninstall above does NOT take the docker context with it: context
+# state is a per-user file under ~/.docker/contexts, owned by the user rather
+# than the package. What is left points at a socket that no longer exists, and
+# where `desktop-linux` is also the SELECTED context every docker command fails
+# with "Cannot connect to the Docker daemon" until it is switched back.
+#
+# Context subcommands do not talk to the daemon, so these still work on a host
+# whose selected context is already dead.
+- name: Read the current docker context
+  ansible.builtin.command:
+    cmd: docker context show
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
+  register: developer_docker_ctx_current
+  changed_when: false
+  failed_when: false
+
+- name: List the docker contexts
+  ansible.builtin.command:
+    cmd: docker context ls --quiet
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
+  register: developer_docker_ctx_list
+  changed_when: false
+  failed_when: false
+
+# `docker context rm` refuses to remove the context in use, so this has to come
+# first.
+- name: Switch off the retired Docker Desktop context
+  ansible.builtin.command:
+    cmd: docker context use default
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
+  changed_when: true
+  failed_when: false
+  when: developer_docker_ctx_current.stdout | default('') | trim == 'desktop-linux'
+
+- name: Remove the retired Docker Desktop context
+  ansible.builtin.command:
+    cmd: docker context rm desktop-linux
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
+  changed_when: true
+  failed_when: false
+  when: "'desktop-linux' in (developer_docker_ctx_list.stdout_lines | default([]))"
 
 # OnlyOffice - retired; LibreOffice is the org office suite now. Remove the
 # native package and the Flatpak fallback from hosts that carried it.

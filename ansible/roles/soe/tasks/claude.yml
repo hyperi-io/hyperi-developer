@@ -27,7 +27,7 @@
     state: absent
   environment:
     NPM_CONFIG_PREFIX: "{{ user_home }}/.npm-global"
-  become: false
+  become: true
   become_user: "{{ actual_user }}"
   failed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
