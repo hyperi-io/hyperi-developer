@@ -27,6 +27,21 @@ quality:
     # promotes it back to blocking.
     audit: warn
 
+publish:
+  # This repo has NO publish target. A release here is a tag, a CHANGELOG
+  # commit and a GitHub Release -- v2.24.4 shipped zero assets, and install.sh
+  # is run from a clone rather than fetched from a registry. `publish` stays
+  # enabled because that is what tags and cuts the release.
+  destinations_oss:
+    # Nothing here is an npm package. package.json exists only to carry the
+    # semantic-release scripts, and the same detection that picks the
+    # TypeScript quality handler also aims publish at npmjs, which fails
+    # preflight on a missing NPM_TOKEN and blocks the release outright.
+    #
+    # A false positive, not a real destination that lost its token: supplying
+    # one would put an Ansible installer on a public registry.
+    npm: false
+
 test:
   # The TypeScript handler runs `npm test`, which here is tools/ci/run-tests.sh
   # -- the playbook syntax check, an advisory ansible-lint pass and shellcheck.
