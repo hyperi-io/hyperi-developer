@@ -1,0 +1,13 @@
+---
+# Which profile to apply. One data file per profile under vars/profiles/, so
+# adding a profile is adding a file -- see the role README.
+#
+#   always-on   never sleep on mains power, lid shut included; stock behaviour
+#               on battery. For a repurposed laptop doing build work.
+#   vm          never sleep or suspend at all. For an unattended RDP guest.
+power_profile: always-on
+
+# macOS cannot scope lid-close sleep to a power source -- `disablesleep`
+# suppresses it on battery as well, so a closed laptop in a bag keeps running.
+# Off by default; set it on a Mac that lives on a desk.
+power_profile_macos_disable_sleep: false

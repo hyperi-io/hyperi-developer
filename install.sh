@@ -221,6 +221,8 @@ Groups / client bundles (own tag; soe pulls them by default):
 Targeted deployment:
     rdp-server        GNOME Remote Desktop (RDP server on port 3389)
     vm                VM guest optimisations (QEMU agent etc.)
+    power-profile     Sleep/idle/lid policy. Profiles: always-on (default),
+                      vm. Select with -e power_profile=<name>
 
 macOS-only:
     bash-modern       Modern Bash via Homebrew (does NOT chsh)
@@ -231,6 +233,9 @@ Composability examples:
     ./install.sh --tags vscode,ghostty           VS Code + Ghostty only
     ./install.sh --soe --languages rust,go       SOE + Rust + Go
     ./install.sh --infra --pinned                SRE box, CI-exact versions
+    ./install.sh --tags power-profile            Never sleep on mains power
+    ./install.sh --tags power-profile -e power_profile=vm
+                                                 Never sleep at all (RDP guest)
 EOF
     exit 0
 }

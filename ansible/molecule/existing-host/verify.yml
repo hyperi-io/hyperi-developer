@@ -107,6 +107,60 @@
       loop_control:
         label: "{{ item }}"
 
+    # Debian's split packages. `telnet` is transitional and `nmap-common` holds
+    # nmap's data files, so a host can pass the assert above while still
+    # carrying a working telnet binary and most of nmap.
+    - name: Assert the Debian split packages are gone too
+      ansible.builtin.assert:
+        that:
+          - item not in ansible_facts.packages
+        fail_msg: "{{ item }} is still installed — its tombstone did not fire."
+        success_msg: "{{ item }} absent"
+      loop:
+        - inetutils-telnet
+        - telnet-ssl
+        - nmap-common
+      loop_control:
+        label: "{{ item }}"
+      when: ansible_facts['os_family'] == 'Debian'
+
+    # ------------------------------------------------------------------
+    # POWER PROFILE — only where one was applied
+    # ------------------------------------------------------------------
+    # power-profile is opt-in and outside every persona, so its absence is not
+    # a failure. Where the drop-in IS present, a reload must have followed it:
+    # a file on disk that logind never re-read is the silent failure here.
+    - name: Stat the power-profile drop-in
+      ansible.builtin.stat:
+        path: /etc/systemd/logind.conf.d/10-hyperi-power-profile.conf
+      register: verify_power_dropin
+      when: ansible_facts['system'] == 'Linux'
+
+    # busctl, not loginctl: the manager's properties are only on the bus, and
+    # reading them is what proves logind re-read the drop-in.
+    - name: Read the effective logind policy
+      ansible.builtin.command:
+        argv:
+          - busctl
+          - get-property
+          - org.freedesktop.login1
+          - /org/freedesktop/login1
+          - org.freedesktop.login1.Manager
+          - HandleLidSwitchExternalPower
+      register: verify_logind
+      changed_when: false
+      when: verify_power_dropin.stat.exists | default(false)
+
+    - name: Assert the deployed lid policy is the one logind is running
+      ansible.builtin.assert:
+        that:
+          - "'ignore' in verify_logind.stdout"
+        fail_msg: >-
+          The drop-in is on disk but logind still suspends on lid close while on
+          mains power — systemd-logind was never reloaded.
+        success_msg: "lid close on mains power is ignored"
+      when: verify_power_dropin.stat.exists | default(false)
+
     # ------------------------------------------------------------------
     # STALE CONFIG — blocks and repo files the old version wrote
     # ------------------------------------------------------------------

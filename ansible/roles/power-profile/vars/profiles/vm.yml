@@ -1,0 +1,25 @@
+---
+# vm -- an always-on virtual desktop reached over RDP.
+#
+# Nobody is at the console to wake it, and a suspended guest drops the RDP
+# session and every ssh connection with it. There is no battery and no lid, so
+# there is no case in which sleeping is correct.
+
+power_profile_summary: >-
+  never sleeps or suspends; safe for an unattended RDP guest
+
+power_profile_logind:
+  HandleLidSwitchExternalPower: ignore
+  HandleLidSwitch: ignore
+  HandleLidSwitchDocked: ignore
+  IdleAction: ignore
+
+power_profile_gnome:
+  sleep-inactive-ac-type: nothing
+  sleep-inactive-battery-type: nothing
+
+# A hypervisor or a stray `systemctl suspend` can still suspend a guest that
+# logind has been told to leave alone, and nobody can wake it.
+power_profile_mask_sleep_targets: true
+
+power_profile_macos_ac_sleep: 0

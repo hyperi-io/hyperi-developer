@@ -1,0 +1,37 @@
+---
+# Power profiles -- opt-in, never part of a default, contributor or SOE run.
+#
+# A repurposed laptop acting as build infrastructure and an always-on RDP
+# desktop VM want the same thing, and a laptop that lives in a bag wants the
+# opposite -- so this is selected per machine, never imposed.
+#
+# A profile is DATA, not tasks: vars/profiles/<name>.yml declares what the
+# machine should do, and tasks/apply/ carries the one implementation per
+# platform. Adding a profile is adding a vars file and a README row -- there is
+# no dispatch to edit.
+
+- name: Fail on an unknown power profile
+  ansible.builtin.fail:
+    msg: >-
+      No such power profile: {{ power_profile }}. Available:
+      {{ query('ansible.builtin.fileglob', role_path ~ '/vars/profiles/*.yml')
+         | map('basename') | map('splitext') | map('first') | sort | join(', ') }}.
+  when: (role_path ~ '/vars/profiles/' ~ power_profile ~ '.yml') is not exists
+
+- name: Load the power profile
+  ansible.builtin.include_vars:
+    file: "profiles/{{ power_profile }}.yml"
+
+- name: Apply the power profile (Linux)
+  ansible.builtin.include_tasks:
+    file: apply/linux.yml
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Apply the power profile (macOS)
+  ansible.builtin.include_tasks:
+    file: apply/macos.yml
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Report the applied power profile
+  ansible.builtin.debug:
+    msg: "Power profile applied: {{ power_profile }} -- {{ power_profile_summary }}"
