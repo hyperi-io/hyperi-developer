@@ -266,6 +266,17 @@ hyperi-ci.
 | Local ClickHouse + Redpanda (opt-in `soe_local_services_enabled`) | all | container image | latest, always |
 | removals / update_command / admin-scripts (opt-in `never`, on for soe) | Linux | tombstones + scripts | n/a |
 
+### Targeted deployment roles (opt-in, not in any persona)
+
+| Role | Tag | What it does |
+|---|---|---|
+| `power-profile` | `power-profile` | Sleep, idle and lid policy. `always-on` (default) never sleeps on mains power, lid shut included, and leaves battery behaviour stock; `vm` never sleeps at all, for an unattended RDP guest. Select with `-e power_profile=<name>`. Profiles are data files under `roles/power-profile/vars/profiles/` |
+| `rdp-server` | `rdp-server` | GNOME Remote Desktop on port 3389 |
+| `vm` / `optimizer` | `vm` | VM guest optimisations (QEMU/SPICE agents) |
+
+Deliberately outside `soe`: the right power answer differs per machine, and
+imposing `always-on` on a laptop that lives in a bag cooks it.
+
 ## Two install modes
 
 **Latest is the default for everything. Pinning is never a default - `--pinned`

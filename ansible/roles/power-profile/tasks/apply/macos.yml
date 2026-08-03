@@ -1,0 +1,42 @@
+---
+# One implementation, driven by the profile's data. Nothing here names a
+# profile.
+
+- name: Read the current power profiles
+  ansible.builtin.command:
+    cmd: pmset -g custom
+  register: power_profile_pmset
+  changed_when: false
+
+- name: Set the mains-power idle sleep timeout
+  ansible.builtin.command:
+    cmd: "pmset -c sleep {{ power_profile_macos_ac_sleep }}"
+  become: true
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - (power_profile_pmset.stdout.split('AC Power:') | last)
+      is not search('\n\s*sleep\s+' ~ power_profile_macos_ac_sleep ~ '\b')
+
+# `sleep 0` covers idle sleep only. Closing the lid is a separate path that
+# pmset cannot scope to a power source, so suppressing it stops battery sleep
+# as well -- opt-in, because a closed laptop in a bag then keeps running.
+#
+# SleepDisabled is system-wide rather than a profile entry, so it is absent
+# from `pmset -g custom` and only appears in the live view.
+- name: Read the live power settings
+  ansible.builtin.command:
+    cmd: pmset -g
+  register: power_profile_pmset_live
+  changed_when: false
+  when: power_profile_macos_disable_sleep | bool
+
+- name: Suppress lid-close sleep on every power source
+  ansible.builtin.command:
+    cmd: pmset -a disablesleep 1
+  become: true
+  changed_when: true
+  when:
+    - power_profile_macos_disable_sleep | bool
+    - not ansible_check_mode
+    - power_profile_pmset_live.stdout is not search('SleepDisabled\s+1')

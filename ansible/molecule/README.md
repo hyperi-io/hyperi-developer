@@ -30,11 +30,17 @@ what we removed is correct here; an allowlist of what is permitted is not.
 
 ## Scenarios
 
-| scenario | driver | what it proves |
-|---|---|---|
-| `matrix` | containers | a clean install works on each supported release |
-| `remediation` | containers | an OLD host converges to current, and the old artefacts are GONE |
-| `existing-host` | delegated (real machine) | the same, against a real long-lived workstation |
+| scenario | driver | state | what it proves |
+|---|---|---|---|
+| `existing-host` | delegated (real machine) | **runnable** | an OLD host converges to current, and the old artefacts are GONE |
+| `remediation` | containers | fixture only | the same, reproducibly, without a real machine |
+| `matrix` | containers | not written | a clean install works on each supported release |
+
+Only `existing-host` runs today. `remediation` carries its `prepare.yml` and
+`verify.yml` but no `molecule.yml`, so there is nothing to invoke; `matrix` has
+`vars.yml` and no scenario directory. Molecule 25 dropped its built-in drivers,
+so finishing either means writing `create.yml` / `destroy.yml` playbooks against
+`community.docker`.
 
 ### matrix
 
@@ -84,15 +90,22 @@ it.
 
     cd ansible
 
-    # clean install across the matrix
-    molecule test -s matrix
-
-    # the upgrade path
-    molecule test -s remediation
-
     # against a real machine (snapshot first!)
-    molecule converge -s existing-host
+    export MOLECULE_TARGET_HOST=my-dev-box.example.internal
+    export MOLECULE_TARGET_USER=me
+    molecule converge -s existing-host -- --tags soe
     molecule verify   -s existing-host
+
+`--tags soe` (or `--tags removals`) is not optional for a remediation run: the
+tombstones gate on `ansible_run_tags`, so a plain converge installs the new
+tools and removes nothing.
+
+The scenario runs from `ansible/`, and `molecule.yml` pins `roles_path` to
+`${MOLECULE_PROJECT_DIRECTORY}/roles` because molecule writes its own
+`ansible.cfg` and never reads this repo's. The target host comes from
+`inventory.yml`, linked in as molecule's `hosts` file -- molecule generates its
+inventory from `platforms`, and this scenario has none, so without that link the
+run converges the machine you launched it from.
 
 Preview destructive tombstones before applying them — this is the Puppet
 `noop` habit, and tombstones are the destructive part of the playbook:

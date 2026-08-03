@@ -86,6 +86,7 @@ flowchart TD
 | `rdp-client` | RDP client: Remmina (Linux) / Thincast (macOS) |
 | `vpn-clients` | OpenVPN 3, WireGuard, Tunnelblick (macOS) |
 | `vm` | VM guest optimisations (QEMU/SPICE agents) |
+| `power-profile` | Sleep/idle/lid policy. `always-on` (default) or `vm`, via `-e power_profile=<name>` |
 | `arcane` | Arcane container UI, localhost-only. Off unless `-e soe_arcane_enabled=true` |
 | `local-services` | Persistent local ClickHouse + Redpanda for spikes. Off unless `-e soe_local_services_enabled=true` |
 
@@ -104,6 +105,7 @@ flowchart TD
 - `infrastructure`: OpenTofu + OpenBao (the OSS forks, no HashiCorp BUSL tools), AWS CLI v2. Under `k8s`: kubectl + helm + k9s + kind + argocd + kustomize + dive. The `data` group: clickhouse-client, rpk, valkey-cli, vector
 - `contributor`: hyperi-ci and the tools its checks drive (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, ansible-lint, pre-commit, act
 - `soe` / `soe-gui`: HyperI org policy: VPN clients, Claude Code, Slack, LibreOffice, RDP client, telemetry-disable, auto-updates, GNOME taskbar
+- `power-profile` (off by default, and deliberately not in `soe`): sleep, idle and lid policy, selected per machine. `always-on` (the default profile) never idle-suspends on mains power and does not sleep when the lid shuts -- for a repurposed laptop doing build work, or a desktop that has to answer ssh. `vm` never sleeps or suspends at all, for an unattended RDP guest that nobody can walk over and wake. Battery behaviour stays stock under `always-on`, because a machine that will not sleep in a bag cooks itself. Profiles are data files, so adding one is adding a file -- see [roles/power-profile/README.md](ansible/roles/power-profile/README.md)
 - `arcane` (off by default): [Arcane](https://getarcane.app), a web UI for the containers on the box. Enable it with `-e soe_arcane_enabled=true` and you get a daemon on `http://localhost:3552` that comes back after a reboot and keeps itself updated. Works against docker-ce on Linux and colima on macOS. Bound to loopback because it holds the Docker socket, so whatever reaches that port owns the machine. Login is `arcane` / `arcane-admin` (set `soe_arcane_admin_password` to change it). Upstream forces a password change on first login; the role performs that change itself right after deploying, so you never meet the dialog. There is still a login -- auto-login is compiled out of every published image, so zero-auth is not available without building your own
 - `local-services` (off by default): a persistent local ClickHouse and Redpanda for ad-hoc work -- somewhere to poke at a query or hand-feed a topic without waiting for a suite to build. Enable with `-e soe_local_services_enabled=true`. Deployed **stopped**: `restart: no`, so a reboot leaves them down and they cost nothing until `local-services up`, which pulls latest and takes seconds. Both capped at 1GB and bound to loopback. They are spike instances -- integration and e2e suites create and tear down their own containers, because a shared daemon makes a suite non-hermetic and order-dependent
 

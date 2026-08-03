@@ -52,7 +52,11 @@
     - uvx
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Remove the retired user-level uv/uvx (superseded by the repo install)
+# Every platform, Ubuntu included. Ubuntu's documented exception is that uv is
+# user-owned in ~/.local/bin there -- ~/.cargo/bin is a retired location on all
+# three, and it sits AHEAD of ~/.local/bin on PATH, so a copy left there
+# shadows the real install.
+- name: Remove the retired user-level uv/uvx (superseded by the current install)
   ansible.builtin.file:
     path: "{{ user_home }}/.cargo/bin/{{ item }}"
     state: absent
@@ -60,7 +64,6 @@
     - uv
     - uvx
   become: false
-  when: ansible_facts['distribution'] in ['Fedora', 'MacOSX']
 
 # ============================================================================
 # CANNOT CO-EXIST — the old thing actively conflicts with its replacement.
@@ -253,13 +256,23 @@
   when: ansible_facts['distribution'] == 'Fedora'
   failed_when: false
 
+# Debian splits two of these, and naming only the headline package leaves the
+# tool working:
+#   inetutils-telnet, telnet-ssl   the actual providers -- `telnet` is a
+#                                  transitional package, so removing it alone
+#                                  leaves a working telnet binary on PATH
+#   nmap-common                    nmap's data files; apt keeps it when only
+#                                  `nmap` is named and autoremove is off
 - name: Remove retired CLI utilities (Ubuntu)
   ansible.builtin.apt:
     name:
       - telnet
+      - inetutils-telnet
+      - telnet-ssl
       - net-tools
       - traceroute
       - nmap
+      - nmap-common
       - whois
       - tree
       - httpie

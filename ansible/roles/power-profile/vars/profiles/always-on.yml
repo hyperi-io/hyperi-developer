@@ -1,0 +1,32 @@
+---
+# always-on -- a machine on mains power stays reachable.
+#
+# For a repurposed laptop doing build work, or any box that has to answer ssh
+# at 3am. On battery the stock laptop behaviour stands: a machine that will not
+# sleep in a bag cooks itself.
+
+power_profile_summary: >-
+  never sleeps on mains power, lid shut included; stock behaviour on battery
+
+# systemd-logind. `ignore` leaves the machine running; `suspend` is the stock
+# laptop behaviour. A desktop has no lid switch, so these are inert there.
+power_profile_logind:
+  HandleLidSwitchExternalPower: ignore
+  HandleLidSwitch: suspend
+  HandleLidSwitchDocked: ignore
+  IdleAction: ignore
+
+# gnome-settings-daemon runs its own idle timer on top of logind, so without
+# this the machine still suspends on mains power after the GNOME timeout.
+# `nothing` leaves screen blanking alone.
+power_profile_gnome:
+  sleep-inactive-ac-type: nothing
+  sleep-inactive-battery-type: suspend
+
+# Masking the sleep targets would also stop `systemctl suspend` by hand, which
+# on a machine that is only always-on while plugged in is too blunt.
+power_profile_mask_sleep_targets: false
+
+# macOS: idle sleep on mains power only. Lid close is a separate path that
+# pmset cannot scope to a power source, so it is left to the role default.
+power_profile_macos_ac_sleep: 0

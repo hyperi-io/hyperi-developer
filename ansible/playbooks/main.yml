@@ -292,6 +292,12 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['rdp-server', 'never']
 
+    # Sleep/idle/lid policy. Opt-in and per-machine: the right answer for a
+    # build box is the wrong one for a laptop that lives in a bag.
+    - role: power-profile
+      become: false
+      tags: ['power-profile', 'never']
+
     # System cleanup — always runs at the end.
     - role: system_cleanup
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"

@@ -28,6 +28,11 @@ ansible:
     defaults:
       host_key_checking: false
       interpreter_python: auto_silent
+      # Molecule writes its own ansible.cfg and points ANSIBLE_CONFIG at it, so
+      # `ansible/ansible.cfg` is never read and every role in main.yml fails to
+      # resolve without this. MOLECULE_PROJECT_DIRECTORY is molecule's own
+      # interpolation for the directory it was invoked from.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
     ssh_connection:
       pipelining: true
   env:
@@ -40,6 +45,17 @@ ansible:
   playbooks:
     converge: converge.yml
     verify: verify.yml
+
+provisioner:
+  name: ansible
+  inventory:
+    # Molecule generates its own inventory from `platforms`, and this scenario
+    # has none, so without the link the run targets the implicit localhost --
+    # it converges the machine you launched it from. The link name has no
+    # extension deliberately: ansible's YAML inventory plugin accepts that, and
+    # `hosts` is the name molecule itself clears before relinking.
+    links:
+      hosts: inventory.yml
 
 scenario:
   name: existing-host

@@ -1,0 +1,60 @@
+---
+# One implementation, driven by the profile's data. Nothing here names a
+# profile.
+
+# A drop-in rather than an edit of logind.conf: the package file is replaced on
+# upgrade, and a drop-in survives that.
+- name: Ensure the logind drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Deploy the logind power policy
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/10-hyperi-power-profile.conf
+    mode: '0644'
+    content: |
+      # Managed by hyperi-developer (roles/power-profile), profile: {{ power_profile }}.
+      [Login]
+      {% for key, value in power_profile_logind | dictsort %}
+      {{ key }}={{ value }}
+      {% endfor %}
+  become: true
+  register: power_profile_logind_dropin
+
+# Reload, never restart: restarting systemd-logind tears down the running
+# graphical session.
+- name: Reload systemd-logind
+  ansible.builtin.systemd_service:
+    name: systemd-logind
+    state: reloaded
+  become: true
+  when:
+    - power_profile_logind_dropin.changed
+    - not ansible_check_mode
+
+- name: Mask the sleep targets
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    masked: "{{ power_profile_mask_sleep_targets | bool }}"
+  become: true
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+
+# GNOME's own idle timer sits on top of logind, so logind alone does not settle
+# it. Per-user, so it needs the invoking user's dconf, not root's.
+- name: Apply the GNOME power settings
+  community.general.dconf:
+    key: "/org/gnome/settings-daemon/plugins/power/{{ item.key }}"
+    value: "'{{ item.value }}'"
+    state: present
+  become: false
+  loop: "{{ power_profile_gnome | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+  when: has_gnome | default(false)

@@ -18,9 +18,12 @@
     dest: /etc/systemd/system/hyperi-update.timer
     mode: '0644'
 
+# Check mode does not write the unit files above, so systemd has nothing to
+# enable and the task fails the whole run rather than previewing it.
 - name: Enable and start the hyperi-update timer
   ansible.builtin.systemd:
     name: hyperi-update.timer
     enabled: true
     state: started
     daemon_reload: true
+  when: not ansible_check_mode
