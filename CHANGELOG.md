@@ -1,5 +1,12 @@
 # Changelog
 
+Rendered by CI and committed back at the end of a release -- do not edit by
+hand. Release notes also appear on the GitHub Releases page, one per tag.
+
+## [2.24.5](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.4...v2.24.5) (2026-08-03)
+
+# Changelog
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
