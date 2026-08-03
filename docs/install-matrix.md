@@ -271,7 +271,7 @@ hyperi-ci.
 | Role | Tag | What it does |
 |---|---|---|
 | `power-profile` | `power-profile` | Sleep, idle and lid policy. `always-on` (default) never sleeps on mains power, lid shut included, and leaves battery behaviour stock; `vm` never sleeps at all, for an unattended RDP guest. Select with `-e power_profile=<name>`. Profiles are data files under `roles/power-profile/vars/profiles/` |
-| `rdp-server` | `rdp-server` | GNOME Remote Desktop on port 3389 |
+| `rdp-server` | `rdp-server` | GNOME Remote Desktop on port 3389. Includes `handover-watchdog`, which restarts the daemon after a failed handover leaves it accepting connections and servicing none |
 | `vm` / `optimizer` | `vm` | VM guest optimisations (QEMU/SPICE agents) |
 
 Deliberately outside `soe`: the right power answer differs per machine, and

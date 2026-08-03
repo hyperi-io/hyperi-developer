@@ -14,17 +14,42 @@
   hosts: all
   gather_facts: true
 
+  vars:
+    # The DESKTOP user, which on a fleet machine is not the user ansible
+    # connected as. Checking the service account's empty home passes every
+    # user-scoped assert below while the real user still carries the artefact,
+    # so this is supplied the same way the inventory takes its host:
+    #     MOLECULE_TARGET_DESKTOP_USER=hyperi molecule verify -s existing-host
+    verify_user: >-
+      {{ lookup('env', 'MOLECULE_TARGET_DESKTOP_USER')
+         | default(hyperi_target_user | default(ansible_user_id, true), true) }}
+
   tasks:
     # ------------------------------------------------------------------
     # SHADOWING — a stale user-level binary ahead of the system one on PATH
     # ------------------------------------------------------------------
+    - name: Resolve the desktop user's home
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ verify_user }}"
+      become: true
+
+    - name: Set the home to check
+      ansible.builtin.set_fact:
+        verify_home: "{{ ansible_facts.getent_passwd[verify_user][4] }}"
+
+    - name: Report which user is being verified
+      ansible.builtin.debug:
+        msg: "Verifying user-scoped state for {{ verify_user }} ({{ verify_home }})"
+
     - name: Stat the retired user-level uv locations
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
-        - "{{ ansible_env.HOME }}/.cargo/bin/uv"
-        - "{{ ansible_env.HOME }}/.cargo/bin/ruff"
+        - "{{ verify_home }}/.cargo/bin/uv"
+        - "{{ verify_home }}/.cargo/bin/ruff"
       register: verify_stale_uv
+      become: true
 
     - name: Assert no stale user-level uv shadows the system install
       ansible.builtin.assert:
@@ -82,6 +107,37 @@
       loop: "{{ verify_retired_runtimes.results }}"
       loop_control:
         label: "{{ item.item }}"
+
+    # A docker context is a per-user file, not package state, so it survives
+    # the uninstall. Left selected, it points at a dead socket and every docker
+    # command fails.
+    - name: Read the docker contexts
+      ansible.builtin.command: docker context ls --quiet
+      register: verify_docker_ctx
+      changed_when: false
+      failed_when: false
+      become: true
+      become_user: "{{ verify_user }}"
+
+    - name: Assert the retired Docker Desktop context is gone
+      ansible.builtin.assert:
+        that:
+          - "'desktop-linux' not in (verify_docker_ctx.stdout_lines | default([]))"
+        fail_msg: >-
+          The desktop-linux context is still registered. It points at Docker
+          Desktop's socket, which no longer exists — and if it is also the
+          selected context, every docker command on this host fails.
+        success_msg: "no retired Docker Desktop context"
+      when: verify_docker_ctx.rc == 0
+
+    - name: Assert the selected docker context is not the retired one
+      ansible.builtin.command: docker context show
+      register: verify_docker_ctx_current
+      changed_when: false
+      failed_when: verify_docker_ctx_current.stdout | trim == 'desktop-linux'
+      become: true
+      become_user: "{{ verify_user }}"
+      when: verify_docker_ctx.rc == 0
 
     # ------------------------------------------------------------------
     # RETIRED PACKAGES — dropped by decision, must not linger
@@ -166,7 +222,7 @@
     # ------------------------------------------------------------------
     - name: Read ~/.zprofile if present
       ansible.builtin.slurp:
-        src: "{{ ansible_env.HOME }}/.zprofile"
+        src: "{{ verify_home }}/.zprofile"
       register: verify_zprofile
       failed_when: false
 

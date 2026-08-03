@@ -140,22 +140,53 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
 fi
 
 # --- sudo: ask once, keep alive -------------------------------------------
+# Probe with a real command, not `sudo -v`. Ubuntu 25.10+ replaced GNU sudo with
+# sudo-rs, whose `-v` demands interactive authentication even where NOPASSWD
+# grants the commands themselves — so `sudo -v` aborts this script on every
+# passwordless box and under every unattended caller, which is exactly what
+# --yes exists for.
+#
+# The keepalive only matters when a password was actually entered: NOPASSWD
+# leaves no timestamp to refresh.
 section "Authenticating (sudo)"
-if sudo -v; then
+if sudo -n true 2>/dev/null; then
+    ok "sudo authenticated (passwordless)"
+elif [[ -t 0 ]] && sudo -v; then
     ok "sudo authenticated"
-    # refresh the sudo timestamp in the background until the script exits
     ( while true; do sudo -n true 2>/dev/null; sleep 50; kill -0 "$$" 2>/dev/null || exit; done ) &
     SUDO_KEEPALIVE_PID=$!
     trap '[[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
 else
     printf '%s    \xe2\x9c\x97 sudo authentication failed — aborting%s\n' "$RED" "$RESET"
+    printf '%s    No passwordless sudo and no terminal to prompt on.%s\n' "$RED" "$RESET"
     exit 1
 fi
 
 # --- System packages -------------------------------------------------------
+# unattended-upgrades and the apt-daily timers take the dpkg lock on their own
+# schedule. Without this wait the upgrade exits 100 and the run reports success
+# for everything else, so the box looks updated and is not.
+wait_for_apt_lock() {
+    local waited=0
+    while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 ||
+          sudo fuser /var/lib/apt/lists/lock  >/dev/null 2>&1; do
+        if [[ "$waited" -eq 0 ]]; then
+            printf '    waiting for another apt process to finish...\n'
+        fi
+        if [[ "$waited" -ge 300 ]]; then
+            fail "apt lock (held for 5 minutes)"
+            return 1
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    return 0
+}
+
 case "$PKG_MGR" in
     apt)
         section "APT — system packages"
+        wait_for_apt_lock
         run "apt-get update"       sudo apt-get update
         run "apt-get full-upgrade" sudo apt-get -y full-upgrade
         run "apt-get autoremove"   sudo apt-get -y autoremove

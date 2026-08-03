@@ -167,7 +167,8 @@
     - name: Install the previous Node major via fnm
       ansible.builtin.command:
         cmd: /usr/local/bin/fnm install {{ node_major_previous }}
-      become: false
+      become: true
+      become_user: "{{ actual_user }}"
       environment:
         FNM_DIR: "{{ user_home }}/.local/share/fnm"
       register: developer_fnm_install
@@ -183,7 +184,8 @@
     - name: Point the fnm default at the system Node
       ansible.builtin.command:
         cmd: /usr/local/bin/fnm default system
-      become: false
+      become: true
+      become_user: "{{ actual_user }}"
       environment:
         FNM_DIR: "{{ user_home }}/.local/share/fnm"
       register: developer_fnm_default
@@ -288,10 +290,12 @@
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# become_user is ignored while become is false, so this has to escalate to
+# reach the desktop user's ~/.npmrc rather than the connecting account's.
 - name: Configure the npm prefix (Linux)
   ansible.builtin.command:
     cmd: npm config set prefix "{{ user_home }}/.npm-global"
-  become: false
+  become: true
   become_user: "{{ actual_user }}"
   changed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
@@ -431,7 +435,7 @@
     state: present
   environment:
     NPM_CONFIG_PREFIX: "{{ user_home }}/.npm-global"
-  become: false
+  become: true
   become_user: "{{ actual_user }}"
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 

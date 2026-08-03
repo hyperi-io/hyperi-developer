@@ -73,6 +73,9 @@
         dest: "/tmp/uv-{{ uv_arch }}.tar.gz"
         mode: '0644'
 
+    # Check mode only previews the directory and the download above, so on a
+    # host that has never had uv this fails the whole run instead of
+    # previewing it.
     - name: Extract uv
       ansible.builtin.unarchive:
         src: "/tmp/uv-{{ uv_arch }}.tar.gz"
@@ -83,6 +86,7 @@
         group: "{{ actual_user }}"
         extra_opts:
           - --strip-components=1
+      when: not ansible_check_mode
 
     - name: Remove uv tarball
       ansible.builtin.file:
@@ -115,12 +119,17 @@
 
 # Ubuntu: no apt repo; install as user-owned uv tools (hyperi-update refreshes
 # via `uv tool upgrade`). uv is installed above, so it is on PATH here.
+#
+# Runs as the owner of that home, not as whoever connected: `become: false`
+# means the connection user, and on a fleet machine that is a service account
+# with no write access to the desktop user's home.
 - name: Install ruff and ty (Ubuntu - uv tools, hyperi-update tracks these)
   ansible.builtin.command:
     cmd: "uv tool install {{ item }}"
   environment:
     PATH: "{{ user_home }}/.cargo/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   loop:
     - ruff
     - ty

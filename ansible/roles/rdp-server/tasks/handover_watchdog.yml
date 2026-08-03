@@ -1,0 +1,83 @@
+---
+# Watchdog for the wedged-daemon fault (the why is in
+# files/rdp-handover-watchdog).
+
+# The two-stage handover, and the fault, arrived with the GNOME 46 remote-login
+# rework. Gating on the unit rather than a version number tests the mechanism
+# itself, so it holds across distros and across a backport.
+- name: Stat the GRD user handover unit
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/user/gnome-remote-desktop-handover.service
+  register: rdp_handover_unit
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+
+- name: Install the handover watchdog
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+    - rdp_handover_watchdog_enabled | bool
+    - rdp_handover_unit.stat.exists | default(false)
+  block:
+    - name: Deploy the handover watchdog
+      ansible.builtin.copy:
+        src: rdp-handover-watchdog
+        dest: /usr/local/sbin/rdp-handover-watchdog
+        mode: '0755'
+        owner: root
+        group: root
+      register: rdp_watchdog_script
+
+    - name: Install the handover watchdog service
+      ansible.builtin.copy:
+        src: rdp-handover-watchdog.service
+        dest: /etc/systemd/system/rdp-handover-watchdog.service
+        mode: '0644'
+        owner: root
+        group: root
+      register: rdp_watchdog_unit_file
+
+    # Restarted rather than started when either file moved: a watchdog still
+    # running the previous script is not watching what was just deployed.
+    - name: Enable and start the handover watchdog
+      ansible.builtin.systemd_service:
+        name: rdp-handover-watchdog.service
+        enabled: true
+        state: >-
+          {{ 'restarted'
+             if (rdp_watchdog_script.changed or rdp_watchdog_unit_file.changed)
+             else 'started' }}
+        daemon_reload: true
+      when: not ansible_check_mode
+
+# Turning the watchdog off has to take the running unit with it, or it keeps
+# restarting the daemon from a script nobody maintains any more.
+- name: Remove the handover watchdog
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - not (rdp_handover_watchdog_enabled | bool)
+  block:
+    - name: Stop and disable the handover watchdog
+      ansible.builtin.systemd_service:
+        name: rdp-handover-watchdog.service
+        enabled: false
+        state: stopped
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Remove the handover watchdog files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/rdp-handover-watchdog.service
+        - /usr/local/sbin/rdp-handover-watchdog
+      register: rdp_watchdog_removed
+
+    - name: Reload systemd after removing the watchdog
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when:
+        - rdp_watchdog_removed.changed
+        - not ansible_check_mode

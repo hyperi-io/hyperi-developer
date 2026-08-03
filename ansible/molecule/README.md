@@ -96,6 +96,20 @@ it.
     molecule converge -s existing-host -- --tags soe
     molecule verify   -s existing-host
 
+**When the connection user is not the desktop user**, name the desktop one --
+a fleet machine is reached as a service account whose home holds none of the
+artefacts under test:
+
+    export MOLECULE_TARGET_USER=ubuntu           # who we ssh as
+    export MOLECULE_TARGET_DESKTOP_USER=hyperi   # whose machine it is
+    molecule converge -s existing-host -- --tags soe -e hyperi_target_user=hyperi
+    molecule verify   -s existing-host
+
+Without it every user-scoped check passes against the service account's empty
+home while the real user keeps the artefact -- a green run over a host that was
+never fixed. `converge` takes it as `-e hyperi_target_user`; `verify` takes no
+extra arguments, so it reads the environment.
+
 `--tags soe` (or `--tags removals`) is not optional for a remediation run: the
 tombstones gate on `ansible_run_tags`, so a plain converge installs the new
 tools and removes nothing.

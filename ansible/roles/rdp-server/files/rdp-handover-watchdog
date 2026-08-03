@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+#
+# Restart GNOME Remote Desktop after a failed RDP handover.
+#
+# Force-stopping another session from the RDP login screen makes gdm tear down
+# that session and the in-flight RDP login with it, logged as "GdmDisplay:
+# Session never registered, failing". The system daemon is then left accepting
+# TCP on 3389 and servicing nothing -- later connections get a blank screen and
+# no log line, and only a restart clears it.
+#
+# Matched from the log rather than probed: telling wedged from healthy over the
+# wire needs an RDP connection, and an aborted one exercises the same session
+# teardown that wedges the daemon.
+#
+# Restarting drops any live RDP session, which is acceptable only because the
+# trigger means a login has already failed.
+
+set -euo pipefail
+
+UNIT="${RDP_WATCHDOG_UNIT:-gnome-remote-desktop.service}"
+SOURCE_UNIT="${RDP_WATCHDOG_SOURCE_UNIT:-gdm.service}"
+MARKER='Session never registered, failing'
+
+# A single failure can log the marker more than once, and a restart must not
+# become a loop.
+COOLDOWN="${RDP_WATCHDOG_COOLDOWN:-60}"
+
+# systemd already routes stderr to the journal under this unit, so `logger`
+# would file a second copy of every line.
+log() { printf '%s\n' "$1" >&2; }
+
+log "watching ${SOURCE_UNIT} for a failed handover"
+
+last_restart=0
+
+# Process substitution, not a pipe: the last stage of a pipeline runs in a
+# subshell, where last_restart would reset on every line and defeat the
+# cooldown.
+while IFS= read -r line; do
+    case "$line" in
+        *"$MARKER"*) ;;
+        *) continue ;;
+    esac
+
+    now="$(date +%s)"
+    if (( now - last_restart < COOLDOWN )); then
+        log "failed handover again within ${COOLDOWN}s -- not restarting"
+        continue
+    fi
+    last_restart="$now"
+
+    log "failed handover detected -- restarting ${UNIT}"
+    if systemctl restart "$UNIT"; then
+        log "${UNIT} restarted; reconnect should now reach a login screen"
+    else
+        log "ERROR: failed to restart ${UNIT}"
+    fi
+done < <(journalctl --follow --lines 0 --output cat --unit "$SOURCE_UNIT")

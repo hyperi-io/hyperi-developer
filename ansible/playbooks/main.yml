@@ -139,9 +139,17 @@
         (ansible_facts['distribution'] == 'Ubuntu' and ansible_facts['distribution_version'] is version('24.04', '<'))
       tags: ['always']
 
+    # Whose machine this is. Normally the user running the install, but a fleet
+    # machine is reached as a service account (hyperi-infra connects as
+    # `ubuntu`) whose home is not the desktop, so `-e hyperi_target_user=<name>`
+    # names the real one. Everything user-scoped keys off this: shell config,
+    # uv, Claude Code, dconf, and the tombstones.
     - name: Detect actual user (for sudo operations)
       ansible.builtin.set_fact:
-        actual_user: "{{ ansible_facts['env'].SUDO_USER | default(ansible_facts['user_id'], true) }}"
+        actual_user: >-
+          {{ hyperi_target_user
+             | default(ansible_facts['env'].SUDO_USER
+                       | default(ansible_facts['user_id'], true), true) }}
       tags: ['always']
 
     - name: Set actual user home directory (Linux)
