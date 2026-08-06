@@ -7,9 +7,9 @@ galaxy_info:
   min_ansible_version: "2.20"
   platforms:
     - name: Fedora
-      versions: ['42']
+      versions: ['43', '44']
     - name: Ubuntu
-      versions: ['noble']
+      versions: ['noble', 'resolute']
 
 # Pulls every language toolchain. A SUBSET is selected from install.sh
 # (`--languages rust,go` -> `--tags developer-rust,developer-go`), not here.

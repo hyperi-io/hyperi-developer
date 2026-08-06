@@ -31,13 +31,14 @@
         dest: /etc/apt/keyrings/openvpn.asc
         mode: '0644'
 
-    # Map unsupported Ubuntu releases to nearest supported LTS
-    # OpenVPN 3 only publishes repos for LTS releases (jammy, noble)
+    # Use the running release when OpenVPN publishes it, else the newest suite
+    # it does publish -- see openvpn_supported_suites.
     - name: Determine OpenVPN repo codename
       ansible.builtin.set_fact:
         openvpn_codename: >-
-          {{ (ansible_facts['distribution_version'] is version('24.04', '>'))
-             | ternary('noble', ansible_facts['distribution_release']) }}
+          {{ ansible_facts['distribution_release']
+             if ansible_facts['distribution_release'] in openvpn_supported_suites
+             else openvpn_supported_suites | last }}
 
     - name: Add OpenVPN 3 repository
       ansible.builtin.deb822_repository:

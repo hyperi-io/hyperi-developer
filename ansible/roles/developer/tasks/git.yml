@@ -47,13 +47,14 @@
         executable: /bin/bash
         creates: /etc/apt/keyrings/git-core-ppa.gpg
 
-    # Map unsupported Ubuntu releases to nearest supported LTS
-    # Launchpad PPAs only publish for LTS releases (jammy, noble)
+    # Use the running release when the PPA publishes it, else the newest series
+    # it does publish -- see git_ppa_supported_suites.
     - name: Determine git-core PPA codename
       ansible.builtin.set_fact:
         git_ppa_codename: >-
-          {{ (ansible_facts['distribution_version'] is version('24.04', '>'))
-             | ternary('noble', ansible_facts['distribution_release']) }}
+          {{ ansible_facts['distribution_release']
+             if ansible_facts['distribution_release'] in git_ppa_supported_suites
+             else git_ppa_supported_suites | last }}
 
     # http, not https, on purpose. Launchpad publishes AAAA records, and on a
     # network with half-working IPv6 the TLS connection hangs rather than

@@ -10,11 +10,30 @@
 # Linux — Add Docker repository
 # ============================================================================
 
-- name: Add Docker repository (Fedora)
-  ansible.builtin.command:
-    cmd: dnf config-manager addrepo --from-repofile=https://download.docker.com/linux/fedora/docker-ce.repo --overwrite
-  args:
-    creates: /etc/yum.repos.d/docker-ce.repo
+- name: Configure Docker repository (Fedora)
+  block:
+    # Use the running release when Docker publishes it, else the newest release
+    # it does publish -- see docker_fedora_supported_releases.
+    - name: Determine Docker repo release
+      ansible.builtin.set_fact:
+        docker_fedora_releasever: >-
+          {{ ansible_facts['distribution_major_version']
+             if ansible_facts['distribution_major_version'] in docker_fedora_supported_releases
+             else docker_fedora_supported_releases | last }}
+
+    # Written to docker-ce.repo, the same path upstream's repofile uses, so a
+    # box configured by the previous config-manager call is replaced rather than
+    # gaining a second definition of the same repo.
+    - name: Add Docker repository
+      ansible.builtin.yum_repository:
+        name: docker-ce-stable
+        file: docker-ce
+        description: Docker CE Stable - $basearch
+        baseurl: "{{ docker_repo_url }}/{{ docker_fedora_releasever }}/$basearch/stable"
+        gpgcheck: true
+        gpgkey: "{{ docker_gpg_url }}"
+        enabled: true
+
   when: ansible_facts['distribution'] == 'Fedora'
 
 - name: Configure Docker repository (Ubuntu)
@@ -31,13 +50,14 @@
         dest: /etc/apt/keyrings/docker.asc
         mode: '0644'
 
-    # Docker only publishes repos for Ubuntu LTS releases (jammy, noble).
-    # Map non-LTS interim releases to the nearest supported LTS.
+    # Use the running release when Docker publishes it, else the newest suite
+    # it does publish -- see docker_supported_suites.
     - name: Determine Docker repo codename
       ansible.builtin.set_fact:
         docker_codename: >-
-          {{ (ansible_facts['distribution_version'] is version('24.04', '>'))
-             | ternary('noble', ansible_facts['distribution_release']) }}
+          {{ ansible_facts['distribution_release']
+             if ansible_facts['distribution_release'] in docker_supported_suites
+             else docker_supported_suites | last }}
 
     - name: Add Docker repository
       ansible.builtin.deb822_repository:
