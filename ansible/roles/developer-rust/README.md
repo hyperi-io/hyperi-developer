@@ -17,16 +17,77 @@ hyperi-rust-setup --yes      # no prompt
 
 It installs sccache, mold and clang from the system package manager, then
 writes `$CARGO_HOME/config.toml` naming only the tools it actually found, by
-absolute path.
+absolute path. It also writes the cache caps described below.
 
 sccache caches compiled crates, so a rebuild after `cargo clean`, a branch
-switch or a dependency bump reuses work. mold links several times faster than
-the default linker, which matters because linking dominates an incremental
-build. Ubuntu, Debian, Fedora and macOS.
+switch or a dependency bump reuses work.
+
+mold is still worth configuring, but the margin is smaller than it was: rustc
+has used rust-lld by default on `x86_64-unknown-linux-gnu` since Rust 1.90, so
+the config now overrides lld rather than GNU ld. mold remains ahead of lld on
+upstream figures. `wild` is roughly twice mold again for iterative development,
+but it is Linux-x86-64 only with no LTO support, so it is a candidate rather
+than a default. Ubuntu, Debian, Fedora and macOS.
 
 Note sccache does not cache incremental compilation, which the `dev` profile
 enables by default; it passes those through. The wins show up on `--release`
 and on clean rebuilds.
+
+## Keeping the caches bounded
+
+Three caches, three mechanisms, and only one of them is ours. Apply the lot
+without a full toolchain converge with `--tags rust-cache`.
+
+**The cargo global cache bounds itself.** Registry indexes and downloaded
+sources are tracked by last-use; cargo deletes network-fetched files unused for
+3 months and regenerable files unused for 1 month, checking daily. The role sets
+nothing here, deliberately -- a `[cache]` key in the config would only restate
+the default and would then have to be maintained against it.
+
+**sccache and ccache evict LRU against a byte ceiling.** Both read it from the
+environment, so `hyperi-rust-setup` writes it: `/etc/profile.d/hyperi-rust-cache.sh`
+on Linux, a marked block in `~/.zshenv` on macOS. `.zshenv` rather than
+`.zshrc` because zsh reads `.zshrc` only for interactive shells, and a build
+launched from a script would miss a cap set there.
+
+Each cache's LOCATION is left at its own default. Pointing them somewhere new
+on a box that already has a populated cache orphans it rather than capping it.
+
+`SCCACHE_BASEDIRS` is set alongside the caps. sccache keys on absolute paths, so
+the same source built under a different root misses; the listed roots are
+stripped before hashing. It defaults to the user's home, which covers a container
+or CI runner that mounts the tree somewhere else. It does NOT unify sibling
+checkouts of one repo -- those differ by directory name rather than by root, so
+each would have to be listed explicitly.
+
+Because the sccache server reads its ceiling once at startup and holds it,
+changing the cap also stops the running server. The next build starts a fresh
+one at the new value; nothing on disk is touched.
+
+**Build artefacts have no upstream cap at all.** Cargo does not track them
+(rust-lang/cargo#13136), so nothing reclaims a `target/` ever, and one per repo
+across a tree full of them is what actually fills a disk.
+
+So `build.build-dir` points every project at a single pool
+(`~/.cache/hyperi-rust-build`, or `~/Library/Caches` on macOS), keyed by
+`{workspace-path-hash}` so two checkouts of one project cannot clobber each
+other. Only INTERMEDIATES move. Each project's `target/` keeps its final
+binaries, so `cargo run`, IDEs and anything globbing for a built artefact are
+unaffected.
+
+`hyperi-rust-cache-prune` then bounds that pool on a schedule -- a systemd timer
+on Linux, a launchd agent on macOS, weekly and at idle IO priority. It drops
+workspaces not built for `rust_cache_max_age_days`, then evicts
+least-recently-built ones until the pool is under `rust_cache_build_dir_max`.
+It touches no project `target/`, and reports the self-capping caches without
+pruning them.
+
+Sizes live in the role defaults and are set for the smallest machine this role
+runs on, which is a laptop. A build box raises them per host rather than
+everyone inheriting its numbers.
+
+`build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
+says so and leaves the per-project layout alone, so the default stays safe.
 
 ## SSoT
 
@@ -53,10 +114,15 @@ would otherwise silently become the wrapper), and writes the config atomically.
 
 ## What it deliberately does not do
 
-**Move `target/` onto another disk.** The old script symlinked each project's
-`target/` onto a cache disk. That is where both its data-loss bugs lived, and
-it assumed one particular machine's layout. Cargo supports `build.target-dir`
-per project, which is the supported route and needs no symlinks.
+**Move or symlink `target/` onto another disk.** The old script symlinked each
+project's `target/` onto a cache disk. That is where both its data-loss bugs
+lived, and it assumed one particular machine's layout.
+
+`build.build-dir` is the supported route and is what the role uses now: new
+builds simply write their intermediates elsewhere. Nothing is relocated, no
+symlink is created, and a box on a pre-1.91 toolchain just keeps the default
+layout. Per-project `build.target-dir` remains available for anyone who wants
+the finals moved too.
 
 **Set `build.jobs`.** Cargo already defaults to the logical CPU count. The old
 script hardcoded `8`, which is wrong on a 4-core VM and wasteful on a 32-core
@@ -71,7 +137,20 @@ developer installed themselves is their call.
 
 ## Taking over an existing config
 
-If `$CARGO_HOME/config.toml` exists and we did not write it, the tool backs it
-up to `config.toml.pre-hyperi-<timestamp>` and names any sections it does not
-manage so nothing disappears quietly. It does not echo the file: a Cargo config
-can hold registry tokens inline, and this output ends up in Ansible and CI logs.
+The tool manages exactly two tables, `[build]` and `[target]`. Every other table
+in an existing `$CARGO_HOME/config.toml` is CARRIED ACROSS verbatim -- a private
+registry, an alias table, a profile override. Dropping them was data loss:
+nothing else on the box restores a registry definition.
+
+Carrying happens as raw text rather than parse-and-reserialise, because a Cargo
+config holds comments the parser discards and the standard library has no TOML
+writer to round-trip them with. The rendered result is parsed before it is
+written, and a config that would not parse is refused with a warning instead --
+an invalid `config.toml` breaks every cargo command on the machine.
+
+If the file was not written by us it is still backed up to
+`config.toml.pre-hyperi-<timestamp>` first, so a takeover is always recoverable.
+
+Neither the tool nor `--check` echoes the config. It can now contain carried-over
+sections, a Cargo config can hold registry tokens inline, and this output ends up
+in Ansible and CI logs.

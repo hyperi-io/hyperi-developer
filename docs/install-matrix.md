@@ -164,9 +164,33 @@ is the meta-role pulling them all.
 | Tool(s) | Platforms | Method | Pinned |
 |---|---|---|---|
 | rustup + stable toolchain, rustfmt, clippy | all | vendor-script + rustup | n/a |
-| cargo-* (nextest, deny, chef, bacon, tarpaulin, update) | all | cargo | n/a |
-| cargo-audit, cargo-hack | all | cargo | n/a |
+| cargo-binstall | all | cargo | n/a |
+| cargo-* (nextest, deny, chef, bacon, update) | all | cargo | n/a |
+| cargo-audit, cargo-hack, cargo-pgo | all | cargo | n/a |
+| cargo-llvm-cov + llvm-tools-preview | all | cargo / rustup | n/a |
 | protobuf-compiler, librdkafka-dev | Linux | distro repo | version |
+| sccache, mold, clang | Linux (sccache only on macOS) | distro repo / brew | version |
+| cargo-sweep | all | cargo-binstall / cargo | n/a |
+| hyperi-rust-setup, hyperi-rust-cache-prune | all | role file -> `/usr/local/bin` | n/a |
+
+`cargo-binstall` is installed FIRST so the tools after it arrive prebuilt rather
+than compiled from source.
+
+Coverage is `cargo-llvm-cov`. It replaced `cargo-tarpaulin`, which is ptrace-based
+and therefore Linux-x86_64 only -- a macOS developer had no coverage tool at all.
+The role uninstalls a leftover tarpaulin, because hyperi-ci prefers it when both
+are present and would otherwise keep Linux on the tool macOS cannot run.
+
+Build cache caps are a sub-tag, `rust-cache`, so they can be applied without a
+full toolchain converge:
+
+```bash
+./install.sh --tags rust-cache
+```
+
+That tag installs both tools, writes the caps, and schedules the prune
+(systemd timer on Linux, launchd agent on macOS). Sizes come from
+`rust_cache_*` in the role defaults; a build box overrides them per host.
 
 #### developer-go
 

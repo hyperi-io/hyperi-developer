@@ -8,3 +8,35 @@
 
 rustup_version: "{{ hyperi_core_versions.rustup }}"
 rustup_sha256: "{{ hyperi_core_versions.rustup_sha256[hyperi_arch_gnu | default('x86_64')] }}"
+
+# ---------------------------------------------------------------------------
+# Build cache caps
+# ---------------------------------------------------------------------------
+# Build artefacts have no upstream cap (rust-lang/cargo#13136), so build-dir
+# pools them and a scheduled prune bounds the pool.
+# Sized for the smallest machine this role runs on, which is a laptop.
+
+rust_cache_manage: true
+
+# Pooling needs cargo >= 1.91. The setup tool detects an older toolchain and
+# leaves the per-project layout alone, so this stays safe to leave on.
+rust_cache_central_build_dir: true
+
+rust_cache_sccache_max: "20G"
+rust_cache_ccache_max: "10G"
+
+# Colon-separated roots stripped before sccache hashes a path, so the same
+# source built under a different root still hits. Defaults to the user's home,
+# which covers a container or CI runner that mounts the tree elsewhere.
+# It does NOT unify sibling checkouts: those differ by directory name, not root.
+rust_cache_sccache_basedirs: "{{ user_home }}"
+rust_cache_build_dir_max: "40G"
+rust_cache_max_age_days: 14
+
+# Off-hours, so a prune is unlikely to land mid-build.
+rust_cache_prune_schedule_weekday: "Sun"
+rust_cache_prune_schedule_hour: 3
+
+# macOS launchd only; systemd takes its unit name from the file.
+rust_cache_prune_label: "io.hyperi.rust-cache-prune"
+rust_cache_prune_plist: "{{ user_home }}/Library/LaunchAgents/{{ rust_cache_prune_label }}.plist"

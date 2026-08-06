@@ -1,9 +1,12 @@
 ---
 # Developer-Rust Role — Rust toolchain (CLI only, no GUI).
 
+# rust-cache tags only the include itself, never `apply`: a tag under `apply`
+# lands on every task in the file, which would make the cap tag pull the whole
+# toolchain. The cache include inside rust.yml carries the tag on its own.
 - name: Install Rust and cargo tools
   ansible.builtin.include_tasks:
     file: rust.yml
     apply:
       tags: ['developer-rust', 'rust']
-  tags: ['developer-rust', 'rust']
+  tags: ['developer-rust', 'rust', 'rust-cache']
