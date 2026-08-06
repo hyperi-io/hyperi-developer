@@ -43,6 +43,13 @@
     # `nodistro` is NodeSource's own suite name -- it publishes one distro-
     # agnostic suite rather than per-codename ones, so there is no release
     # mapping to do here (contrast docker.yml and the git-core PPA).
+    # A host provisioned by an older revision carries nodesource.list beside
+    # the .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy NodeSource .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/nodesource.list
+        state: absent
+
     - name: Add the NodeSource repository
       ansible.builtin.deb822_repository:
         name: nodesource

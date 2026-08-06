@@ -59,6 +59,13 @@
              if ansible_facts['distribution_release'] in docker_supported_suites
              else docker_supported_suites | last }}
 
+    # A host provisioned by an older revision carries docker.list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy Docker .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/docker.list
+        state: absent
+
     - name: Add Docker repository
       ansible.builtin.deb822_repository:
         name: docker

@@ -69,6 +69,13 @@
       args:
         creates: /usr/share/keyrings/datadog-archive-keyring.gpg
 
+    # A host provisioned by an older revision carries the .list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy Vector .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/vector.list
+        state: absent
+
     - name: Add Vector APT repository
       ansible.builtin.deb822_repository:
         name: vector
@@ -117,6 +124,11 @@
         url: https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key
         dest: /etc/apt/keyrings/clickhouse.asc
         mode: '0644'
+
+    - name: Remove the legacy ClickHouse .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/clickhouse.list
+        state: absent
 
     - name: Add ClickHouse APT repository
       ansible.builtin.deb822_repository:
@@ -193,6 +205,11 @@
         url: "https://packages.confluent.io/deb/{{ confluent_version_ubuntu }}/archive.key"
         dest: /etc/apt/keyrings/confluent.asc
         mode: '0644'
+
+    - name: Remove the legacy Confluent .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/confluent.list
+        state: absent
 
     - name: Add Confluent APT repository
       ansible.builtin.deb822_repository:

@@ -50,6 +50,13 @@
         dest: /etc/apt/keyrings/opentofu-repo.asc
         mode: '0644'
 
+    # A host provisioned by an older revision carries the .list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy OpenTofu .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/opentofu.list
+        state: absent
+
     - name: Add OpenTofu repository
       ansible.builtin.deb822_repository:
         name: opentofu
@@ -164,6 +171,11 @@
         dest: /etc/apt/keyrings/helm.asc
         mode: '0644'
       when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove the legacy Helm .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/helm.list
+        state: absent
 
     - name: Add the Helm APT repository (Ubuntu)
       ansible.builtin.deb822_repository:

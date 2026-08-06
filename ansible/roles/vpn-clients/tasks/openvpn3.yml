@@ -40,6 +40,13 @@
              if ansible_facts['distribution_release'] in openvpn_supported_suites
              else openvpn_supported_suites | last }}
 
+    # A host provisioned by an older revision carries openvpn3.list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy OpenVPN 3 .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/openvpn3.list
+        state: absent
+
     - name: Add OpenVPN 3 repository
       ansible.builtin.deb822_repository:
         name: openvpn3

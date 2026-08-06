@@ -64,6 +64,13 @@
     # on-path observer can see which packages we pull.
     # Worth revisiting: Acquire::ForceIPv4 would keep https and fix the same
     # root cause, but it is untested here.
+    # A host provisioned by an older revision carries the .list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy git-core PPA .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/git-core-ppa.list
+        state: absent
+
     - name: Add git-core PPA repository
       ansible.builtin.deb822_repository:
         name: git-core-ppa
@@ -142,6 +149,11 @@
         url: "{{ gh_deb_gpg_url }}"
         dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
         mode: '0644'
+
+    - name: Remove the legacy GitHub CLI .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/github-cli.list
+        state: absent
 
     - name: Add the GitHub CLI repository
       ansible.builtin.deb822_repository:
