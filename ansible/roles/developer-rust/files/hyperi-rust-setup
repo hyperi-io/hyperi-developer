@@ -55,6 +55,8 @@ It does not install Rust. Use rustup.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import platform
 import re
@@ -63,6 +65,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -86,8 +89,20 @@ GENERATED_LINES = frozenset({*MANAGED_PREAMBLE, CARRIED_MARKER})
 # Anything we put in the config must be proven present first -- naming a tool
 # that is not installed breaks every cargo command on the box, which is worse
 # than not configuring it at all.
-LINUX_PACKAGES = ("sccache", "mold", "clang")
+LINUX_PACKAGES = ("mold", "clang")
 MACOS_PACKAGES = ("sccache",)  # mold is ELF-only; it cannot link Mach-O.
+
+# sccache is NOT in LINUX_PACKAGES: Ubuntu ships 0.13.0 against an upstream on
+# 0.17.x, and a wrapper four versions behind is what a developer hits when a
+# hand-run `sccache --show-stats` fails against the server their build started.
+# It comes from the project's own release instead, latest on every run, with the
+# digest checked against the .sha256 upstream publishes beside every asset.
+# crates.io stays out of the global rustc-wrapper path, which is the objection
+# that put this on the distro in the first place.
+#
+# macOS keeps brew, which already tracks upstream.
+SCCACHE_REPO = "mozilla/sccache"
+SCCACHE_BIN = Path("/usr/local/bin/sccache")
 
 # The only tables this script owns; every other table in an existing
 # config.toml is carried across verbatim by split_toml_sections().
@@ -218,8 +233,8 @@ def resolve_tool(name: str, rep: Reporter | None = None) -> str | None:
     if managed:
         if shadowed and rep is not None:
             rep.warn(
-                f"{name}: using the packaged {managed[0]}, but {shadowed[0]} "
-                f"shadows it on PATH -- cargo-installed copies do not auto-update. "
+                f"{name}: builds use {managed[0]}, but {shadowed[0]} shadows it on "
+                f"PATH, so anything you run by hand talks to the wrong one. "
                 f"Remove it with: cargo uninstall {name}"
             )
         return str(managed[0])
@@ -287,14 +302,123 @@ def shell_env_file(family: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _sccache_target() -> str | None:
+    """The upstream target triple for this machine, or None if unpublished.
+
+    musl for both: the binary is then independent of the host glibc, which is
+    what lets one artefact serve every distro the role supports.
+    """
+    return {
+        "x86_64": "x86_64-unknown-linux-musl",
+        "aarch64": "aarch64-unknown-linux-musl",
+    }.get(platform.machine())
+
+
+def _installed_sccache_version() -> str | None:
+    """The version of the sccache this script manages, or None if absent."""
+    if not SCCACHE_BIN.is_file():
+        return None
+    proc = run([str(SCCACHE_BIN), "--version"], timeout=60)
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"(\d+\.\d+\.\d+)", proc.stdout)
+    return match.group(1) if match else None
+
+
+def install_sccache_linux(dry_run: bool, rep: Reporter) -> None:
+    """Put the latest upstream sccache release at SCCACHE_BIN.
+
+    Re-runs are a no-op once the installed version matches the latest tag, so
+    the same call both installs and upgrades and hyperi-update needs no special
+    case.
+    """
+    target = _sccache_target()
+    if target is None:
+        rep.warn(f"sccache: no upstream build for {platform.machine()} -- skipping")
+        return
+
+    url = f"https://api.github.com/repos/{SCCACHE_REPO}/releases/latest"
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            latest = json.load(response)["tag_name"]
+    except (OSError, ValueError, KeyError) as exc:
+        rep.warn(f"sccache: could not read the latest release ({exc}) -- leaving it alone")
+        return
+
+    current = _installed_sccache_version()
+    if current and latest.lstrip("v") == current:
+        rep.info(f"sccache {current} is current")
+        return
+
+    if dry_run:
+        rep.info(f"[check] would install sccache {latest} (have {current or 'none'})")
+        return
+
+    asset = f"sccache-{latest}-{target}.tar.gz"
+    base = f"https://github.com/{SCCACHE_REPO}/releases/download/{latest}"
+    with tempfile.TemporaryDirectory() as tmp:
+        tarball = Path(tmp) / asset
+        try:
+            urllib.request.urlretrieve(f"{base}/{asset}", tarball)
+            with urllib.request.urlopen(f"{base}/{asset}.sha256", timeout=60) as response:
+                expected = response.read().decode().split()[0]
+        except (OSError, IndexError) as exc:
+            rep.warn(f"sccache: download failed ({exc}) -- leaving it alone")
+            return
+
+        actual = hashlib.sha256(tarball.read_bytes()).hexdigest()
+        if actual != expected:
+            # A tag can be force-moved and a release asset re-uploaded under it,
+            # so the digest is the only thing here that cannot be changed after
+            # the fact. Refuse rather than wire an unverified binary into every
+            # compile on the box.
+            rep.warn(f"sccache: digest mismatch for {asset} -- refusing to install")
+            return
+
+        shutil.unpack_archive(str(tarball), tmp)
+        extracted = Path(tmp) / f"sccache-{latest}-{target}" / "sccache"
+        if not extracted.is_file():
+            rep.warn(f"sccache: {asset} did not contain the expected binary -- skipping")
+            return
+
+        proc = run(["sudo", "install", "-m", "0755", str(extracted), str(SCCACHE_BIN)], timeout=120)
+
+    if proc.returncode != 0:
+        rep.warn(f"sccache: install to {SCCACHE_BIN} failed -- {proc.stderr.strip()}")
+        return
+    rep.change(f"installed sccache {latest} to {SCCACHE_BIN}")
+
+
+def remove_distro_sccache(family: str, dry_run: bool, rep: Reporter) -> None:
+    """Drop a distro sccache so only the managed copy answers on PATH.
+
+    Two packaged copies at different versions is the shadowing problem this
+    change exists to end, just moved from ~/.cargo/bin to /usr/bin.
+    """
+    if family == "debian":
+        check = ["dpkg-query", "-W", "-f=${Status}", "sccache"]
+        remove = ["sudo", "apt-get", "remove", "-y", "sccache"]
+    elif family == "fedora":
+        check = ["rpm", "-q", "sccache"]
+        remove = ["sudo", "dnf", "remove", "-y", "sccache"]
+    else:
+        return
+
+    proc = run(check, timeout=60)
+    if proc.returncode != 0 or "installed" not in proc.stdout:
+        return
+    if dry_run:
+        rep.info("[check] would remove the distro sccache, superseded by the release build")
+        return
+    if run(remove, timeout=300).returncode == 0:
+        rep.change("removed the distro sccache, superseded by the release build")
+
+
 def install_packages(family: str, dry_run: bool, rep: Reporter) -> None:
     """Install from the system package manager -- the top of the packaging ladder.
 
-    Repo packages are signed, and they update with the rest of the system. The
-    predecessor used `cargo install sccache`, which compiles a large Rust project
-    from source to produce a user-owned binary nobody ever updates -- and pins
-    only its dependencies, not sccache itself. That binary is then wired in as a
-    global rustc-wrapper, so it intercepts every compile on the box. Repo it is.
+    Repo packages are signed and update with the rest of the system, which is
+    why mold and clang come from here. sccache does not: see SCCACHE_REPO.
     """
     packages = MACOS_PACKAGES if family == "macos" else LINUX_PACKAGES
     # packaged_tool, not which: a cargo-installed shadow must not make us think
@@ -884,6 +1008,9 @@ def main() -> int:
 
     rep.step("Install build tools")
     install_packages(family, args.check, rep)
+    if family in {"debian", "fedora"}:
+        install_sccache_linux(args.check, rep)
+        remove_distro_sccache(family, args.check, rep)
     install_cargo_sweep(args.check, rep)
 
     rep.step("Global Cargo config")

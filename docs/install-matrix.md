@@ -187,7 +187,8 @@ is the meta-role pulling them all.
 | cargo-machete (unused deps), cargo-semver-checks (API breaks) | all | cargo | n/a |
 | cargo-llvm-cov + llvm-tools-preview | all | cargo / rustup | n/a |
 | protobuf-compiler, librdkafka-dev | Linux | distro repo | version |
-| sccache, mold, clang | Linux (sccache only on macOS) | distro repo / brew | version |
+| mold, clang | Linux | distro repo | version |
+| sccache | all | github-binary, latest each run (Tier 3) / brew | SHA256 verified |
 | cargo-sweep | all | cargo-binstall / cargo | n/a |
 | hyperi-rust-setup, hyperi-rust-cache-prune | all | role file -> `/usr/local/bin` | n/a |
 
