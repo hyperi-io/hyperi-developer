@@ -178,5 +178,13 @@ Checks two things:
 Package names built from a loop, a variable, or Jinja cannot be resolved by
 static YAML parsing, and hyperi-doctor says so explicitly rather than
 reporting a false clean bill of health -- see the "unresolved" count in its
-output. Exits non-zero when a declared package is missing, so it can be used
-as a gate.
+output, which prints even under `--quiet`.
+
+Three exit codes, because "nothing missing" and "could not check everything"
+are different answers: `0` checked everything and found nothing missing, `1`
+something declared is missing, `2` nothing missing but some names could not be
+checked.
+
+`tools/hyperi-doctor` is a thin wrapper; the logic is `tools/hyperi_doctor.py`
+(stdlib plus PyYAML, which replaces the yq and jq the first version needed).
+Its tests are `tools/tests/`, run by `tools/ci/run-tests.sh`.

@@ -55,7 +55,7 @@ fi
 if have shellcheck; then
     ran=$((ran + 1))
     echo "==> shellcheck"
-    if shellcheck install.sh tools/ci/run-tests.sh; then
+    if shellcheck install.sh tools/ci/run-tests.sh tools/hyperi-doctor; then
         echo "    ok"
     else
         echo "    FAILED"
@@ -63,6 +63,22 @@ if have shellcheck; then
     fi
 else
     echo "--> shellcheck not installed, skipping"
+fi
+
+# hyperi-doctor is a thin wrapper over Python, so its real tests are pytest.
+# Skipped without pytest or PyYAML so a bare Node runner stays green, the same
+# bargain the Ansible checks above make.
+if have python3 && python3 -c "import pytest, yaml" >/dev/null 2>&1; then
+    ran=$((ran + 1))
+    echo "==> pytest (tools)"
+    if python3 -m pytest tools/tests -q; then
+        echo "    ok"
+    else
+        echo "    FAILED"
+        failures=$((failures + 1))
+    fi
+else
+    echo "--> pytest or PyYAML not installed, skipping tools tests"
 fi
 
 if [ "$ran" -eq 0 ]; then
