@@ -164,23 +164,41 @@ def configured_pool() -> Path | None:
     directory we would have chosen instead of the one in use deletes nothing
     while reporting success.
     """
-    config = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "config.toml"
-    if not config.is_file():
-        return None
-    try:
-        import tomllib
-
-        parsed = tomllib.loads(config.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-    configured = parsed.get("build", {}).get("build-dir")
+    configured = cargo_config().get("build", {}).get("build-dir")
     if not configured:
         return None
     # Strip cargo's path template; the part before the first placeholder is the
     # fixed root, and that is the directory to bound.
     root = configured.split("{", 1)[0]
     return Path(root.rstrip("/")) if root.strip("/") else None
+
+
+def cargo_config() -> dict:
+    """The parsed cargo config, or an empty mapping if there is not a usable one."""
+    config = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "config.toml"
+    if not config.is_file():
+        return {}
+    try:
+        import tomllib
+
+        return tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def configured_wrapper() -> Path | None:
+    """The sccache the BUILDS use, which is not necessarily the one on PATH.
+
+    A cargo-installed sccache in ~/.cargo/bin shadows a packaged one, and the
+    two are routinely different versions. Querying PATH then talks a newer
+    client protocol at the older server that cargo actually started, which fails
+    and looks like a broken cache rather than two binaries.
+    """
+    wrapper = cargo_config().get("build", {}).get("rustc-wrapper")
+    if not wrapper:
+        return None
+    path = Path(wrapper)
+    return path if path.name.startswith("sccache") else None
 
 
 def tree_size(path: Path) -> int:
@@ -332,9 +350,19 @@ def report_self_capping_caches(rep: Reporter) -> None:
     Nothing here is pruned. Reporting a number the tool did not produce and
     cannot change is the point: it says where the space went.
     """
-    if shutil.which("sccache"):
+    # Ask the sccache cargo actually wraps builds with, not whichever one PATH
+    # happens to resolve first.
+    sccache = configured_wrapper() or shutil.which("sccache")
+    if sccache:
+        on_path = shutil.which("sccache")
+        if on_path and Path(on_path).resolve() != Path(sccache).resolve():
+            rep.info(
+                f"sccache: builds use {sccache}; {on_path} shadows it on PATH, so "
+                "a hand-run `sccache --show-stats` queries the wrong binary"
+            )
+
         proc = subprocess.run(
-            ["sccache", "--show-stats"],
+            [str(sccache), "--show-stats"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -344,15 +372,16 @@ def report_self_capping_caches(rep: Reporter) -> None:
         )
         # A failed --show-stats prints nothing to stdout, which parses out to
         # exactly the same "unset / unknown" as a healthy but unconfigured
-        # sccache. The common cause is a stale server daemon older than the
-        # client binary, and that silently stops caching -- so it is reported as
-        # the fault it is rather than left to read as an absence.
+        # sccache. What it does NOT establish is that caching has stopped: the
+        # usual cause is a client talking a different protocol version to the
+        # running server, and the server keeps serving builds throughout.
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip().splitlines()
             rep.warn(
-                "sccache is installed but not answering: "
+                f"sccache: {sccache} did not answer -- "
                 + (detail[-1] if detail else f"exit {proc.returncode}")
-                + " -- compilation is not being cached (try `sccache --stop-server`)"
+                + ". Cache state unknown from here; a version mismatch between "
+                "client and running server is the usual cause"
             )
         else:
             location = next(
