@@ -235,9 +235,11 @@
   when: ansible_facts['distribution'] == 'MacOSX'
   tags: ['rust-cache']
 
-# cargo-binstall goes FIRST and on purpose: every cargo tool below prefers a
-# prebuilt binary when it is present, so installing it last would mean paying
-# for a from-source build of the whole set on a fresh box.
+# cargo-binstall is installed for the developer to reach for by hand. The tasks
+# below deliberately do NOT go through it: binstall fetches a publisher's
+# prebuilt binary, where a lockfile has no meaning, and its handling of
+# `--locked` on the compile fallback is not something to rely on. These use
+# `cargo install --locked`, whose semantics are defined.
 - name: Install cargo-binstall (prebuilt cargo tool fetcher)
   ansible.builtin.command:
     cmd: cargo install cargo-binstall --locked
@@ -246,27 +248,25 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
-# Install cargo tools - these compile from source so may take a while
-- name: Install cargo-bacon (background code checker)
+# --locked on every one of these, and it is not optional. `cargo install`
+# IGNORES the crate's published Cargo.lock by default and re-resolves, so
+# without it a tool is built against dependency versions its author never
+# tested and a semver-compatible upstream release can break one box and not
+# the next. These compile from source, so a cold box pays for it once.
+- name: Install the cargo tool set
   ansible.builtin.command:
-    cmd: cargo install bacon
-    creates: "{{ user_home }}/.cargo/bin/bacon"
-  environment: "{{ cargo_env }}"
-  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-
-- name: Install cargo-nextest (test runner)
-  ansible.builtin.command:
-    cmd: cargo install cargo-nextest --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-nextest"
-  environment: "{{ cargo_env }}"
-  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-
-- name: Install cargo-deny (dependency linter)
-  ansible.builtin.command:
-    cmd: cargo install cargo-deny --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-deny"
+    cmd: "cargo install {{ item.crate }} --locked"
+    creates: "{{ user_home }}/.cargo/bin/{{ item.bin }}"
+  loop:
+    - {crate: bacon, bin: bacon}
+    - {crate: cargo-nextest, bin: cargo-nextest}
+    - {crate: cargo-deny, bin: cargo-deny}
+    # Unused dependencies, the one lens the Rust review practice has no tool for.
+    - {crate: cargo-machete, bin: cargo-machete}
+    # Breaking API changes, before a library release fans out to its consumers.
+    - {crate: cargo-semver-checks, bin: cargo-semver-checks}
+  loop_control:
+    label: "{{ item.crate }}"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -346,7 +346,7 @@
 
 - name: Install cargo-update (for updating cargo tools)
   ansible.builtin.command:
-    cmd: cargo install cargo-update
+    cmd: cargo install cargo-update --locked
     creates: "{{ user_home }}/.cargo/bin/cargo-install-update"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"

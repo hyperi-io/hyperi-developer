@@ -172,9 +172,12 @@ fi
 # --- cargo tools: rustup updates the toolchain, cargo-update the binaries --
 # (nextest, deny, cargo-audit, cargo-hack, typos, ...). brew does NOT touch
 # cargo-installed binaries.
+# --locked, because without it this undoes the flag the role installed each tool
+# with: install-update rebuilds against freshly resolved dependencies rather
+# than the ones the author published a lockfile for.
 if have cargo-install-update; then
   section "cargo tools"
-  run "cargo install-update -a" cargo install-update -a
+  run "cargo install-update -a --locked" cargo install-update -a --locked
 else
   warn "cargo-install-update not found — skipping"
 fi
