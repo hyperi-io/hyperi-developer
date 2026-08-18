@@ -82,9 +82,13 @@ least-recently-built ones until the pool is under `rust_cache_build_dir_max`.
 It touches no project `target/`, and reports the self-capping caches without
 pruning them.
 
-Sizes live in the role defaults and are set for the smallest machine this role
-runs on, which is a laptop. A build box raises them per host rather than
-everyone inheriting its numbers.
+The pool ceiling defaults to `auto`: a sixth of the filesystem's total size,
+floor 40G. Total, not free -- free space shrinks as the pool grows, so a ceiling
+derived from it chases itself downward. That puts a 692G build box at 115G and a
+256G laptop at the floor, so one default suits both. Set
+`rust_cache_build_dir_max` to an explicit size to override it.
+
+sccache and ccache keep fixed ceilings; both enforce their own.
 
 `build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
 says so and leaves the per-project layout alone, so the default stays safe.
