@@ -184,14 +184,23 @@ is the meta-role pulling them all.
 | cargo-binstall | all | cargo | n/a |
 | cargo-* (nextest, deny, chef, bacon, update) | all | cargo | n/a |
 | cargo-audit, cargo-hack, cargo-pgo | all | cargo | n/a |
+| cargo-machete (unused deps), cargo-semver-checks (API breaks) | all | cargo | n/a |
 | cargo-llvm-cov + llvm-tools-preview | all | cargo / rustup | n/a |
 | protobuf-compiler, librdkafka-dev | Linux | distro repo | version |
 | sccache, mold, clang | Linux (sccache only on macOS) | distro repo / brew | version |
 | cargo-sweep | all | cargo-binstall / cargo | n/a |
 | hyperi-rust-setup, hyperi-rust-cache-prune | all | role file -> `/usr/local/bin` | n/a |
 
-`cargo-binstall` is installed FIRST so the tools after it arrive prebuilt rather
-than compiled from source.
+Every cargo tool is installed with `--locked`, and `hyperi-update` refreshes them
+with `cargo install-update -a --locked`. `cargo install` ignores the crate's
+published `Cargo.lock` by default and re-resolves, so without the flag a tool is
+built against dependency versions its author never tested -- and an update pass
+without it silently undoes the flag on every tool it touches.
+
+`cargo-binstall` is installed for reaching for by hand. The tasks do not route
+through it: it fetches a publisher's prebuilt binary, where a lockfile has no
+meaning, so the defined `--locked` semantics of `cargo install` win over the
+faster fetch.
 
 Coverage is `cargo-llvm-cov`. It replaced `cargo-tarpaulin`, which is ptrace-based
 and therefore Linux-x86_64 only -- a macOS developer had no coverage tool at all.

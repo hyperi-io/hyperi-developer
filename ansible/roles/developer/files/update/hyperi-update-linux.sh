@@ -263,9 +263,12 @@ fi
 # rustup updates the TOOLCHAIN; the cargo-installed binaries (nextest, deny,
 # cargo-audit, cargo-hack, typos, ...) are refreshed by cargo-update's
 # `install-update`, which the rust role installs as `cargo-install-update`.
+# --locked, because without it this undoes the flag the role installed each
+# tool with: install-update rebuilds against freshly resolved dependencies
+# rather than the ones the author published a lockfile for.
 section "cargo tools"
 if have cargo-install-update; then
-    run "cargo install-update -a" cargo install-update -a
+    run "cargo install-update -a --locked" cargo install-update -a --locked
 else
     skip "cargo-install-update not found (install the cargo-update crate)"
 fi
