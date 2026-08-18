@@ -154,6 +154,15 @@ that a checksum closes.
 | Ghostty | Fedora (COPR) / macOS (cask) | vendor-repo / cask | version |
 | Ghostty | Ubuntu | github-binary (.deb) | SHA256 |
 | DBeaver | Linux flatpak / macOS cask | flatpak / cask | version |
+| VS Code privacy profile (opt-in: `-e vscode_privacy_enabled=true`) | all | bundled script (`hyperi-vscode-privacy`) | n/a |
+
+The privacy profile is off by default because it edits a personal
+`settings.json`. It merges one marked block of managed keys into VSCode,
+VSCodium and Cursor, leaving every comment and unmanaged key untouched, backs
+the file up once before its first write, and removes only its own keys under
+`-e vscode_privacy_uninstall=true`. A key the developer sets later in the same
+file keeps their value, and the run says which keys that applies to rather
+than reporting the profile applied when it changed nothing.
 
 ### Languages
 
@@ -361,6 +370,23 @@ package). `hyperi-update` re-fetches the latest release for these.
 `hyperi-update` (the "update my system" command) runs all three tiers plus the
 OS / snap / flatpak sweep, so one command brings everything current. soe
 schedules it on a timer; the base leaves update cadence to the host.
+
+## Checking what a host actually has
+
+`tools/hyperi-doctor` is the read-only counterpart to everything above. It
+resolves the same role graph documented here, recursing through each role's
+`meta/main.yml` dependencies, then reports which declared apt / dnf / homebrew
+packages are missing from this host. It applies nothing and needs no sudo.
+
+It also reads the applied-state stamp
+(`/var/lib/hyperi-developer/applied.json`), written at the end of a run, and
+compares its git SHA against the current checkout -- so "this host has not
+been reprovisioned in a month" is answerable rather than something you find
+out through a build failure in an unrelated dependency.
+
+Package names built from a loop, a variable or Jinja cannot be resolved by a
+static scan of the task files, and it reports that count explicitly. A gate
+that quietly under-reports is worse than no gate.
 
 ## Design intent - an additive base
 

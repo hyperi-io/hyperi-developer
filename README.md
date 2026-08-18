@@ -75,7 +75,7 @@ flowchart TD
 | Tag | Description |
 |-----|-------------|
 | `developer` | Generic CLI dev base (the default: git, docker, shell utilities) |
-| `developer-gui` | VS Code, Ghostty, DBeaver |
+| `developer-gui` | VS Code, Ghostty, DBeaver. Privacy + AI-upsell de-nag profile for VSCode/VSCodium/Cursor off unless `-e vscode_privacy_enabled=true` |
 | `developer-rust` / `-go` / `-python` / `-node` / `-typescript` / `-c` | Language toolchains |
 | `infrastructure` | OpenTofu, OpenBao, AWS CLI, `k8s` (kubectl, helm, k9s, kind, argocd, kustomize, kubeconform, kube-linter), `data` (clickhouse-client, rpk, valkey-cli, vector), `cloudflare` (flarectl, wrangler) |
 | `contributor` | hyperi-ci + its check tools (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, yamllint, ansible-lint, pre-commit, act |
@@ -101,6 +101,7 @@ flowchart TD
 **Opt-in, via tags:**
 
 - `developer-gui`: VS Code, Ghostty (Solarized theme), DBeaver
+- `vscode-privacy` (off by default): strips the Copilot/AI upsell UI and the telemetry that stock VSCode ships enabled, across VSCode, VSCodium and Cursor. Enable with `-e vscode_privacy_enabled=true`. It merges one marked block into `settings.json` and never touches a comment or a key it does not manage, backs the file up before its first write, and `-e vscode_privacy_uninstall=true` takes only its own keys back out. Where you have set one of those keys yourself further down the file, yours wins and the run tells you which ones -- so it cannot look applied while changing nothing
 - Languages: Rust, Go, Python, C/C++, Node.js, TypeScript (the Astral suite -- uv, ruff, ty -- ships in the base, as does Node.js: it is core tooling that semantic-release and CI need)
 - `infrastructure`: OpenTofu + OpenBao (the OSS forks, no HashiCorp BUSL tools), AWS CLI v2. Under `k8s`: kubectl + helm + k9s + kind + argocd + kustomize + dive. The `data` group: clickhouse-client, rpk, valkey-cli, vector. The `cloudflare` group: flarectl + wrangler (flarectl builds from source on both platforms -- Cloudflare ships no binary -- so Linux needs `developer-go`)
 - `contributor`: hyperi-ci and the tools its checks drive (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, ansible-lint, pre-commit, act
@@ -210,6 +211,20 @@ cd hyperi-developer
 ```bash
 ./tools/git/git-claude-contrib-fix.sh --help
 ```
+
+### Host Drift Check
+
+[hyperi-doctor](tools/hyperi-doctor) answers "has this host fallen behind the SOE?" without applying anything and without sudo.
+
+```bash
+./tools/hyperi-doctor                             # scope from the applied-state stamp, or 'developer'
+./tools/hyperi-doctor --tags developer-rust,soe   # explicit role scope
+./tools/hyperi-doctor --quiet                     # problems only, exit code as a gate
+```
+
+It reports the applied-state stamp's age and git SHA against this checkout, and which declared apt/dnf/homebrew packages are actually missing. Package names built from a loop, a variable or Jinja cannot be resolved by a static scan, and it prints that count rather than implying a clean result.
+
+**Documentation:** See [tools/README.md](tools/README.md).
 
 ## Windows 11 SOE
 

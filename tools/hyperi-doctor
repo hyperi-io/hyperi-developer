@@ -1,0 +1,435 @@
+#!/usr/bin/env bash
+# hyperi-doctor - read-only report on SOE drift.
+#
+# Never applies anything and never needs sudo: it only reads the
+# applied-state stamp (ansible/playbooks/main.yml writes it) and queries the
+# local package manager. See tools/README.md.
+#
+# Licensed under the Apache License, Version 2.0
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROLES_DIR="${REPO_ROOT}/ansible/roles"
+
+# Overridable for testing against a stamp file that is not actually root-owned
+# system state.
+STAMP_PATH="${HYPERI_DOCTOR_STAMP:-/var/lib/hyperi-developer/applied.json}"
+
+QUIET=false
+REQUESTED_TAGS=""
+PROBLEM_COUNT=0
+UNRESOLVED_COUNT=0
+
+TMP_DIR=""
+# A false test here (nothing to clean up yet) must not itself become the
+# script's exit status under `set -e` -- the explicit `return 0` guards that.
+# shellcheck disable=SC2329 # invoked indirectly via the trap below
+cleanup() {
+    [[ -n "${TMP_DIR}" ]] && rm -rf "${TMP_DIR}"
+    return 0
+}
+trap cleanup EXIT
+
+usage() {
+    cat <<'EOF'
+Usage: hyperi-doctor [--tags TAG[,TAG...]] [--quiet] [--help]
+
+Read-only report on whether this host has drifted behind what this repo's
+roles declare. Never applies anything, never needs sudo, and is safe to run
+on any machine.
+
+Reports:
+  a. Applied-state stamp age and SHA vs this checkout's HEAD.
+  b. Which packages the selected roles declare that are absent locally.
+  c. Exits non-zero when a declared package is missing.
+
+Options:
+  --tags TAG[,TAG...]  Role tags to check, as passed to
+                       'ansible-playbook --tags'. Defaults to the tags in
+                       the applied-state stamp, or to 'developer' (the
+                       bare-install default) when there is no stamp.
+  --quiet              Print only problems (missing packages) and set the
+                       exit code; suppress the stamp report and notes.
+  --help               Show this message.
+EOF
+}
+
+die() {
+    printf 'hyperi-doctor: %s\n' "$1" >&2
+    exit "${2:-1}"
+}
+
+# Suppressed by --quiet: informational, not a problem this host has.
+note() {
+    [[ "${QUIET}" == "true" ]] && return 0
+    printf '%s\n' "$1"
+}
+
+# Always printed, even under --quiet: this is the "problems" list.
+problem() {
+    printf '%s\n' "$1"
+    PROBLEM_COUNT=$((PROBLEM_COUNT + 1))
+}
+
+require_tool() {
+    command -v "$1" >/dev/null 2>&1 || die "'$1' is required and was not found on PATH"
+}
+
+# ============================================================================
+# Argument parsing
+# ============================================================================
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --tags)
+            [[ -n "${2:-}" ]] || die "--tags requires an argument"
+            REQUESTED_TAGS="$2"
+            shift 2
+            ;;
+        --quiet)
+            QUIET=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            die "unknown argument: $1 (see --help)"
+            ;;
+    esac
+done
+
+# jq is needed to read the stamp, yq only to resolve declared packages. They
+# are checked separately, and yq only where it is used, so a host that has
+# drifted far enough to be missing it still gets the drift answer instead of
+# dying before the part that would have explained why.
+require_tool jq
+
+TMP_DIR="$(mktemp -d)"
+
+# ============================================================================
+# Platform detection
+# ============================================================================
+# One module, one query tool per platform -- the task files already carry
+# platform-specific names (protobuf-compiler vs protobuf), so there is no
+# cross-platform name mapping to get wrong.
+
+detect_platform() {
+    case "$(uname -s)" in
+        Darwin)
+            echo "macos"
+            ;;
+        Linux)
+            if command -v dpkg-query >/dev/null 2>&1; then
+                echo "ubuntu"
+            elif command -v rpm >/dev/null 2>&1; then
+                echo "fedora"
+            else
+                echo "unknown"
+            fi
+            ;;
+        *)
+            echo "unknown"
+            ;;
+    esac
+}
+
+PLATFORM="$(detect_platform)"
+
+case "${PLATFORM}" in
+    ubuntu)
+        MODULE_KEY="ansible.builtin.apt"
+        PLATFORM_LABEL="Ubuntu (dpkg-query)"
+        ;;
+    fedora)
+        MODULE_KEY="ansible.builtin.dnf"
+        PLATFORM_LABEL="Fedora (rpm)"
+        ;;
+    macos)
+        MODULE_KEY="community.general.homebrew"
+        PLATFORM_LABEL="macOS (brew)"
+        require_tool brew
+        ;;
+    *)
+        die "unsupported or undetected platform ($(uname -s)) -- cannot map to apt/dnf/homebrew"
+        ;;
+esac
+
+pkg_installed() {
+    case "${PLATFORM}" in
+        ubuntu)
+            dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'
+            ;;
+        fedora)
+            rpm -q "$1" >/dev/null 2>&1
+            ;;
+        macos)
+            brew list --versions "$1" >/dev/null 2>&1
+            ;;
+    esac
+}
+
+# ============================================================================
+# Section (a) -- applied-state stamp
+# ============================================================================
+# Missing stamp is expected on every host provisioned before this existed --
+# report it plainly, never as a failure.
+
+STAMP_TAGS=""
+
+report_stamp() {
+    if [[ ! -f "${STAMP_PATH}" ]]; then
+        note "== Applied-state stamp =="
+        note "No stamp found at ${STAMP_PATH}."
+        note "This host has either never been provisioned by this repo, or was"
+        note "provisioned before the stamp existed. Not treated as an error."
+        note ""
+        return 0
+    fi
+
+    local sha timestamp tags target_user warns now_epoch stamp_epoch age_days head_sha behind
+    sha="$(jq -r '.sha // "unknown"' "${STAMP_PATH}")"
+    timestamp="$(jq -r '.timestamp // "unknown"' "${STAMP_PATH}")"
+    tags="$(jq -r '(.tags // []) | join(",")' "${STAMP_PATH}")"
+    target_user="$(jq -r '.target_user // "unknown"' "${STAMP_PATH}")"
+    warns="$(jq -r '.warnings // "unknown"' "${STAMP_PATH}")"
+    STAMP_TAGS="${tags}"
+
+    note "== Applied-state stamp =="
+    note "Stamp path:    ${STAMP_PATH}"
+    note "Applied SHA:   ${sha}"
+    note "Applied at:    ${timestamp}"
+    note "Tags applied:  ${tags:-(none recorded)}"
+    note "Target user:   ${target_user}"
+
+    # Optional components warn and continue, so a run can finish with tools
+    # missing. A stamp is not a clean bill of health on its own.
+    if [[ "${warns}" != "unknown" && "${warns}" != "0" ]]; then
+        note "Warnings:      ${warns} component(s) warned on that run -- it did"
+        note "               NOT install everything it was asked to."
+    else
+        note "Warnings:      ${warns}"
+    fi
+
+    now_epoch="$(date -u +%s)"
+    stamp_epoch=""
+    if date -u -d "${timestamp}" +%s >/dev/null 2>&1; then
+        stamp_epoch="$(date -u -d "${timestamp}" +%s)"
+    elif date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "${timestamp}" +%s >/dev/null 2>&1; then
+        stamp_epoch="$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "${timestamp}" +%s)"
+    fi
+    if [[ -n "${stamp_epoch}" ]]; then
+        age_days=$(( (now_epoch - stamp_epoch) / 86400 ))
+        note "Stamp age:     ${age_days} day(s)"
+    else
+        note "Stamp age:     could not parse timestamp '${timestamp}'"
+    fi
+
+    if [[ -d "${REPO_ROOT}/.git" ]] && command -v git >/dev/null 2>&1; then
+        head_sha="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo "")"
+        if [[ -n "${head_sha}" ]]; then
+            note "Checkout HEAD: ${head_sha}"
+            if [[ "${sha}" == "${head_sha}" ]]; then
+                note "This host matches the current checkout."
+            else
+                behind="$(git -C "${REPO_ROOT}" rev-list --count "${sha}..${head_sha}" 2>/dev/null || echo "")"
+                if [[ -n "${behind}" ]]; then
+                    note "This host is ${behind} commit(s) behind this checkout."
+                else
+                    note "Applied SHA differs from this checkout's HEAD (commit count unknown --"
+                    note "the applied SHA may not be reachable from this checkout's history)."
+                fi
+            fi
+        fi
+    else
+        note "Checkout HEAD: unavailable (not a git checkout)"
+    fi
+    note ""
+}
+
+# ============================================================================
+# Section (b) -- role scope and package resolution
+# ============================================================================
+
+# Recursively expands a seed tag/role list through each role's
+# meta/main.yml `dependencies:`, the same graph ansible-playbook --tags
+# walks. Prints resolved role names, one per line, to stdout.
+resolve_roles() {
+    local seed="$1"
+    local queue role dep meta_file resolved=""
+    queue="${seed//,/ }"
+
+    while [[ -n "${queue}" ]]; do
+        role="${queue%% *}"
+        if [[ "${queue}" == "${role}" ]]; then
+            queue=""
+        else
+            queue="${queue#* }"
+        fi
+        [[ -n "${role}" ]] || continue
+
+        case " ${resolved} " in
+            *" ${role} "*) continue ;;
+        esac
+
+        if [[ ! -d "${ROLES_DIR}/${role}" ]]; then
+            # stderr, not note(): this function's stdout IS its return value
+            # (the resolved role list), and note() writes to stdout too.
+            [[ "${QUIET}" == "true" ]] || \
+                printf "note: tag '%s' has no matching role directory under ansible/roles -- skipped\n" "${role}" >&2
+            continue
+        fi
+
+        resolved="${resolved} ${role}"
+        meta_file="${ROLES_DIR}/${role}/meta/main.yml"
+        if [[ -f "${meta_file}" ]]; then
+            while IFS= read -r dep; do
+                [[ -n "${dep}" && "${dep}" != "null" ]] && queue="${queue} ${dep}"
+            done < <(yq eval '.dependencies[].role' "${meta_file}" 2>/dev/null | tr -d '"' || true)
+        fi
+    done
+
+    printf '%s\n' "${resolved}" | tr -s ' ' '\n' | sed '/^$/d'
+}
+
+# name/state pairs, tagged with their originating role, for every task in
+# ROLE using the current platform's module. Deliberately does not evaluate
+# `when:` -- a task gated on something other than distribution (a feature
+# flag, a GNOME check) is still listed if its module matches this platform.
+extract_role_packages() {
+    local role="$1"
+    local files_list="${TMP_DIR}/files.txt"
+
+    find "${ROLES_DIR}/${role}" -path "*/tasks/*.yml" -type f > "${files_list}"
+    [[ -s "${files_list}" ]] || return 0
+
+    # A file with no matching task still yields one line -- {"role": ...}
+    # with no "name"/"state" keys -- when strenv() sits alongside a select()
+    # that matched nothing. JQ_REDUCE's null-name check (jq reads a missing
+    # key as null) already treats that the same as a real null name: skipped.
+    env ROLE_NAME="${role}" xargs -a "${files_list}" yq eval -o=json -I=0 \
+        "[..] | .[] | select(tag == \"!!map\") | select(has(\"${MODULE_KEY}\")) | {\"name\": .\"${MODULE_KEY}\".name, \"state\": .\"${MODULE_KEY}\".state, \"role\": strenv(ROLE_NAME)}" \
+        >> "${TMP_DIR}/tasks.jsonl"
+}
+
+# jq reduce over the collected {name, state, role} records:
+#  - drops state: absent (a removal, not a declaration)
+#  - a Jinja-templated state makes the whole task's names unresolved (the
+#    intended state cannot be known statically)
+#  - a Jinja-templated or null name is unresolved
+#  - everything else becomes a checked package, deduped by (name, role)
+# shellcheck disable=SC2016 # this is a jq program -- $t/$s/$n/$nm are jq vars, not shell
+JQ_REDUCE='
+def is_jinja: type == "string" and test("\\{\\{");
+reduce .[] as $t (
+  {packages: [], unresolved: 0};
+  ($t.state // "present") as $state
+  | if ($t.name == null) then .
+    elif ($state | is_jinja) then
+      (if ($t.name | type) == "array" then ($t.name | length) else 1 end) as $n
+      | .unresolved += $n
+    elif $state == "absent" then .
+    else
+      ( $t.name | if type == "array" then . else [.] end ) as $names
+      | reduce $names[] as $nm (.;
+          if ($nm | is_jinja) or ($nm == null) then .unresolved += 1
+          else .packages += [{name: $nm, role: $t.role}]
+          end
+        )
+    end
+)
+| {packages: (.packages | unique), unresolved: .unresolved}
+'
+
+report_packages() {
+    local scope_source="$1"
+    shift
+    local -a roles=("$@")
+    local role missing_count=0 checked_count
+
+    : > "${TMP_DIR}/tasks.jsonl"
+    for role in "${roles[@]}"; do
+        extract_role_packages "${role}"
+    done
+
+    note "== Package check: ${PLATFORM_LABEL} =="
+    note "Role scope: ${roles[*]}  (source: ${scope_source})"
+
+    # jq -s on an empty (or phantom-only, see extract_role_packages) input
+    # reduces cleanly to {packages: [], unresolved: 0} -- no separate
+    # empty-scope branch needed, and "0 checked" is an honest report for a
+    # role with no package tasks (e.g. power-profile).
+    jq -s "${JQ_REDUCE}" "${TMP_DIR}/tasks.jsonl" > "${TMP_DIR}/resolved.json"
+    UNRESOLVED_COUNT="$(jq -r '.unresolved' "${TMP_DIR}/resolved.json")"
+    checked_count="$(jq -r '.packages | length' "${TMP_DIR}/resolved.json")"
+
+    note "Declared packages checked: ${checked_count}"
+
+    local entry pkg_name pkg_role
+    while IFS= read -r entry; do
+        pkg_name="$(jq -r '.name' <<<"${entry}")"
+        pkg_role="$(jq -r '.role' <<<"${entry}")"
+        if ! pkg_installed "${pkg_name}"; then
+            problem "MISSING: ${pkg_name}  (declared by role '${pkg_role}')"
+            missing_count=$((missing_count + 1))
+        fi
+    done < <(jq -c '.packages[]' "${TMP_DIR}/resolved.json")
+
+    note "Missing: ${missing_count}"
+    note ""
+    note "Unresolved package name(s): ${UNRESOLVED_COUNT}"
+    if [[ "${UNRESOLVED_COUNT}" -gt 0 ]]; then
+        note "These are loop-, variable-, or Jinja-built package names this static"
+        note "YAML scan cannot evaluate. They are NOT checked above -- a clean report"
+        note "does not mean these are present. Inspect the role task files directly."
+    fi
+    note ""
+}
+
+# ============================================================================
+# main
+# ============================================================================
+
+main() {
+    report_stamp
+
+    if ! command -v yq >/dev/null 2>&1; then
+        problem "yq is not on PATH, so declared packages could not be checked."
+        note "Install it, or run with a host that has the developer role applied."
+        exit 1
+    fi
+
+    local scope_source roles_csv
+    if [[ -n "${REQUESTED_TAGS}" ]]; then
+        scope_source="--tags flag"
+        roles_csv="${REQUESTED_TAGS}"
+    elif [[ -n "${STAMP_TAGS}" ]]; then
+        scope_source="applied-state stamp"
+        roles_csv="${STAMP_TAGS}"
+    else
+        scope_source="default (no --tags given, no stamp tags recorded)"
+        roles_csv="developer"
+    fi
+
+    local -a roles=()
+    while IFS= read -r role; do
+        [[ -n "${role}" ]] && roles+=("${role}")
+    done < <(resolve_roles "${roles_csv}")
+
+    if [[ "${#roles[@]}" -eq 0 ]]; then
+        die "no role directories resolved from tags '${roles_csv}' -- nothing to check"
+    fi
+
+    report_packages "${scope_source}" "${roles[@]}"
+
+    if [[ "${PROBLEM_COUNT}" -gt 0 ]]; then
+        exit 1
+    fi
+    note "No declared packages missing for this scope."
+    exit 0
+}
+
+main
