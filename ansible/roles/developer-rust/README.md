@@ -94,7 +94,23 @@ derived from it chases itself downward. That puts a 692G build box at 115G and a
 256G laptop at the floor, so one default suits both. Set
 `rust_cache_build_dir_max` to an explicit size to override it.
 
+**The ceiling is a weekly reset, not a live cap.** Nothing enforces it between
+runs, so a busy build box spends most of the week above it -- one added 37G in
+two days and another 37G in a single afternoon. That is the design working, not
+a prune that failed. It only matters if the peak, not the floor, would fill the
+disk; check free space before reaching for a shorter schedule, and change
+`rust_cache_prune_schedule_weekday` if the peak is genuinely too high.
+
 sccache and ccache keep fixed ceilings; both enforce their own.
+
+**A cargo-installed sccache shadows a packaged one.** `~/.cargo/bin` precedes
+`/usr/bin` on PATH, the two are routinely different versions, and only the one
+named as `rustc-wrapper` in the cargo config is serving builds. A hand-run
+`sccache --show-stats` then talks a newer client protocol at the older running
+server and fails, which reads as a dead cache while every build is still being
+cached normally. The prune reports which binary builds use, and queries that
+one. The setup tool prints the `cargo uninstall` line; removing a binary a
+developer installed is their call.
 
 `build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
 says so and leaves the per-project layout alone, so the default stays safe.
