@@ -64,6 +64,12 @@ Because the sccache server reads its ceiling once at startup and holds it,
 changing the cap also stops the running server. The next build starts a fresh
 one at the new value; nothing on disk is touched.
 
+A server left running across an sccache upgrade is the failure to know about:
+the old daemon answers the new client, the handshake fails, and compilation
+silently stops being cached while `sccache` is still installed and configured.
+`hyperi-rust-cache-prune` reports it rather than showing an empty ceiling, and
+`sccache --stop-server` clears it.
+
 **Build artefacts have no upstream cap at all.** Cargo does not track them
 (rust-lang/cargo#13136), so nothing reclaims a `target/` ever, and one per repo
 across a tree full of them is what actually fills a disk.
