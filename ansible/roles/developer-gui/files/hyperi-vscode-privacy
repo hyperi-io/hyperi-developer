@@ -1,0 +1,491 @@
+#!/usr/bin/env python3
+"""Apply (or remove) the HyperI privacy + AI-upsell de-nag settings profile to
+every detected VSCode-family editor: VSCode, VSCodium, Cursor.
+
+Run it yourself:
+
+    hyperi-vscode-privacy              # show what it would do, then ask
+    hyperi-vscode-privacy --check      # show what would change, change nothing
+    hyperi-vscode-privacy --yes        # no prompt (this is how Ansible calls it)
+    hyperi-vscode-privacy --yes --uninstall   # remove ONLY the managed keys
+
+Background: hyperi-io/hyperi-developer#7. Stock VSCode ships Copilot/AI upsell
+UI and telemetry on by default, and each release adds a new one. This is one
+maintained profile instead of every developer re-solving it on their own box.
+
+The settings tiers live in this one file (MANAGED_SETTINGS / TIER4_SETTINGS
+below) so a change ships through the normal auto-update channel -- editing
+this script is the only place the profile needs to change.
+
+How the merge stays JSONC-safe
+-------------------------------
+settings.json legally contains `//` comments and trailing commas, which a
+naive `json.loads()` rejects -- and real developers' files use both. Rather
+than parse the whole document (and risk reformatting or discarding comments
+we do not own), this script never parses more than it has to: a small
+scanner (find_object_span) walks the text tracking string/comment state and
+brace depth just far enough to find the byte range of the top-level object,
+then everything we write lives inside one clearly delimited block inserted
+as the FIRST property (see insert_block for why first and not last).
+Re-running always finds and replaces that same block (strip_managed_block),
+so nothing accumulates and nothing outside the block -- including every
+comment and every key we do not manage -- is ever touched. Uninstall is the
+same strip, applied and then written back.
+
+Inserting first means a key the developer sets later in their own file wins,
+which is the precedence we want. It also means the profile can be inert for
+that key, so any managed key already defined outside our block is reported
+rather than left to look applied.
+
+A file that does not scan as a single valid object (corrupt, truncated,
+top-level array, whatever) is left completely alone and reported as a
+warning line, never a crash and never a guess.
+"""
+
+import argparse
+import json
+import platform
+import re
+import shutil
+import sys
+from pathlib import Path
+
+# On-disk contract: changing this text orphans every block already applied
+# on a machine, since a future run can no longer find it to replace or
+# remove. Keep byte-for-byte stable across versions.
+BEGIN_MARKER = "// >>> HyperI managed settings -- hyperi-developer#7"
+END_MARKER = "// <<< HyperI managed settings"
+
+BACKUP_SUFFIX = ".hyperi-backup"
+
+# ---------------------------------------------------------------------------
+# The profile itself -- Tiers 1-3 (issue #7), always applied.
+# ---------------------------------------------------------------------------
+MANAGED_SETTINGS = {
+    # Tier 1 -- AI / Copilot upsell surfaces, the headline ask. The master
+    # switch (VSCode 1.105+) hides and disables the built-in AI/Copilot UI
+    # without touching third-party assistant extensions (Claude Code etc.).
+    "chat.disableAIFeatures": True,
+    "chat.commandCenter.enabled": False,
+    "workbench.editor.empty.hint": "hidden",
+    # Tier 2 -- telemetry. telemetryLevel is the unified switch, superseding
+    # the deprecated enableTelemetry / enableCrashReporter pair.
+    "telemetry.telemetryLevel": "off",
+    "telemetry.feedback.enabled": False,
+    # Tier 3 -- experiments and other online-service callbacks.
+    "workbench.enableExperiments": False,
+    "workbench.settings.enableNaturalLanguageSearch": False,
+    "extensions.ignoreRecommendations": True,
+    "npm.fetchOnlinePackageInfo": False,
+    "json.schemaDownload.enable": False,
+    "typescript.surveys.enabled": False,
+}
+
+# Deliberately NOT managed (see issue #7): extensions.autoUpdate /
+# autoCheckUpdates (security updates matter) and update.mode (do not freeze
+# the editor). Left to the developer.
+
+# ---------------------------------------------------------------------------
+# Tier 4 -- common extension telemetry, applied only when the extension is
+# present. Value is (setting_value, extension-id prefixes); a prefix match
+# because VSCode suffixes install dirs with a version, e.g.
+# "ms-python.python-2026.4.0".
+# ---------------------------------------------------------------------------
+TIER4_SETTINGS = {
+    "gitlens.telemetry.enabled": (False, ("eamodio.gitlens-",)),
+    # redhat.telemetry.enabled is shared across several Red Hat extensions
+    # (vscode-yaml, java, vscode-xml, ...), so any "redhat." install counts.
+    "redhat.telemetry.enabled": (False, ("redhat.",)),
+    "python.telemetry.enable": (False, ("ms-python.python-",)),
+    "omnisharp.enableTelemetry": (False, ("ms-dotnettools.csharp-",)),
+    "powershell.telemetry.enable": (False, ("ms-vscode.powershell-",)),
+    "debugpy.telemetry.enable": (False, ("ms-python.debugpy-",)),
+}
+
+EDITORS = [
+    {
+        "name": "VSCode",
+        "linux_bin": "code",
+        "config_dir": "Code",
+        "macos_app": "Visual Studio Code.app",
+        "extensions_dirs": (".vscode/extensions",),
+    },
+    {
+        "name": "VSCodium",
+        "linux_bin": "codium",
+        "config_dir": "VSCodium",
+        "macos_app": "VSCodium.app",
+        # Upstream has shipped both directory names across releases; check
+        # both rather than guess which one a given install used.
+        "extensions_dirs": (".vscode-oss/extensions", ".vscodium/extensions"),
+    },
+    {
+        "name": "Cursor",
+        "linux_bin": "cursor",
+        "config_dir": "Cursor",
+        "macos_app": "Cursor.app",
+        "extensions_dirs": (".cursor/extensions",),
+    },
+]
+
+
+def _skip_string(text, i):
+    """Return the index just past the closing quote of the string starting
+    at i (which must be an opening '"'). Backslash escapes are skipped as a
+    pair so an escaped quote never looks like the closing one."""
+    n = len(text)
+    i += 1
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == '"':
+            return i + 1
+        i += 1
+    return n
+
+
+def find_object_span(text):
+    """Locate the first top-level JSON(C) object in text without building a
+    parse tree: track string/comment state and brace depth only. Returns
+    (open_index, close_index) -- text[open_index] is '{', text[close_index]
+    is its matching '}' -- or None if text is not a single well-formed
+    top-level object (empty, truncated, unbalanced, a top-level array)."""
+    n = len(text)
+    i = 0
+    depth = 0
+    open_index = None
+    while i < n:
+        c = text[i]
+        if c == '"':
+            i = _skip_string(text, i)
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i)
+            i = n if j == -1 else j + 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2)
+            if j == -1:
+                return None
+            i = j + 2
+            continue
+        if c == "{":
+            if depth == 0 and open_index is None:
+                open_index = i
+            depth += 1
+            i += 1
+            continue
+        if c == "}":
+            depth -= 1
+            if depth == 0 and open_index is not None:
+                return (open_index, i)
+            if depth < 0:
+                return None
+            i += 1
+            continue
+        i += 1
+    return None
+
+
+def strip_comments(text):
+    """Remove //... and /*...*/ comments outside strings. Only used to test
+    whether a span of JSONC holds real content, so it never needs to
+    reproduce anything -- the source text is what gets written, always."""
+    out = []
+    n = len(text)
+    i = 0
+    while i < n:
+        c = text[i]
+        if c == '"':
+            j = _skip_string(text, i)
+            out.append(text[i:j])
+            i = j
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i)
+            i = n if j == -1 else j + 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+BLOCK_INDENT = "  "
+
+
+def strip_managed_block(text):
+    """Remove a previously-inserted HyperI block, if present. Returns
+    (base_text, had_block).
+
+    insert_block always splices one exact, self-contained substring right
+    after the object's opening brace: a leading newline, the indented
+    BEGIN_MARKER line, the key lines (any comma they need is written inside
+    this span, never outside it), the indented END_MARKER line, and a
+    trailing newline. Removing exactly that substring reconstructs the
+    object byte-for-byte as it was before we ever touched it, which is what
+    makes apply and uninstall idempotent instead of drifting by a stray
+    blank line on every re-run."""
+    begin_idx = text.find(BEGIN_MARKER)
+    if begin_idx == -1:
+        return text, False
+    end_marker_idx = text.find(END_MARKER, begin_idx)
+    if end_marker_idx == -1:
+        # The begin marker survived but its pair did not -- someone edited
+        # inside the block by hand. Do not guess at intent; leave it alone
+        # rather than risk deleting content that was never ours.
+        return text, False
+    end_of_end_marker = end_marker_idx + len(END_MARKER)
+
+    indent_start = begin_idx - len(BLOCK_INDENT)
+    leading_newline_idx = indent_start - 1
+    if (
+        leading_newline_idx < 0
+        or text[leading_newline_idx] != "\n"
+        or text[indent_start:begin_idx] != BLOCK_INDENT
+        or end_of_end_marker >= len(text)
+        or text[end_of_end_marker] != "\n"
+    ):
+        # Does not match the exact shape insert_block produces -- treat as
+        # hand-edited rather than remove text we cannot account for.
+        return text, False
+
+    base_text = text[:leading_newline_idx] + text[end_of_end_marker + 1:]
+    return base_text, True
+
+
+def build_block(settings, trailing_comma):
+    lines = [f"{BLOCK_INDENT}{BEGIN_MARKER}"]
+    items = sorted(settings.items())
+    last_i = len(items) - 1
+    for idx, (key, value) in enumerate(items):
+        comma = "," if (idx < last_i or trailing_comma) else ""
+        lines.append(f"{BLOCK_INDENT}{json.dumps(key)}: {json.dumps(value)}{comma}")
+    lines.append(f"{BLOCK_INDENT}{END_MARKER}")
+    return "\n".join(lines)
+
+
+def insert_block(text, settings):
+    """Insert `settings` as the FIRST property of the first top-level object
+    in text. Returns the new text, or None if text is not a single
+    well-formed top-level object.
+
+    First, not last: inserting at the end would need a comma placed OUTSIDE
+    the marker span whenever the object already had content, and that comma
+    is indistinguishable on a later read from one the object already had --
+    the ambiguity that broke idempotency in an earlier version of this
+    script. Inserting right after the opening brace means any comma we need
+    is for OUR last key, so it lives inside the markers where strip_managed_block
+    can remove it unambiguously. The tradeoff: if the user later defines one
+    of these same keys again further down the file, JSONC's last-value-wins
+    reading lets their explicit choice override ours -- which is the
+    intended precedence, not a bug."""
+    span = find_object_span(text)
+    if span is None:
+        return None
+    open_index, close_index = span
+    inside = text[open_index + 1:close_index]
+    has_content = bool(strip_comments(inside).strip())
+    block = build_block(settings, trailing_comma=has_content)
+    insert = "\n" + block + "\n"
+    return text[:open_index + 1] + insert + text[open_index + 1:]
+
+
+def is_installed(home, editor, is_macos):
+    if is_macos:
+        if (Path("/Applications") / editor["macos_app"]).exists():
+            return True
+        config_root = home / "Library" / "Application Support"
+    else:
+        if shutil.which(editor["linux_bin"]):
+            return True
+        config_root = home / ".config"
+    # Fallback: the config directory already exists, so the editor has run
+    # here even though we could not find its binary or app bundle.
+    return (config_root / editor["config_dir"]).is_dir()
+
+
+def settings_file_for(home, editor, is_macos):
+    if is_macos:
+        return (
+            home / "Library" / "Application Support" / editor["config_dir"]
+            / "User" / "settings.json"
+        )
+    return home / ".config" / editor["config_dir"] / "User" / "settings.json"
+
+
+def extension_present(home, editor, prefixes):
+    for rel in editor["extensions_dirs"]:
+        d = home / rel
+        if not d.is_dir():
+            continue
+        try:
+            names = [p.name for p in d.iterdir()]
+        except OSError:
+            continue
+        if any(n.startswith(p) for n in names for p in prefixes):
+            return True
+    return False
+
+
+def overridden_keys(base_text, settings):
+    """Return the managed keys the developer has also defined outside our
+    block, sorted.
+
+    Our block goes in first, so JSONC's last-value-wins reading means those
+    keys keep the developer's value and the profile does nothing for them.
+    That is the precedence we want, but it must be visible: without this the
+    run reports the profile applied while the setting it was asked to change
+    stays exactly as it was.
+
+    Comments are stripped first so a key mentioned in a comment does not
+    count. Nested objects are not distinguished from the top level, which can
+    only over-report -- and this warns, it never edits."""
+    body = strip_comments(base_text)
+    return sorted(
+        key for key in settings
+        if re.search(rf'"{re.escape(key)}"\s*:', body)
+    )
+
+
+def managed_settings_for(home, editor):
+    settings = dict(MANAGED_SETTINGS)
+    for key, (value, prefixes) in TIER4_SETTINGS.items():
+        if extension_present(home, editor, prefixes):
+            settings[key] = value
+    return settings
+
+
+def backup_if_needed(path, check):
+    """Back up the pristine, pre-managed settings.json exactly once -- a
+    backup that already exists is left alone, not refreshed."""
+    backup = path.with_name(path.name + BACKUP_SUFFIX)
+    if backup.exists():
+        return backup, False
+    if check:
+        return backup, True
+    shutil.copy2(path, backup)
+    return backup, True
+
+
+def apply_editor(home, editor, is_macos, check):
+    path = settings_file_for(home, editor, is_macos)
+    existed = path.exists() and path.stat().st_size > 0
+    original = path.read_text(encoding="utf-8") if existed else "{}\n"
+
+    settings = managed_settings_for(home, editor)
+    base_text, _ = strip_managed_block(original)
+    new_text = insert_block(base_text, settings)
+    if new_text is None:
+        return (
+            "WARN",
+            (
+                f"WARN {editor['name']}: {path} does not scan as valid JSON(C) "
+                "-- left untouched."
+            ),
+        )
+
+    # Reported on every path, including the no-change one: a key the developer
+    # has set further down keeps their value forever, so this must not go
+    # quiet once the block is in place.
+    inert = overridden_keys(base_text, settings)
+    suffix = ""
+    if inert:
+        suffix = (
+            f"\nWARN {editor['name']}: set later in the same file, so the profile "
+            f"does not change them -- {', '.join(inert)}"
+        )
+
+    if new_text == original:
+        return ("OK", f"OK {editor['name']}: already applied, no change ({path}){suffix}")
+
+    if check:
+        return ("CHANGED", f"CHANGED {editor['name']}: would apply ({path}){suffix}")
+
+    if existed:
+        backup, made = backup_if_needed(path, check)
+        detail = f"backup {backup}" if made else f"backup already at {backup}"
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        detail = "new file, no backup needed"
+    path.write_text(new_text, encoding="utf-8")
+    return ("CHANGED", f"CHANGED {editor['name']}: applied managed settings ({detail}){suffix}")
+
+
+def uninstall_editor(home, editor, is_macos, check):
+    path = settings_file_for(home, editor, is_macos)
+    if not path.exists() or path.stat().st_size == 0:
+        return ("OK", f"OK {editor['name']}: nothing to uninstall (file absent)")
+
+    original = path.read_text(encoding="utf-8")
+    base_text, had_block = strip_managed_block(original)
+    if not had_block:
+        return ("OK", f"OK {editor['name']}: nothing to uninstall (no managed block)")
+
+    if check:
+        return ("CHANGED", f"CHANGED {editor['name']}: would remove managed block ({path})")
+
+    backup, made = backup_if_needed(path, check)
+    detail = f"backup {backup}" if made else f"backup already at {backup}"
+    path.write_text(base_text, encoding="utf-8")
+    return ("CHANGED", f"CHANGED {editor['name']}: removed managed block ({detail})")
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    parser.add_argument("--check", action="store_true", help="show what would change, write nothing")
+    parser.add_argument("--uninstall", action="store_true", help="remove only the managed keys")
+    parser.add_argument(
+        "--home",
+        default=None,
+        help="home directory to scan (defaults to this process's own home; "
+        "Ansible always passes this explicitly rather than trusting HOME "
+        "through become)",
+    )
+    args = parser.parse_args(argv)
+
+    home = Path(args.home) if args.home else Path.home()
+    is_macos = platform.system() == "Darwin"
+    mode = "uninstall" if args.uninstall else "apply"
+
+    if not args.yes and not args.check:
+        verb = "Remove the HyperI managed block from" if args.uninstall else "Apply the HyperI privacy profile to"
+        reply = input(f"{verb} settings.json for every detected VSCode-family editor under {home}? [y/N] ")
+        if reply.strip().lower() not in ("y", "yes"):
+            print("Aborted, nothing changed.")
+            return 0
+
+    changed = 0
+    warnings = 0
+    for editor in EDITORS:
+        try:
+            if not is_installed(home, editor, is_macos):
+                print(f"SKIP {editor['name']}: not detected")
+                continue
+            if args.uninstall:
+                status, line = uninstall_editor(home, editor, is_macos, args.check)
+            else:
+                status, line = apply_editor(home, editor, is_macos, args.check)
+        except Exception as exc:  # noqa: BLE001 -- never crash, always degrade to a warning
+            status, line = "WARN", f"WARN {editor['name']}: unexpected error -- {exc}"
+
+        print(line)
+        if status == "CHANGED":
+            changed += 1
+        # Counted off the emitted text, not the status: an applied editor can
+        # still carry a WARN line for keys the developer overrides later in
+        # the file, and a summary reading warnings=0 there would be a lie.
+        warnings += sum(1 for ln in line.splitlines() if ln.startswith("WARN "))
+
+    print(f"SUMMARY mode={mode} changed={changed} warnings={warnings}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

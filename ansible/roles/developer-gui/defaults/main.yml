@@ -1,0 +1,17 @@
+---
+# Developer-GUI role defaults.
+
+# ============================================================================
+# VSCode privacy + AI-upsell de-nag profile -- OPT-IN (hyperi-io/hyperi-developer#7)
+# ============================================================================
+# Off by default: this rewrites part of a personal settings.json, so it goes
+# on only where someone asked for it. The profile itself (which keys, which
+# values) lives entirely in the hyperi-vscode-privacy script -- see
+# files/hyperi-vscode-privacy for the tiers and the JSONC-merge design.
+vscode_privacy_enabled: false
+
+# Separate from the flag above: flipping vscode_privacy_enabled back to
+# false does not retroactively undo a previous apply (this role has no
+# fleet-wide tombstone pass for it). Set this true to strip the managed
+# block back out of every detected editor's settings.json on the next run.
+vscode_privacy_uninstall: false
