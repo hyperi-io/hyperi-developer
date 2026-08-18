@@ -3,6 +3,12 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [2.24.9](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.8...v2.24.9) (2026-08-18)
+
+### Bug Fixes
+
+* **deps:** update node-dependencies ([#20](https://github.com/hyperi-io/hyperi-developer/issues/20)) ([28c8a86](https://github.com/hyperi-io/hyperi-developer/commit/28c8a8679350b61fc2fea892b4bdacb6520cdb92))
+
 ## [2.24.8](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.7...v2.24.8) (2026-08-18)
 
 ## [2.24.7](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.6...v2.24.7) (2026-08-18)
