@@ -7,9 +7,9 @@ galaxy_info:
   min_ansible_version: "2.20"
   platforms:
     - name: Fedora
-      versions: ['42']
+      versions: ['43', '44']
     - name: Ubuntu
-      versions: ['noble']
+      versions: ['noble', 'resolute']
 
 # Front-to-back app dev: the clean base, GUI editors, the JS/TS + Python
 # toolchains, and the infrastructure CLIs (kubectl/k9s live there). On macOS the

@@ -47,13 +47,14 @@
         executable: /bin/bash
         creates: /etc/apt/keyrings/git-core-ppa.gpg
 
-    # Map unsupported Ubuntu releases to nearest supported LTS
-    # Launchpad PPAs only publish for LTS releases (jammy, noble)
+    # Use the running release when the PPA publishes it, else the newest series
+    # it does publish -- see git_ppa_supported_suites.
     - name: Determine git-core PPA codename
       ansible.builtin.set_fact:
         git_ppa_codename: >-
-          {{ (ansible_facts['distribution_version'] is version('24.04', '>'))
-             | ternary('noble', ansible_facts['distribution_release']) }}
+          {{ ansible_facts['distribution_release']
+             if ansible_facts['distribution_release'] in git_ppa_supported_suites
+             else git_ppa_supported_suites | last }}
 
     # http, not https, on purpose. Launchpad publishes AAAA records, and on a
     # network with half-working IPv6 the TLS connection hangs rather than
@@ -63,6 +64,13 @@
     # on-path observer can see which packages we pull.
     # Worth revisiting: Acquire::ForceIPv4 would keep https and fix the same
     # root cause, but it is untested here.
+    # A host provisioned by an older revision carries the .list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy git-core PPA .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/git-core-ppa.list
+        state: absent
+
     - name: Add git-core PPA repository
       ansible.builtin.deb822_repository:
         name: git-core-ppa
@@ -141,6 +149,11 @@
         url: "{{ gh_deb_gpg_url }}"
         dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
         mode: '0644'
+
+    - name: Remove the legacy GitHub CLI .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/github-cli.list
+        state: absent
 
     - name: Add the GitHub CLI repository
       ansible.builtin.deb822_repository:

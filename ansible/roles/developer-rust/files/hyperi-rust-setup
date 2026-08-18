@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Set up a fast Rust build environment: sccache, mold, and a global Cargo config.
+"""Set up a fast, BOUNDED Rust build environment: sccache, mold, a global Cargo
+config, and a size cap on every cache that would otherwise grow without limit.
 
 Run it yourself:
 
@@ -20,13 +21,33 @@ several times faster than the default linker, which dominates the edit-build
 Neither is exotic; both come from the distro where the distro has them, so
 they update with everything else.
 
+How the caches stay bounded
+---------------------------
+Three caches, three different mechanisms, and only one of them is ours:
+
+- The cargo GLOBAL cache (registry indexes, downloaded sources) bounds itself.
+  Cargo tracks last-use and deletes network-fetched files unused for 3 months
+  and regenerable files unused for 1 month, on a daily sweep. Nothing is set
+  here; a config key would only restate the defaults.
+- sccache and ccache evict LRU against a byte ceiling read from the environment
+  at startup. This script writes that environment.
+- Build artefacts have NO upstream cap -- cargo does not track them yet
+  (rust-lang/cargo#13136), and one `target/` per repo across a working tree
+  full of them is what actually fills a disk. `build.build-dir` puts the
+  intermediates in one central tree, and `hyperi-rust-cache-prune` enforces a
+  ceiling over that tree.
+
+Only intermediates move. Each project's `target/` keeps its final binaries, so
+`cargo run`, IDEs and anything that globs for a built artefact are unaffected.
+
 What it does NOT do
 -------------------
-It does not move target/ directories onto another disk. That was in the
-predecessor to this script, and it is deliberately gone: it is site-specific
+It does not move or symlink existing target/ directories. That was in the
+predecessor to this script, and it is deliberately gone: it was site-specific
 (it assumed a particular machine's disk layout) and its implementation lost
-data. Cargo supports `build.target-dir` per project if you want it back --
-that is the supported route, and it needs no symlinks.
+data on a re-run. `build.build-dir` is cargo's own supported route, stable
+since Rust 1.91 -- new builds simply write elsewhere, nothing is relocated, and
+a box on an older toolchain just keeps the default layout.
 
 It does not install Rust. Use rustup.
 """
@@ -36,20 +57,55 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 MANAGED_HEADER = "# MANAGED BY hyperi-rust-setup"
+MANAGED_ENV_BEGIN = "# BEGIN hyperi-rust-setup cache caps"
+MANAGED_ENV_END = "# END hyperi-rust-setup cache caps"
+CARRIED_MARKER = "# --- carried over from the previous config; not managed here ---"
+
+# Emitted at the top of every generated config, and stripped again on the way
+# back in so a re-run cannot carry the previous run's banner into the new file.
+MANAGED_PREAMBLE = (
+    MANAGED_HEADER,
+    "# Re-run hyperi-rust-setup to update it.",
+    "#",
+    "# Edits here are overwritten. Per-project .cargo/config.toml wins over",
+    "# this file, so override there.",
+)
+GENERATED_LINES = frozenset({*MANAGED_PREAMBLE, CARRIED_MARKER})
 
 # Anything we put in the config must be proven present first -- naming a tool
 # that is not installed breaks every cargo command on the box, which is worse
 # than not configuring it at all.
 LINUX_PACKAGES = ("sccache", "mold", "clang")
 MACOS_PACKAGES = ("sccache",)  # mold is ELF-only; it cannot link Mach-O.
+
+# The only tables this script owns; every other table in an existing
+# config.toml is carried across verbatim by split_toml_sections().
+MANAGED_TABLES = frozenset({"build", "target"})
+
+# build.build-dir is stable from Rust 1.91; older cargo ignores the key.
+BUILD_DIR_MIN_CARGO = (1, 91)
+
+# Sized for the smallest machine the role runs on, which is a laptop.
+# Build boxes raise them through the Ansible vars.
+DEFAULT_SCCACHE_MAX = "20G"
+DEFAULT_CCACHE_MAX = "10G"
+DEFAULT_BUILD_DIR_MAX = "40G"
+DEFAULT_MAX_AGE_DAYS = 14
+
+# profile.d reaches login shells and systemd --user units alike.
+# macOS has no profile.d and gets a managed block in the shell rc instead.
+LINUX_ENV_FILE = Path("/etc/profile.d/hyperi-rust-cache.sh")
 
 
 class Reporter:
@@ -191,6 +247,41 @@ def target_triple() -> str | None:
     return None
 
 
+def cargo_version() -> tuple[int, int] | None:
+    """Return cargo's (major, minor), used to gate keys that are not always stable."""
+    if shutil.which("cargo") is None:
+        return None
+    proc = run(["cargo", "--version"], timeout=60)
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"\bcargo\s+(\d+)\.(\d+)", proc.stdout)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def cache_root(family: str) -> Path:
+    """The platform's cache directory -- the one place a user expects to be evictable."""
+    if family == "macos":
+        return Path.home() / "Library" / "Caches"
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    return Path(xdg) if xdg else Path.home() / ".cache"
+
+
+def build_dir_path(family: str) -> Path:
+    """Where intermediate build artefacts are pooled, and what the prune tool bounds."""
+    return cache_root(family) / "hyperi-rust-build"
+
+
+def shell_env_file(family: str) -> Path:
+    """The file the cache caps are exported from.
+
+    zsh reads .zshrc only for interactive shells, so a build launched from a
+    script would not see a cap set there; .zshenv is read for every shell.
+    """
+    if family == "macos":
+        return Path.home() / ".zshenv"
+    return LINUX_ENV_FILE
+
+
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
@@ -283,7 +374,25 @@ def install_cargo_sweep(dry_run: bool, rep: Reporter) -> None:
 # ---------------------------------------------------------------------------
 
 
-def build_config(family: str, rep: Reporter) -> str:
+def resolve_build_dir(family: str, wanted: bool, rep: Reporter) -> Path | None:
+    """Decide whether the central build directory can be configured on this box."""
+    if not wanted:
+        return None
+    version = cargo_version()
+    if version is None:
+        rep.warn("could not read the cargo version -- leaving build-dir at the default")
+        return None
+    if version < BUILD_DIR_MIN_CARGO:
+        want = ".".join(str(part) for part in BUILD_DIR_MIN_CARGO)
+        have = ".".join(str(part) for part in version)
+        rep.info(f"cargo {have} predates build-dir (needs {want}) -- keeping per-project target/")
+        return None
+    return build_dir_path(family)
+
+
+def build_config(
+    family: str, rep: Reporter, *, build_dir: Path | None, carried: Carried
+) -> tuple[str, int]:
     """Render the config from what is ACTUALLY installed, resolved to absolute paths.
 
     Two rules here, both learned the hard way:
@@ -296,22 +405,35 @@ def build_config(family: str, rep: Reporter) -> str:
 
     jobs is deliberately absent: cargo already defaults to the logical CPU
     count, which beats any number we could hardcode.
-    """
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    lines = [
-        MANAGED_HEADER,
-        f"# Written by hyperi-rust-setup on {stamp}. Re-run it to update.",
-        "#",
-        "# Edits here are overwritten. Per-project .cargo/config.toml wins over",
-        "# this file, so override there.",
-        "",
-    ]
 
+    Returns the text and the number of managed sections in it, so the caller can
+    tell "configured nothing" from "configured something".
+    """
+    lines = [*MANAGED_PREAMBLE, ""]
+    managed = 0
+
+    if carried.preamble:
+        lines += [CARRIED_MARKER, "", carried.preamble, ""]
+
+    build_keys: list[str] = []
     sccache = resolve_tool("sccache", rep)
     if sccache:
-        lines += ["[build]", f'rustc-wrapper = "{sccache}"', ""]
+        build_keys.append(f'rustc-wrapper = "{sccache}"')
     else:
         rep.warn("sccache not found -- leaving rustc-wrapper unset")
+
+    if build_dir is not None:
+        # {workspace-path-hash} keeps two checkouts of the same project apart,
+        # so a shared pool never makes one build clobber another's artefacts.
+        template = f"{build_dir}/{{workspace-path-hash}}"
+        build_keys += [
+            "# Intermediate artefacts only; final binaries stay in the project's target/.",
+            f'build-dir = "{template}"',
+        ]
+
+    if build_keys:
+        lines += ["[build]", *build_keys, ""]
+        managed += 1
 
     if family != "macos":
         mold = resolve_tool("mold", rep)
@@ -324,32 +446,40 @@ def build_config(family: str, rep: Reporter) -> str:
                 f'rustflags = ["-C", "link-arg=-fuse-ld={mold}"]',
                 "",
             ]
+            managed += 1
         elif not triple:
             rep.warn("could not determine the host target triple -- skipping linker config")
         else:
             rep.warn("mold or clang not found -- skipping linker config")
 
-    return "\n".join(lines)
+    if carried.tables:
+        lines += [CARRIED_MARKER, "", carried.tables, ""]
+
+    return "\n".join(lines), managed
 
 
-def write_cargo_config(family: str, dry_run: bool, rep: Reporter) -> None:
+def write_cargo_config(
+    family: str, dry_run: bool, rep: Reporter, *, central_build_dir: bool
+) -> None:
     home = cargo_home()
     config = home / "config.toml"
-    content = build_config(family, rep)
 
-    if content.count("\n") <= 6:
+    existing = config.read_text(encoding="utf-8") if config.is_file() else ""
+    carried = carry_over_sections(existing, rep) if existing else Carried("", "")
+    build_dir = resolve_build_dir(family, central_build_dir, rep)
+    content, managed = build_config(family, rep, build_dir=build_dir, carried=carried)
+
+    if managed == 0:
         rep.warn("nothing installed to configure -- not writing a config")
         return
 
-    if config.is_file():
-        existing = config.read_text(encoding="utf-8")
+    if existing:
         if existing == content:
             rep.info(f"{config} already correct")
             return
         if MANAGED_HEADER not in existing:
-            # Someone else's file. Do not silently eat it -- and say what we
-            # would drop BEFORE doing it, so --check is worth running.
-            _warn_about_lost_keys(existing, rep)
+            # Someone else's file. Its own sections survive in `carried`, but
+            # back it up anyway -- a takeover should always be recoverable.
             if dry_run:
                 rep.info(f"[check] would back up {config} before taking it over")
             else:
@@ -359,38 +489,284 @@ def write_cargo_config(family: str, dry_run: bool, rep: Reporter) -> None:
                 rep.warn(f"{config} was not managed by us -- backed up to {backup}")
 
     if dry_run:
-        rep.info(f"[check] would write {config}:")
-        for line in content.splitlines():
-            print(f"      {line}")
+        rep.info(f"[check] would write {config} ({managed} managed section(s))")
         return
 
-    home.mkdir(parents=True, exist_ok=True)
+    if not _write_valid_toml(config, content, rep):
+        return
+    rep.change(f"wrote {config}")
+
+    if build_dir is not None:
+        build_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _write_valid_toml(config: Path, content: str, rep: Reporter) -> bool:
+    """Write atomically, but only once the result is known to parse.
+
+    Carried-over text is copied as raw lines, so a pathological source file
+    could produce a config that breaks every cargo command on the box. Parsing
+    first turns that into a warning instead.
+    """
+    try:
+        tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        rep.warn(f"refusing to write {config}: the result is not valid TOML ({exc})")
+        return False
+
+    config.parent.mkdir(parents=True, exist_ok=True)
     tmp = config.with_name(f".{config.name}.tmp")
     with tmp.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(content)
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, config)  # same dir, so this is atomic
-    rep.change(f"wrote {config}")
+    return True
 
 
-def _warn_about_lost_keys(existing: str, rep: Reporter) -> None:
-    """Name what the takeover drops, so it is a decision and not a surprise.
+_TABLE_HEADER = re.compile(r"^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(?:#.*)?$")
 
-    Deliberately does NOT echo the file: a Cargo config can hold registry
-    tokens inline, and this output gets captured by Ansible and CI logs.
+
+def _root_table(header_key: str) -> str:
+    """The first dotted segment of a table header, honouring quoted segments.
+
+    `[target.'cfg(unix)'.foo]` is part of `target`, and splitting on a naive
+    "." would call it `target` only by luck -- a quoted segment may contain one.
+    """
+    out: list[str] = []
+    quote: str | None = None
+    for char in header_key:
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+            continue
+        if char == ".":
+            break
+        out.append(char)
+    return "".join(out).strip()
+
+
+def split_toml_sections(text: str) -> list[tuple[str, str]]:
+    """Split a TOML document into (root table, raw text) blocks, comments attached.
+
+    Raw text rather than a parse-and-reserialise: a Cargo config carries
+    comments and inline credentials, and Python has no TOML writer in the
+    standard library to round-trip them with.
+    """
+    blocks: list[tuple[str, str]] = []
+    current_name = ""
+    current: list[str] = []
+    pending: list[str] = []
+
+    for line in text.splitlines():
+        match = _TABLE_HEADER.match(line)
+        if match:
+            blocks.append((current_name, "\n".join(current)))
+            current_name = _root_table(match.group(1))
+            current = [*pending, line]
+            pending = []
+            continue
+        # A comment block immediately above a header documents that header, so
+        # it travels with it rather than trailing the section above.
+        if line.strip().startswith("#") or not line.strip():
+            pending.append(line)
+            continue
+        current.extend(pending)
+        pending = []
+        current.append(line)
+
+    current.extend(pending)
+    blocks.append((current_name, "\n".join(current)))
+    return blocks
+
+
+class Carried(NamedTuple):
+    """Text rescued from a previous config, split by where it may be re-emitted.
+
+    A bare top-level key belongs to whatever table precedes it, so `preamble`
+    can only go above the first table header -- appending it with the rest
+    would silently reparent it into the last table written.
+    """
+
+    preamble: str
+    tables: str
+
+    def __bool__(self) -> bool:
+        return bool(self.preamble or self.tables)
+
+
+def carry_over_sections(existing: str, rep: Reporter) -> Carried:
+    """Return the caller's settings that this script does not manage, verbatim.
+
+    Dropping them is data loss: a private registry, an alias table or a profile
+    override lives here and nothing else on the box restores it.
     """
     try:
-        parsed = tomllib.loads(existing)
+        tomllib.loads(existing)
     except tomllib.TOMLDecodeError:
-        rep.warn("the previous config was not valid TOML; it is in the backup")
+        rep.warn("the previous config is not valid TOML -- carrying none of it across")
+        return Carried("", "")
+
+    preamble: list[str] = []
+    tables: list[str] = []
+    names: list[str] = []
+    for name, raw in split_toml_sections(existing):
+        if name in MANAGED_TABLES or not _has_settings(raw):
+            continue
+        body = "\n".join(line for line in raw.splitlines() if line not in GENERATED_LINES)
+        if not _has_settings(body):
+            continue
+        if name:
+            tables.append(body.strip("\n"))
+            names.append(name)
+        else:
+            preamble.append(body.strip("\n"))
+            names.append("(top-level keys)")
+
+    if names:
+        rep.info(f"carrying over unmanaged sections: {', '.join(sorted(set(names)))}")
+    return Carried("\n\n".join(preamble), "\n\n".join(tables))
+
+
+def _has_settings(raw: str) -> bool:
+    """True when a block holds anything but comments and blank lines."""
+    return any(line.strip() and not line.strip().startswith("#") for line in raw.splitlines())
+
+
+# ---------------------------------------------------------------------------
+# Cache caps
+# ---------------------------------------------------------------------------
+
+
+def env_cap_block(sccache_max: str, ccache_max: str, basedirs: str) -> list[str]:
+    """The exports, as POSIX sh so bash 3.2 and zsh both take them unchanged.
+
+    The cache locations are deliberately left alone: overriding them on a box
+    that already has a populated cache orphans it rather than capping it.
+    """
+    lines = [
+        MANAGED_ENV_BEGIN,
+        "# Read once when each cache starts; both then evict LRU against the value.",
+        f'export SCCACHE_CACHE_SIZE="{sccache_max}"',
+        f'export CCACHE_MAXSIZE="{ccache_max}"',
+    ]
+    if basedirs:
+        lines += [
+            "# sccache keys on absolute paths, so the same source built under a",
+            "# different root misses. Listed roots are stripped before hashing.",
+            f'export SCCACHE_BASEDIRS="{basedirs}"',
+        ]
+    lines.append(MANAGED_ENV_END)
+    return lines
+
+
+def write_env_caps(
+    family: str,
+    dry_run: bool,
+    rep: Reporter,
+    *,
+    sccache_max: str,
+    ccache_max: str,
+    basedirs: str,
+) -> None:
+    block = env_cap_block(sccache_max, ccache_max, basedirs)
+    target = shell_env_file(family)
+
+    if family == "macos":
+        changed = _write_env_block_in_rc(target, block, dry_run, rep)
+    else:
+        changed = _write_env_file(target, block, dry_run, rep)
+
+    if changed:
+        restart_sccache(dry_run, rep)
+
+
+def restart_sccache(dry_run: bool, rep: Reporter) -> None:
+    """Drop the running sccache server so the new ceiling takes effect.
+
+    The server reads SCCACHE_CACHE_SIZE once at startup and holds it for its
+    lifetime, so a changed cap does nothing until the daemon is replaced. The
+    next cargo invocation starts a fresh one; the cache on disk is untouched.
+    """
+    if resolve_tool("sccache") is None:
+        return
+    if dry_run:
+        rep.info("[check] would stop the sccache server so the new cap takes effect")
         return
 
-    ours = {"build", "target"}
-    dropped = sorted(set(parsed) - ours)
-    if dropped:
-        rep.warn(f"the previous config had sections we do not manage: {', '.join(dropped)}")
-        rep.warn("check the backup and re-add anything you still need")
+    proc = run([resolve_tool("sccache"), "--stop-server"], timeout=120)
+    if proc.returncode != 0:
+        # No server running is the common case and reports non-zero.
+        rep.info("sccache server was not running")
+        return
+    rep.change("stopped the sccache server; the next build starts one at the new cap")
+
+
+def _write_env_block_in_rc(
+    target: Path, block: list[str], dry_run: bool, rep: Reporter
+) -> bool:
+    """Replace the managed block in a user-owned rc file, leaving the rest intact."""
+    existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+    lines = existing.splitlines()
+
+    try:
+        start = lines.index(MANAGED_ENV_BEGIN)
+        end = lines.index(MANAGED_ENV_END, start)
+        updated = [*lines[:start], *block, *lines[end + 1 :]]
+    except ValueError:
+        updated = [*lines, "", *block] if lines else list(block)
+
+    content = "\n".join(updated).rstrip("\n") + "\n"
+    if content == existing:
+        rep.info(f"{target} cache caps already correct")
+        return False
+    if dry_run:
+        rep.info(f"[check] would set the cache caps in {target}")
+        return True
+
+    tmp = target.with_name(f".{target.name}.hyperi-tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+    rep.change(f"set the cache caps in {target}")
+    return True
+
+
+def _write_env_file(target: Path, block: list[str], dry_run: bool, rep: Reporter) -> bool:
+    """Write a root-owned profile.d drop-in, escalating only when not already root."""
+    content = "\n".join(block) + "\n"
+    if target.is_file() and target.read_text(encoding="utf-8") == content:
+        rep.info(f"{target} already correct")
+        return False
+    if dry_run:
+        rep.info(f"[check] would write {target}")
+        return True
+
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", newline="\n", suffix=".sh", delete=False
+    ) as handle:
+        handle.write(content)
+        staged = Path(handle.name)
+
+    try:
+        cmd = ["install", "-m", "0644", str(staged), str(target)]
+        if os.geteuid() != 0:
+            cmd = ["sudo", *cmd]
+        proc = run(cmd, timeout=120)
+        if proc.returncode != 0:
+            # A missing cap is a disk-usage problem, not a broken toolchain, so
+            # it must not sink the run.
+            rep.warn(f"could not write {target}: {proc.stderr.strip()}")
+            return False
+    finally:
+        staged.unlink(missing_ok=True)
+
+    rep.change(f"wrote {target}")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -414,13 +790,21 @@ def verify(family: str, rep: Reporter) -> None:
     config = cargo_home() / "config.toml"
     if config.is_file():
         try:
-            tomllib.loads(config.read_text(encoding="utf-8"))
+            parsed = tomllib.loads(config.read_text(encoding="utf-8"))
         except tomllib.TOMLDecodeError as exc:
             rep.warn(f"{config} is not valid TOML: {exc}")
         else:
             rep.info(f"{config}: valid")
+            configured = parsed.get("build", {}).get("build-dir")
+            rep.info(f"build-dir: {configured}" if configured else "build-dir: cargo default")
     else:
         rep.info(f"{config}: not present")
+
+    env_file = shell_env_file(family)
+    if env_file.is_file() and MANAGED_ENV_BEGIN in env_file.read_text(encoding="utf-8"):
+        rep.info(f"cache caps: set in {env_file}")
+    else:
+        rep.warn(f"cache caps: not found in {env_file}")
 
 
 def main() -> int:
@@ -437,6 +821,33 @@ def main() -> int:
         "--yes",
         action="store_true",
         help="do not prompt (how Ansible and other unattended callers invoke it)",
+    )
+    parser.add_argument(
+        "--sccache-size",
+        default=DEFAULT_SCCACHE_MAX,
+        metavar="SIZE",
+        help=f"cap for the sccache compilation cache (default: {DEFAULT_SCCACHE_MAX})",
+    )
+    parser.add_argument(
+        "--ccache-size",
+        default=DEFAULT_CCACHE_MAX,
+        metavar="SIZE",
+        help=f"cap for the ccache C/C++ cache (default: {DEFAULT_CCACHE_MAX})",
+    )
+    parser.add_argument(
+        "--sccache-basedirs",
+        default="",
+        metavar="DIRS",
+        help=(
+            "colon-separated roots stripped from paths before sccache hashes them, "
+            "so the same source built under a different root still hits"
+        ),
+    )
+    parser.add_argument(
+        "--no-build-dir",
+        dest="central_build_dir",
+        action="store_false",
+        help="keep intermediate artefacts in each project's target/ instead of pooling them",
     )
     args = parser.parse_args()
 
@@ -460,7 +871,8 @@ def main() -> int:
     print(f"hyperi-rust-setup: {family}, CARGO_HOME={cargo_home()}")
 
     if not args.check and not args.yes:
-        print("\nThis will install sccache/mold and take over $CARGO_HOME/config.toml.")
+        print("\nThis will install sccache/mold, take over $CARGO_HOME/config.toml,")
+        print(f"and cap the build caches ({shell_env_file(family)}).")
         print("Re-run with --check to see the detail first, or --yes to skip this prompt.")
         try:
             if input("Proceed? [y/N] ").strip().lower() not in {"y", "yes"}:
@@ -475,7 +887,17 @@ def main() -> int:
     install_cargo_sweep(args.check, rep)
 
     rep.step("Global Cargo config")
-    write_cargo_config(family, args.check, rep)
+    write_cargo_config(family, args.check, rep, central_build_dir=args.central_build_dir)
+
+    rep.step("Cache caps")
+    write_env_caps(
+        family,
+        args.check,
+        rep,
+        sccache_max=args.sccache_size,
+        ccache_max=args.ccache_size,
+        basedirs=args.sccache_basedirs,
+    )
 
     if not args.check:
         rep.step("Verify")

@@ -147,3 +147,44 @@ Cleans up accidental file spills in git history.
 ```
 
 See [tools/git/README.md](git/README.md) for detailed documentation.
+
+## Diagnostics
+
+### hyperi-doctor
+
+Read-only report on whether this host has drifted behind what this repo's
+roles declare. Never applies anything and never needs sudo.
+
+```bash
+./tools/hyperi-doctor                              # scope from the applied-state stamp, or 'developer'
+./tools/hyperi-doctor --tags developer-rust,soe     # explicit role scope
+./tools/hyperi-doctor --quiet                       # missing packages only, for use as a gate
+```
+
+Checks two things:
+
+- The applied-state stamp (`/var/lib/hyperi-developer/applied.json`, written
+  by `ansible/playbooks/main.yml` at the end of a successful run): its age
+  and applied git SHA against this checkout's HEAD. A missing stamp means
+  this host predates the stamp, or was never provisioned by this repo --
+  reported plainly, not as an error. The stamp also records how many
+  components warned on that run, because optional components warn and
+  continue: a run can finish successfully with tools missing, so a stamp on
+  its own is not a clean bill of health.
+- Declared `ansible.builtin.apt` / `ansible.builtin.dnf` /
+  `community.general.homebrew` package names in the role task files for the
+  resolved scope, checked against `dpkg-query` / `rpm` / `brew` on this host.
+
+Package names built from a loop, a variable, or Jinja cannot be resolved by
+static YAML parsing, and hyperi-doctor says so explicitly rather than
+reporting a false clean bill of health -- see the "unresolved" count in its
+output, which prints even under `--quiet`.
+
+Three exit codes, because "nothing missing" and "could not check everything"
+are different answers: `0` checked everything and found nothing missing, `1`
+something declared is missing, `2` nothing missing but some names could not be
+checked.
+
+`tools/hyperi-doctor` is a thin wrapper; the logic is `tools/hyperi_doctor.py`
+(stdlib plus PyYAML, which replaces the yq and jq the first version needed).
+Its tests are `tools/tests/`, run by `tools/ci/run-tests.sh`.

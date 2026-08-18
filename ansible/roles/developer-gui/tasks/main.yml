@@ -53,6 +53,19 @@
   tags: ['developer-gui', 'vscode']
   when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
 
+# Opt-in privacy + AI-upsell de-nag profile for every detected VSCode-family
+# editor (VSCode, VSCodium, Cursor) -- hyperi-io/hyperi-developer#7. Same
+# desktop gate as vscode.yml: nothing to do on a headless box.
+- name: Apply VS Code privacy profile
+  ansible.builtin.include_tasks:
+    file: vscode_privacy.yml
+    apply:
+      tags: ['developer-gui', 'vscode', 'vscode-privacy']
+  tags: ['developer-gui', 'vscode', 'vscode-privacy']
+  when:
+    - has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
+    - vscode_privacy_enabled | bool or vscode_privacy_uninstall | bool
+
 - name: Install Ghostty terminal
   ansible.builtin.include_tasks:
     file: ghostty.yml

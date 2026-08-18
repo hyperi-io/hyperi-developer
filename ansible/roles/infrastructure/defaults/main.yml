@@ -13,3 +13,18 @@ openbao_version: "2.6.0"
 # OpenBao's release assets are named linux_amd64 / linux_arm64. Do not hardcode
 # amd64: arm64 Linux is real here (arm64 VMs, containers on Apple Silicon).
 openbao_deb_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
+
+# flarectl only exists on cloudflare-go's v0 branch, which carries no semver
+# compatibility promise, so a tag is pinned rather than tracking @latest. It has
+# no hyperi_versions entry because hyperi-ci does not use it, and that map is a
+# mirror of hyperi-ci's pins. Bump it deliberately:
+#   gh api 'repos/cloudflare/cloudflare-go/tags?per_page=100' \
+#     --jq '[.[].name | select(startswith("v0."))] | .[0]'
+infrastructure_flarectl_version: "v0.117.0"
+
+# Microsoft publishes the Azure CLI repo per Ubuntu codename and has no resolute
+# suite, so a resolute host takes the noble build deliberately.
+# Tracks the supported window (min_ubuntu_version), oldest first; the last entry
+# is the fallback for a release Microsoft has not published yet.
+azure_cli_supported_suites:
+  - noble

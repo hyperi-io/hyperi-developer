@@ -359,3 +359,69 @@
           2. Reboot to apply all optimizations
           3. Configure your tools (Git, AWS CLI, etc.)
       tags: ['always']
+
+    # ========================================================================
+    # APPLIED-STATE STAMP
+    # ========================================================================
+    # tools/hyperi-doctor reads this to answer whether a host has drifted
+    # behind the SOE. Written LAST: a run that fails earlier leaves no stamp,
+    # or a stale one -- a half-applied host must not claim to be current.
+    # Root-owned: this is host state, not a per-user artefact, and
+    # hyperi-doctor only ever reads it.
+    - name: Determine repo root for the applied-state stamp
+      ansible.builtin.set_fact:
+        hyperi_developer_repo_root: "{{ (playbook_dir + '/../..') | realpath }}"
+      when: not ansible_check_mode
+      tags: ['always']
+
+    # failed_when: false -- an install run from a tarball rather than a git
+    # clone must not lose an otherwise-successful run over a stamp field.
+    # stdout falls back to 'unknown' below when this did not succeed.
+    - name: Record the git SHA that was applied
+      ansible.builtin.command:
+        cmd: git rev-parse HEAD
+        chdir: "{{ hyperi_developer_repo_root }}"
+      register: hyperi_developer_applied_sha
+      changed_when: false
+      failed_when: false
+      when: not ansible_check_mode
+      tags: ['always']
+
+    - name: Ensure the applied-state directory exists
+      ansible.builtin.file:
+        path: /var/lib/hyperi-developer
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+      when: not ansible_check_mode
+      tags: ['always']
+
+    # changed_when: false because the timestamp differs on every run, so this
+    # would otherwise report changed on a converged host and break the
+    # idempotency gate the whole tree is held to. The stamp records that a run
+    # happened; it does not configure anything.
+    #
+    # warnings is what stops the stamp overstating itself: optional components
+    # warn and continue, so a run can finish "successfully" with tools missing.
+    # A stamp claiming a current host while three installs failed would be the
+    # same green-over-nothing this reporting exists to end.
+    - name: Write the applied-state stamp
+      ansible.builtin.copy:
+        dest: /var/lib/hyperi-developer/applied.json
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          {{ {
+            'sha': hyperi_developer_applied_sha.stdout | default('unknown', true),
+            'timestamp': ansible_date_time.iso8601,
+            'tags': ansible_run_tags,
+            'target_user': actual_user,
+            'warnings': deploy_warnings | default([]) | length,
+          } | to_nice_json }}
+      become: true
+      changed_when: false
+      when: not ansible_check_mode
+      tags: ['always']

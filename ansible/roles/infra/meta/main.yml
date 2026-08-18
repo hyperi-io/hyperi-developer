@@ -7,9 +7,9 @@ galaxy_info:
   min_ansible_version: "2.20"
   platforms:
     - name: Fedora
-      versions: ['42']
+      versions: ['43', '44']
     - name: Ubuntu
-      versions: ['noble']
+      versions: ['noble', 'resolute']
 
 # SRE / platform: the clean developer base plus the infrastructure CLIs (cloud,
 # IaC, k8s, the data group). The base's destructive/org extras (removals,

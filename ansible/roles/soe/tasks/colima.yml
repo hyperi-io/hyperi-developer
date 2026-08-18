@@ -46,9 +46,14 @@
 # Linux, colima here), so there is no other socket to defer to.
 - name: Make colima usable (autostart + socket discovery)
   block:
+    # `which`, not `command -v`: command is a shell builtin and
+    # ansible.builtin.command execs directly, so it fails on every host --
+    # taking the LaunchAgent and the socket config below with it, and reporting
+    # as though the brew install were at fault. This path is macOS-only, where
+    # /usr/bin/which is always present.
     - name: Locate the colima binary
       ansible.builtin.command:
-        cmd: command -v colima
+        cmd: which colima
       register: soe_colima_bin
       changed_when: false
       failed_when: soe_colima_bin.rc != 0

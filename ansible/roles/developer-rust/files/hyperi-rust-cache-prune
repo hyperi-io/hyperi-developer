@@ -1,0 +1,483 @@
+#!/usr/bin/env python3
+"""Keep the Rust build cache under a fixed ceiling.
+
+Run it yourself:
+
+    hyperi-rust-cache-prune              # report, then ask before deleting
+    hyperi-rust-cache-prune --check      # report only, delete nothing
+    hyperi-rust-cache-prune --yes        # no prompt (how the timer invokes it)
+
+Why this exists
+---------------
+Every other Rust cache bounds itself. Cargo's global cache (registry indexes and
+downloaded sources) tracks last-use and sweeps daily. sccache and ccache evict
+LRU against a byte ceiling read from the environment.
+
+Build artefacts are the exception: cargo does not track them
+(rust-lang/cargo#13136), so nothing upstream ever reclaims them. With
+`build.build-dir` pointing every project at one pool -- which is what
+hyperi-rust-setup configures -- that pool is the single thing left to bound,
+and this is what bounds it.
+
+How it decides what to go
+-------------------------
+Two passes over the pool, in order:
+
+1. Age. A workspace not built for `--max-age-days` is dropped outright. The
+   cost of being wrong is one slow rebuild.
+2. Size. If the pool is still over the ceiling, drop least-recently-built
+   workspaces until it is under.
+
+Least-recently-built, not least-recently-used: a read does not update mtime, so
+a workspace you compile against daily and one you only link against look the
+same. Age is measured from the newest thing cargo wrote, which is the closest
+honest proxy.
+
+What it does NOT touch
+----------------------
+Project `target/` directories, anywhere. `build.build-dir` moves intermediates
+into the pool and leaves each project's final binaries in its own `target/`, so
+those stay the project's business. A box that never adopted the central pool
+therefore has nothing here to prune, and this tool says so rather than going
+hunting.
+
+It does not touch the cargo registry or the sccache/ccache stores either. Those
+have their own eviction and are reported on only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DEFAULT_MAX_SIZE = "auto"
+DEFAULT_MAX_AGE_DAYS = 14
+
+# `auto` takes a share of the filesystem's TOTAL size, never of what is free:
+# free space shrinks as the pool grows, so a ceiling derived from it chases
+# itself downward. A sixth puts a 692G build box at 115G and a 256G laptop at
+# 42G. The floor is what stops a small disk setting a ceiling so low that one
+# large workspace evicts its own dependencies and every build starts cold.
+AUTO_FRACTION = 6
+AUTO_FLOOR = "40G"
+
+# Cargo shards the pool by a hash of the manifest path, two levels deep:
+# <pool>/<first two chars>/<rest of the hash>. The leaf is one workspace's
+# artefacts and is the unit that gets evicted.
+POOL_DEPTH = 2
+
+_SIZE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([KMGT]?)i?B?\s*$", re.IGNORECASE)
+_MULTIPLIER = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
+
+
+class Reporter:
+    """Collects what happened so the run can end with an honest summary."""
+
+    def __init__(self) -> None:
+        self.freed = 0
+        self.warnings: list[str] = []
+
+    def info(self, msg: str) -> None:
+        print(f"  {msg}")
+
+    def step(self, msg: str) -> None:
+        print(f"\n== {msg}")
+
+    def change(self, msg: str) -> None:
+        print(f"  CHANGED: {msg}")
+
+    def warn(self, msg: str) -> None:
+        self.warnings.append(msg)
+        print(f"  WARNING: {msg}")
+
+
+def parse_size(text: str) -> int:
+    """Turn 40G / 40GiB / 40 GB into bytes, binary multiples throughout.
+
+    Binary because that is what sccache reports its own ceiling in, and a cap
+    that means something different from the neighbouring cap is a trap.
+    """
+    match = _SIZE.match(text)
+    if not match:
+        raise argparse.ArgumentTypeError(
+            f"not a size: {text!r} -- use a number optionally suffixed K, M, G or T"
+        )
+    return int(float(match.group(1)) * _MULTIPLIER[match.group(2).upper()])
+
+
+def parse_size_or_auto(text: str):
+    """Accept a size, or the literal `auto` to derive one from the disk.
+
+    Returned as the string "auto" rather than a number because the filesystem
+    cannot be measured until the pool path is known.
+    """
+    if text.strip().lower() == "auto":
+        return "auto"
+    return parse_size(text)
+
+
+def resolve_max_size(value, pool: Path, rep: Reporter) -> int:
+    """Turn `auto` into bytes for the filesystem that actually holds the pool."""
+    if value != "auto":
+        return value
+    floor = parse_size(AUTO_FLOOR)
+    try:
+        total = shutil.disk_usage(pool).total
+    except OSError as exc:
+        rep.warn(f"could not measure the filesystem at {pool} ({exc}) -- using {AUTO_FLOOR}")
+        return floor
+    derived = max(total // AUTO_FRACTION, floor)
+    rep.info(
+        f"ceiling: {human(derived)} (auto -- a {AUTO_FRACTION}th of the "
+        f"{human(total)} filesystem, floor {AUTO_FLOOR})"
+    )
+    return derived
+
+
+def human(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "K", "M", "G", "T"):
+        if value < 1024 or unit == "T":
+            return f"{value:.1f}{unit}" if unit != "B" else f"{int(value)}B"
+        value /= 1024
+    return f"{value:.1f}T"
+
+
+def cache_root() -> Path:
+    """The platform's cache directory -- must match hyperi-rust-setup exactly."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches"
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    return Path(xdg) if xdg else Path.home() / ".cache"
+
+
+def configured_pool() -> Path | None:
+    """Read the pool location out of the cargo config rather than assuming it.
+
+    A developer may have pointed build-dir somewhere else, and pruning the
+    directory we would have chosen instead of the one in use deletes nothing
+    while reporting success.
+    """
+    config = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "config.toml"
+    if not config.is_file():
+        return None
+    try:
+        import tomllib
+
+        parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    configured = parsed.get("build", {}).get("build-dir")
+    if not configured:
+        return None
+    # Strip cargo's path template; the part before the first placeholder is the
+    # fixed root, and that is the directory to bound.
+    root = configured.split("{", 1)[0]
+    return Path(root.rstrip("/")) if root.strip("/") else None
+
+
+def tree_size(path: Path) -> int:
+    """Bytes actually allocated, following the same accounting as du."""
+    total = 0
+    stack = [path]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(Path(entry.path))
+                        else:
+                            total += entry.stat(follow_symlinks=False).st_blocks * 512
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total
+
+
+def newest_mtime(path: Path, depth: int = 2) -> float:
+    """The most recent write anywhere near the top of a workspace's artefacts.
+
+    A bounded look rather than a full walk: the pool can be tens of gigabytes,
+    and cargo touches the profile directories on every build, so the answer is
+    the same and costs two readdirs instead of a recursive one.
+    """
+    try:
+        newest = path.stat().st_mtime
+    except OSError:
+        return 0.0
+    if depth <= 0:
+        return newest
+
+    try:
+        with os.scandir(path) as entries:
+            for entry in entries:
+                try:
+                    newest = max(newest, entry.stat(follow_symlinks=False).st_mtime)
+                    if entry.is_dir(follow_symlinks=False):
+                        newest = max(newest, newest_mtime(Path(entry.path), depth - 1))
+                except OSError:
+                    continue
+    except OSError:
+        return newest
+    return newest
+
+
+class Workspace:
+    """One workspace's pooled artefacts: what it costs and when it was last built."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.size = tree_size(path)
+        self.mtime = newest_mtime(path)
+
+    @property
+    def age_days(self) -> float:
+        return max(0.0, (time.time() - self.mtime) / 86400)
+
+
+def find_workspaces(pool: Path) -> list[Workspace]:
+    """Every leaf of the pool, at the fixed depth cargo shards to."""
+    leaves: list[Path] = [pool]
+    for _ in range(POOL_DEPTH):
+        found: list[Path] = []
+        for parent in leaves:
+            try:
+                found.extend(entry for entry in parent.iterdir() if entry.is_dir())
+            except OSError:
+                continue
+        leaves = found
+    return [Workspace(leaf) for leaf in leaves]
+
+
+def remove(workspace: Workspace, reason: str, dry_run: bool, rep: Reporter) -> None:
+    if dry_run:
+        rep.info(f"[check] would drop {workspace.path.name} ({human(workspace.size)}, {reason})")
+        rep.freed += workspace.size
+        return
+    try:
+        shutil.rmtree(workspace.path)
+    except OSError as exc:
+        rep.warn(f"could not remove {workspace.path}: {exc}")
+        return
+    rep.change(f"dropped {workspace.path.name} ({human(workspace.size)}, {reason})")
+    rep.freed += workspace.size
+
+
+def prune_pool(
+    pool: Path, dry_run: bool, rep: Reporter, *, max_size: int, max_age_days: int
+) -> None:
+    workspaces = find_workspaces(pool)
+    if not workspaces:
+        rep.info(f"{pool}: empty, nothing to prune")
+        return
+
+    total = sum(item.size for item in workspaces)
+    rep.info(
+        f"{pool}: {len(workspaces)} workspace(s), {human(total)} of {human(max_size)} ceiling"
+    )
+
+    stale = [item for item in workspaces if item.age_days > max_age_days]
+    for item in stale:
+        remove(item, f"idle {item.age_days:.0f}d", dry_run, rep)
+
+    remaining = [item for item in workspaces if item not in stale]
+    total -= sum(item.size for item in stale)
+
+    if total <= max_size:
+        rep.info(f"under the ceiling at {human(total)}")
+        return
+
+    # Oldest first: the least-recently-built workspace is the cheapest to lose.
+    for item in sorted(remaining, key=lambda entry: entry.mtime):
+        if total <= max_size:
+            break
+        remove(item, f"over ceiling, {human(total)} used", dry_run, rep)
+        total -= item.size
+
+    if total > max_size:
+        rep.warn(f"still {human(total)} after pruning everything eligible")
+    else:
+        rep.info(f"under the ceiling at {human(total)}")
+
+    if not dry_run:
+        drop_empty_shards(pool)
+
+
+def drop_empty_shards(pool: Path) -> None:
+    """Remove shard directories emptied by eviction, so the pool does not silt up."""
+    try:
+        shards = [entry for entry in pool.iterdir() if entry.is_dir()]
+    except OSError:
+        return
+    for shard in shards:
+        try:
+            shard.rmdir()
+        except OSError:
+            continue
+
+
+def report_self_capping_caches(rep: Reporter) -> None:
+    """Show the caches that bound themselves, so a disk problem can be placed.
+
+    Nothing here is pruned. Reporting a number the tool did not produce and
+    cannot change is the point: it says where the space went.
+    """
+    if shutil.which("sccache"):
+        proc = subprocess.run(
+            ["sccache", "--show-stats"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+        # A failed --show-stats prints nothing to stdout, which parses out to
+        # exactly the same "unset / unknown" as a healthy but unconfigured
+        # sccache. The common cause is a stale server daemon older than the
+        # client binary, and that silently stops caching -- so it is reported as
+        # the fault it is rather than left to read as an absence.
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip().splitlines()
+            rep.warn(
+                "sccache is installed but not answering: "
+                + (detail[-1] if detail else f"exit {proc.returncode}")
+                + " -- compilation is not being cached (try `sccache --stop-server`)"
+            )
+        else:
+            location = next(
+                (
+                    line.split(":", 1)[1].strip()
+                    for line in proc.stdout.splitlines()
+                    if line.startswith("Cache location")
+                ),
+                None,
+            )
+            ceiling = next(
+                (
+                    line.split("size", 1)[1].strip()
+                    for line in proc.stdout.splitlines()
+                    if line.startswith("Max cache size")
+                ),
+                "unset",
+            )
+            rep.info(f"sccache: ceiling {ceiling}, {location or 'location unknown'}")
+    else:
+        rep.info("sccache: not installed")
+
+    registry = Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo") / "registry"
+    if registry.is_dir():
+        rep.info(f"cargo registry: {human(tree_size(registry))}, swept by cargo itself")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="hyperi-rust-cache-prune",
+        description="Keep the pooled Rust build cache under a fixed ceiling.",
+    )
+    parser.add_argument("--check", action="store_true", help="report only, delete nothing")
+    parser.add_argument("--yes", action="store_true", help="do not prompt before deleting")
+    parser.add_argument(
+        "--max-size",
+        type=parse_size_or_auto,
+        default=DEFAULT_MAX_SIZE,
+        metavar="SIZE",
+        help=(
+            f"ceiling for the pool, or `auto` to take a {AUTO_FRACTION}th of the "
+            f"filesystem with a {AUTO_FLOOR} floor (default: {DEFAULT_MAX_SIZE})"
+        ),
+    )
+    parser.add_argument(
+        "--max-age-days",
+        type=int,
+        default=DEFAULT_MAX_AGE_DAYS,
+        metavar="DAYS",
+        help=f"drop workspaces not built in this long (default: {DEFAULT_MAX_AGE_DAYS})",
+    )
+    parser.add_argument(
+        "--pool",
+        type=Path,
+        default=None,
+        help="override the pool location instead of reading it from the cargo config",
+    )
+    args = parser.parse_args()
+
+    rep = Reporter()
+    pool = args.pool or configured_pool()
+
+    if pool is None:
+        # Not an error: a box that never adopted the central pool has nothing
+        # to bound, and a timer firing on it must stay quiet and green.
+        print("build-dir is not configured -- nothing pooled to prune.")
+        print("Run hyperi-rust-setup to configure it.")
+        return 0
+
+    if not pool.is_dir():
+        print(f"{pool} does not exist yet -- nothing to prune.")
+        return 0
+
+    # A pool read from the cargo config is only as trustworthy as that file, and
+    # this deletes whole directory trees under it. Confine it to the cache root:
+    # a build-dir pointed at a home or a source tree would otherwise be walked
+    # and evicted a workspace at a time. An explicit --pool is a deliberate act
+    # and keeps working.
+    if args.pool is None:
+        pool = pool.resolve()
+        root = cache_root().resolve()
+        if pool == root or not pool.is_relative_to(root):
+            print(f"refusing to prune {pool}: outside the cache root {root}.")
+            print("Point build.build-dir inside the cache root, or pass --pool to override.")
+            return 1
+
+    print(f"hyperi-rust-cache-prune: {pool}")
+
+    max_size = resolve_max_size(args.max_size, pool, rep)
+
+    if not args.check and not args.yes:
+        print(f"\nThis deletes pooled build artefacts over {human(max_size)} "
+              f"or idle more than {args.max_age_days} days.")
+        print("Projects rebuild them on demand. Re-run with --check to see the detail first.")
+        try:
+            if input("Proceed? [y/N] ").strip().lower() not in {"y", "yes"}:
+                print("Nothing done.")
+                return 0
+        except (EOFError, KeyboardInterrupt):
+            print("\nNothing done.")
+            return 0
+
+    rep.step("Pooled build artefacts")
+    prune_pool(
+        pool,
+        args.check,
+        rep,
+        max_size=max_size,
+        max_age_days=args.max_age_days,
+    )
+
+    rep.step("Self-capping caches (reported, not pruned)")
+    try:
+        report_self_capping_caches(rep)
+    except (OSError, subprocess.SubprocessError) as exc:
+        rep.warn(f"could not report the other caches: {exc}")
+
+    verb = "would free" if args.check else "freed"
+    print(f"\n{verb} {human(rep.freed)}")
+    if rep.warnings:
+        print(f"Finished with {len(rep.warnings)} warning(s):")
+        for warning in rep.warnings:
+            print(f"  - {warning}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

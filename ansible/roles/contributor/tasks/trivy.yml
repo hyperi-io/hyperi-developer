@@ -68,6 +68,13 @@
         dest: /etc/apt/keyrings/trivy.asc
         mode: '0644'
 
+    # A host provisioned by an older revision carries trivy.list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy Trivy .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/trivy.list
+        state: absent
+
     - name: Add Trivy APT repository (Ubuntu)
       ansible.builtin.deb822_repository:
         name: trivy

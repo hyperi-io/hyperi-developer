@@ -50,13 +50,21 @@
         dest: /usr/share/keyrings/microsoft.asc
         mode: '0644'
 
-    # Map unsupported Ubuntu releases to nearest supported LTS
-    # Microsoft only publishes repos for LTS releases (jammy, noble)
+    # Use the running release when Microsoft publishes it, else the newest suite
+    # it does publish -- see azure_cli_supported_suites.
     - name: Determine Azure CLI repo codename
       ansible.builtin.set_fact:
         azure_cli_codename: >-
-          {{ (ansible_facts['distribution_version'] is version('24.04', '>'))
-             | ternary('noble', ansible_facts['distribution_release']) }}
+          {{ ansible_facts['distribution_release']
+             if ansible_facts['distribution_release'] in azure_cli_supported_suites
+             else azure_cli_supported_suites | last }}
+
+    # A host provisioned by an older revision carries azure-cli.list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy Azure CLI .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/azure-cli.list
+        state: absent
 
     - name: Add Azure CLI repository
       ansible.builtin.deb822_repository:
@@ -66,7 +74,11 @@
         suites: "{{ azure_cli_codename }}"
         components: main
         signed_by: /usr/share/keyrings/microsoft.asc
-        architectures: amd64
+        # Microsoft publishes amd64 and arm64 for this repo (arm64 since Azure
+        # CLI 2.46.0). Hardcoding amd64 is the documented cause of "Unable to
+        # locate package azure-cli" on an arm64 host, where it reads as the
+        # package not existing rather than the repo excluding the machine.
+        architectures: "{{ hyperi_arch_deb }}"
         state: present
 
     - name: Install Azure CLI

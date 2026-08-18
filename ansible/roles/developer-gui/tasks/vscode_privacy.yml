@@ -1,0 +1,96 @@
+---
+# VSCode privacy + AI-upsell de-nag profile (hyperi-io/hyperi-developer#7).
+#
+# Delegated to hyperi-vscode-privacy, a standalone script a developer can
+# also run by hand -- same shape as hyperi-rust-setup. The settings tiers,
+# detection, and the JSONC-safe merge all live there, so a profile change
+# ships through that one file rather than a template edit here.
+#
+# One invocation covers all three editors; a corrupt settings.json for one
+# degrades to a WARN line in its own stdout instead of failing the task, so
+# the two warning tasks below can turn that into deploy_warnings without a
+# block/rescue per editor.
+
+# Split by platform for the ownership only: root:root is right on Linux and
+# wrong on macOS, where /usr/local/bin is not owned by a root group of that
+# name. Both are gated to their own distro so only one ever runs.
+- name: Install the hyperi-vscode-privacy tool (Linux)
+  ansible.builtin.copy:
+    src: hyperi-vscode-privacy
+    dest: /usr/local/bin/hyperi-vscode-privacy
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - vscode_privacy_enabled | bool or vscode_privacy_uninstall | bool
+
+- name: Install the hyperi-vscode-privacy tool (macOS)
+  ansible.builtin.copy:
+    src: hyperi-vscode-privacy
+    dest: /usr/local/bin/hyperi-vscode-privacy
+    mode: '0755'
+  become: true
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - vscode_privacy_enabled | bool or vscode_privacy_uninstall | bool
+
+# --home is passed explicitly -- become changes the acting user, and trusting
+# its HOME propagation is the ansible_env.HOME trap this repo's CLAUDE.md
+# warns against. --yes because Ansible is the unattended caller; a human
+# running the tool by hand still gets the confirmation prompt.
+- name: Apply the VSCode privacy profile
+  ansible.builtin.command:
+    cmd: /usr/local/bin/hyperi-vscode-privacy --yes --home {{ user_home | quote }}
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: vscode_privacy_apply_result
+  changed_when: "'CHANGED ' in vscode_privacy_apply_result.stdout"
+  failed_when: false
+  when:
+    - vscode_privacy_enabled | bool
+    - not ansible_check_mode
+
+- name: Remove the VSCode privacy profile
+  ansible.builtin.command:
+    cmd: /usr/local/bin/hyperi-vscode-privacy --yes --uninstall --home {{ user_home | quote }}
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: vscode_privacy_uninstall_result
+  changed_when: "'CHANGED ' in vscode_privacy_uninstall_result.stdout"
+  failed_when: false
+  when:
+    - vscode_privacy_uninstall | bool
+    - not ansible_check_mode
+
+# Both runs land in the same shared accumulator (same pattern as
+# roles/contributor/tasks/hyperi_ci.yml), so a bad settings.json shows up in
+# the end-of-play summary instead of nowhere.
+- name: Warn about any editor settings.json the profile could not parse
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately NOT
+  # role-prefixed: it is the shared accumulator that playbooks/main.yml
+  # post_tasks reports from. A per-role name would give every role its own
+  # list and the summary would report almost nothing.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([]) + (
+           (vscode_privacy_apply_result.stdout_lines | default([]))
+           + (vscode_privacy_uninstall_result.stdout_lines | default([]))
+         ) | select('match', '^WARN ') | list }}
+  when:
+    - (vscode_privacy_apply_result is defined and 'WARN ' in vscode_privacy_apply_result.stdout | default(''))
+      or (vscode_privacy_uninstall_result is defined and 'WARN ' in vscode_privacy_uninstall_result.stdout | default(''))
+
+- name: Warn if hyperi-vscode-privacy exited unexpectedly
+  # noqa: var-naming[no-role-prefix] -- see the note above.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['hyperi-vscode-privacy: exited ' ~ item.rc | string ~ ' -- ' ~ (item.stderr | default('') | trim | truncate(120))] }}
+  loop:
+    - "{{ vscode_privacy_apply_result | default({}) }}"
+    - "{{ vscode_privacy_uninstall_result | default({}) }}"
+  when:
+    - item.rc is defined
+    - item.rc | int != 0

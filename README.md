@@ -75,9 +75,9 @@ flowchart TD
 | Tag | Description |
 |-----|-------------|
 | `developer` | Generic CLI dev base (the default: git, docker, shell utilities) |
-| `developer-gui` | VS Code, Ghostty, DBeaver |
+| `developer-gui` | VS Code, Ghostty, DBeaver. Privacy + AI-upsell de-nag profile for VSCode/VSCodium/Cursor off unless `-e vscode_privacy_enabled=true` |
 | `developer-rust` / `-go` / `-python` / `-node` / `-typescript` / `-c` | Language toolchains |
-| `infrastructure` | OpenTofu, OpenBao, AWS CLI, `k8s` (kubectl, helm, k9s, kind, argocd, kustomize, kubeconform, kube-linter), `data` (clickhouse-client, rpk, valkey-cli, vector) |
+| `infrastructure` | OpenTofu, OpenBao, AWS CLI, `k8s` (kubectl, helm, k9s, kind, argocd, kustomize, kubeconform, kube-linter), `data` (clickhouse-client, rpk, valkey-cli, vector), `cloudflare` (flarectl, wrangler) |
 | `contributor` | hyperi-ci + its check tools (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, yamllint, ansible-lint, pre-commit, act |
 | `soe` / `soe-gui` | HyperI org policy (opt-in) |
 | `--full-stack` / `--infra` / `--languages [list]` | Persona bundles (see `--help`) |
@@ -101,8 +101,9 @@ flowchart TD
 **Opt-in, via tags:**
 
 - `developer-gui`: VS Code, Ghostty (Solarized theme), DBeaver
+- `vscode-privacy` (off by default): strips the Copilot/AI upsell UI and the telemetry that stock VSCode ships enabled, across VSCode, VSCodium and Cursor. Enable with `-e vscode_privacy_enabled=true`. It merges one marked block into `settings.json` and never touches a comment or a key it does not manage, backs the file up before its first write, and `-e vscode_privacy_uninstall=true` takes only its own keys back out. Where you have set one of those keys yourself further down the file, yours wins and the run tells you which ones -- so it cannot look applied while changing nothing
 - Languages: Rust, Go, Python, C/C++, Node.js, TypeScript (the Astral suite -- uv, ruff, ty -- ships in the base, as does Node.js: it is core tooling that semantic-release and CI need)
-- `infrastructure`: OpenTofu + OpenBao (the OSS forks, no HashiCorp BUSL tools), AWS CLI v2. Under `k8s`: kubectl + helm + k9s + kind + argocd + kustomize + dive. The `data` group: clickhouse-client, rpk, valkey-cli, vector
+- `infrastructure`: OpenTofu + OpenBao (the OSS forks, no HashiCorp BUSL tools), AWS CLI v2. Under `k8s`: kubectl + helm + k9s + kind + argocd + kustomize + dive. The `data` group: clickhouse-client, rpk, valkey-cli, vector. The `cloudflare` group: flarectl + wrangler (flarectl builds from source on both platforms -- Cloudflare ships no binary -- so Linux needs `developer-go`)
 - `contributor`: hyperi-ci and the tools its checks drive (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, ansible-lint, pre-commit, act
 - `soe` / `soe-gui`: HyperI org policy: VPN clients, Claude Code, Slack, LibreOffice, RDP client, telemetry-disable, auto-updates, GNOME taskbar
 - `power-profile` (off by default, and deliberately not in `soe`): sleep, idle and lid policy, selected per machine. `always-on` (the default profile) never idle-suspends on mains power and does not sleep when the lid shuts -- for a repurposed laptop doing build work, or a desktop that has to answer ssh. `vm` never sleeps or suspends at all, for an unattended RDP guest that nobody can walk over and wake. Battery behaviour stays stock under `always-on`, because a machine that will not sleep in a bag cooks itself. Profiles are data files, so adding one is adding a file -- see [roles/power-profile/README.md](ansible/roles/power-profile/README.md)
@@ -210,6 +211,20 @@ cd hyperi-developer
 ```bash
 ./tools/git/git-claude-contrib-fix.sh --help
 ```
+
+### Host Drift Check
+
+[hyperi-doctor](tools/hyperi-doctor) answers "has this host fallen behind the SOE?" without applying anything and without sudo.
+
+```bash
+./tools/hyperi-doctor                             # scope from the applied-state stamp, or 'developer'
+./tools/hyperi-doctor --tags developer-rust,soe   # explicit role scope
+./tools/hyperi-doctor --quiet                     # problems only, exit code as a gate
+```
+
+It reports the applied-state stamp's age and git SHA against this checkout, and which declared apt/dnf/homebrew packages are actually missing. Package names built from a loop, a variable or Jinja cannot be resolved by a static scan, and it prints that count rather than implying a clean result.
+
+**Documentation:** See [tools/README.md](tools/README.md).
 
 ## Windows 11 SOE
 

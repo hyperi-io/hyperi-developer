@@ -114,6 +114,7 @@ without the whole role.
 
 | Group | Tag | Role | Tools |
 |---|---|---|---|
+| cloudflare | `cloudflare` | infrastructure | flarectl, wrangler |
 | data | `data` | infrastructure | clickhouse-client, rpk, valkey-cli, vector |
 | forgejo | `forgejo` / `codeberg` | soe | tea (Forgejo/Gitea CLI) |
 | rdp-client | `rdp-client` | rdp-client | Remmina (Linux), Thincast (macOS) |
@@ -126,10 +127,17 @@ Per-app tags stay too (`--tags vscode`, `--tags slack`, ...): run
 
 `Method` is how the tool is fetched. **Default installs are always latest and
 unpinned** - the `Pinned` column applies ONLY when you opt into `--pinned`, and
-then says what that mode does: **SHA256** = manual binary, pin the version and
-verify a checksum; **version** = repo/brew-signed, pin the version only; **n/a**
-= not pinnable/meta. Only the manual-binary (SHA256) rows carry supply-chain risk
-that a checksum closes.
+then says what that mode does: **SHA256** = manual binary; **version** =
+repo/brew-signed, pin the version only; **n/a** = not pinnable/meta.
+
+**SHA256 marks the rows that NEED a checksum, not the rows that have one.**
+Pinning is by tag today across the board, and digest verification at download is
+still the planned hardening (see Auto-update below, and hyperi-ci #66). A tag can
+be force-moved, so those rows currently rest on HTTPS and the tag alone.
+
+Three fetches do verify a digest today, and they are the ones whose SHA is held
+in the repo or read from a vendor manifest: the Go toolchain, rustup-init, and
+the Claude Code binary.
 
 ### developer (base, additive - runs bare)
 
@@ -153,6 +161,15 @@ that a checksum closes.
 | Ghostty | Fedora (COPR) / macOS (cask) | vendor-repo / cask | version |
 | Ghostty | Ubuntu | github-binary (.deb) | SHA256 |
 | DBeaver | Linux flatpak / macOS cask | flatpak / cask | version |
+| VS Code privacy profile (opt-in: `-e vscode_privacy_enabled=true`) | all | bundled script (`hyperi-vscode-privacy`) | n/a |
+
+The privacy profile is off by default because it edits a personal
+`settings.json`. It merges one marked block of managed keys into VSCode,
+VSCodium and Cursor, leaving every comment and unmanaged key untouched, backs
+the file up once before its first write, and removes only its own keys under
+`-e vscode_privacy_uninstall=true`. A key the developer sets later in the same
+file keeps their value, and the run says which keys that applies to rather
+than reporting the profile applied when it changed nothing.
 
 ### Languages
 
@@ -164,9 +181,33 @@ is the meta-role pulling them all.
 | Tool(s) | Platforms | Method | Pinned |
 |---|---|---|---|
 | rustup + stable toolchain, rustfmt, clippy | all | vendor-script + rustup | n/a |
-| cargo-* (nextest, deny, chef, bacon, tarpaulin, update) | all | cargo | n/a |
-| cargo-audit, cargo-hack | all | cargo | n/a |
+| cargo-binstall | all | cargo | n/a |
+| cargo-* (nextest, deny, chef, bacon, update) | all | cargo | n/a |
+| cargo-audit, cargo-hack, cargo-pgo | all | cargo | n/a |
+| cargo-llvm-cov + llvm-tools-preview | all | cargo / rustup | n/a |
 | protobuf-compiler, librdkafka-dev | Linux | distro repo | version |
+| sccache, mold, clang | Linux (sccache only on macOS) | distro repo / brew | version |
+| cargo-sweep | all | cargo-binstall / cargo | n/a |
+| hyperi-rust-setup, hyperi-rust-cache-prune | all | role file -> `/usr/local/bin` | n/a |
+
+`cargo-binstall` is installed FIRST so the tools after it arrive prebuilt rather
+than compiled from source.
+
+Coverage is `cargo-llvm-cov`. It replaced `cargo-tarpaulin`, which is ptrace-based
+and therefore Linux-x86_64 only -- a macOS developer had no coverage tool at all.
+The role uninstalls a leftover tarpaulin, because hyperi-ci prefers it when both
+are present and would otherwise keep Linux on the tool macOS cannot run.
+
+Build cache caps are a sub-tag, `rust-cache`, so they can be applied without a
+full toolchain converge:
+
+```bash
+./install.sh --tags rust-cache
+```
+
+That tag installs both tools, writes the caps, and schedules the prune
+(systemd timer on Linux, launchd agent on macOS). Sizes come from
+`rust_cache_*` in the role defaults; a build box overrides them per host.
 
 #### developer-go
 
@@ -223,6 +264,14 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 | openbao | all | Ubuntu snap / Fedora dnf / brew | version |
 | azure-cli, google-cloud-cli | all | vendor-repo / cask | version |
 | clickhouse-client, rpk, valkey-cli, vector (the `data` group) | Linux; macOS partial | vendor-repo / distro | version |
+| wrangler (the `cloudflare` group) | all | npm-global / brew | version |
+| flarectl (the `cloudflare` group) | all | `go install` from source / brew | source tag |
+
+Cloudflare publishes no flarectl binary and no distro packages it, so both
+platforms build it from source. It also lives on cloudflare-go's `v0` branch --
+from v4 that SDK is generated and carries no `cmd/` directory. The Linux build
+needs a Go toolchain (`--tags developer-go`); without one the run records a
+warning and continues.
 
 ### contributor (CI toolchain - what `hyperi-ci check` drives)
 
@@ -232,7 +281,7 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 |---|---|---|---|
 | hyperi-ci, semgrep | all | uv-tool (Tier 2) / brew | version |
 | alint | all | cargo (Tier 2) / brew | version |
-| osv-scanner | all | Ubuntu snap / Fedora re-fetch (Tier 3) / brew | version / SHA256 |
+| osv-scanner | all | Linux re-fetch (Tier 3) / brew | version / SHA256 |
 | gitleaks | all | distro (apt universe / dnf) / brew | version |
 | act | all | Fedora COPR / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | trivy | all | vendor-repo (official aquasecurity apt/dnf) / brew | version |
@@ -328,6 +377,23 @@ package). `hyperi-update` re-fetches the latest release for these.
 `hyperi-update` (the "update my system" command) runs all three tiers plus the
 OS / snap / flatpak sweep, so one command brings everything current. soe
 schedules it on a timer; the base leaves update cadence to the host.
+
+## Checking what a host actually has
+
+`tools/hyperi-doctor` is the read-only counterpart to everything above. It
+resolves the same role graph documented here, recursing through each role's
+`meta/main.yml` dependencies, then reports which declared apt / dnf / homebrew
+packages are missing from this host. It applies nothing and needs no sudo.
+
+It also reads the applied-state stamp
+(`/var/lib/hyperi-developer/applied.json`), written at the end of a run, and
+compares its git SHA against the current checkout -- so "this host has not
+been reprovisioned in a month" is answerable rather than something you find
+out through a build failure in an unrelated dependency.
+
+Package names built from a loop, a variable or Jinja cannot be resolved by a
+static scan of the task files, and it reports that count explicitly. A gate
+that quietly under-reports is worse than no gate.
 
 ## Design intent - an additive base
 

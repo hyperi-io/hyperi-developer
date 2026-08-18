@@ -1,0 +1,138 @@
+---
+# Cloudflare CLIs -- flarectl (account: zones, DNS, R2, tokens) and wrangler
+# (Workers, Pages, R2).
+#
+# Both are optional: a failure appends to deploy_warnings rather than sinking a
+# run that also configures IaC and Kubernetes tooling.
+
+# ============================================================================
+# WRANGLER
+# ============================================================================
+# npm is the only publisher. macOS takes the homebrew-core formula, which is a
+# packaged build of the same npm tarball; Linux installs it into the user-owned
+# npm prefix so no step here needs sudo.
+#
+# The formula is `cloudflare-wrangler`. `cloudflare-wrangler2` was the name
+# while wrangler 1.x and 2.x shipped side by side and no longer exists.
+
+- name: Install wrangler (Linux)
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  block:
+    - name: Install the wrangler npm package
+      community.general.npm:
+        name: wrangler
+        global: true
+        state: present
+      environment:
+        NPM_CONFIG_PREFIX: "{{ user_home }}/.npm-global"
+      become: true
+      become_user: "{{ actual_user }}"
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- deploy_warnings is cross-role by design.
+    - name: Record that wrangler did not install (Linux)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['wrangler: ' ~ (ansible_failed_result.msg | default('npm install failed'))
+                ~ ' (needs node -- add the developer-node tag)'] }}
+
+- name: Install wrangler (macOS)
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  block:
+    - name: Install the cloudflare-wrangler formula
+      community.general.homebrew:
+        name: cloudflare-wrangler
+        state: present
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- deploy_warnings is cross-role by design.
+    - name: Record that wrangler did not install (macOS)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['wrangler: ' ~ (ansible_failed_result.msg | default('brew install failed'))] }}
+
+# ============================================================================
+# FLARECTL
+# ============================================================================
+# Cloudflare publishes NO release binary for it and no distro packages it, so
+# both platforms build from source -- brew on macOS, `go install` on Linux.
+#
+# It lives on cloudflare-go's v0 branch; from v4 the SDK is generated and has no
+# cmd/ directory. Module paths carry a version suffix from v2, so the unsuffixed
+# path below resolves only along the v0 line and `@latest` cannot jump to a
+# version without flarectl in it.
+#
+# Pinned to a tag rather than @latest. v0.x carries no semver compatibility
+# promise, so @latest can change behaviour on the next fresh box with nothing
+# recording what the previous one had. The Go module proxy verifies the module
+# against sum.golang.org, so the tag is the reproducibility gap, not integrity.
+#
+# `creates:` supplies the idempotency, at the cost of no auto-update on a later
+# run: `go install` re-links unconditionally and there is no version to compare
+# against. Bumping the pin means removing the binary first.
+
+- name: Install flarectl (Linux)
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  block:
+    # `go version` rather than `command -v go`: command is a shell builtin, and
+    # ansible.builtin.command execs directly, so probing with it fails on every
+    # host and takes the install with it. Running go also proves the toolchain
+    # works, not merely that a file is on PATH.
+    - name: Check for a Go toolchain
+      ansible.builtin.command:
+        cmd: go version
+      register: infrastructure_go_present
+      changed_when: false
+      failed_when: false
+
+    - name: Record that flarectl needs Go
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is cross-role by design.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['flarectl: skipped, no Go toolchain (add the developer-go tag). '
+                ~ 'Cloudflare ships no flarectl binary, so Go is the only route on Linux.'] }}
+      when: infrastructure_go_present.rc != 0
+
+    - name: Build and install flarectl
+      ansible.builtin.command:
+        cmd: >-
+          go install
+          github.com/cloudflare/cloudflare-go/cmd/flarectl@{{ infrastructure_flarectl_version }}
+        creates: "{{ user_home }}/go/bin/flarectl"
+      become: true
+      become_user: "{{ actual_user }}"
+      environment:
+        HOME: "{{ user_home }}"
+        GOPATH: "{{ user_home }}/go"
+      when: infrastructure_go_present.rc == 0
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- deploy_warnings is cross-role by design.
+    - name: Record that flarectl did not install (Linux)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['flarectl: ' ~ (ansible_failed_result.msg | default('go install failed'))] }}
+
+- name: Install flarectl (macOS)
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  block:
+    - name: Install the flarectl formula
+      community.general.homebrew:
+        name: flarectl
+        state: present
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- deploy_warnings is cross-role by design.
+    - name: Record that flarectl did not install (macOS)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['flarectl: ' ~ (ansible_failed_result.msg | default('brew install failed'))] }}

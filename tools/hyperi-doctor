@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# hyperi-doctor - read-only report on SOE drift.
+#
+# Thin wrapper only: all logic lives in hyperi_doctor.py (PyYAML replaces
+# the yq/jq dependency chain the old bash implementation needed). See
+# tools/README.md and standards/rules/bash.md.
+#
+# Licensed under the Apache License, Version 2.0
+
+set -euo pipefail
+
+command -v python3 >/dev/null 2>&1 || { echo "hyperi-doctor: python3 is required and was not found on PATH" >&2; exit 1; }
+exec python3 "$(dirname "$0")/hyperi_doctor.py" "$@"

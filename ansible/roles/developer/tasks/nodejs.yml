@@ -43,6 +43,13 @@
     # `nodistro` is NodeSource's own suite name -- it publishes one distro-
     # agnostic suite rather than per-codename ones, so there is no release
     # mapping to do here (contrast docker.yml and the git-core PPA).
+    # A host provisioned by an older revision carries nodesource.list beside
+    # the .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy NodeSource .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/nodesource.list
+        state: absent
+
     - name: Add the NodeSource repository
       ansible.builtin.deb822_repository:
         name: nodesource
@@ -354,10 +361,16 @@
   changed_when: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# corepack caches the activated pnpm under the user's home, so this one runs as
+# actual_user rather than the connecting user -- on a fleet machine reached as a
+# service account those are different, and the shim would land in a home nobody
+# logs into. become_user is ignored while become is false, so both are needed.
 - name: Activate the latest pnpm via corepack (Linux)
   ansible.builtin.command:
     cmd: corepack prepare pnpm@latest --activate
-  become: false
+  environment:
+    HOME: "{{ user_home }}"
+  become: true
   become_user: "{{ actual_user }}"
   changed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

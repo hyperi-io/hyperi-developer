@@ -20,6 +20,13 @@
         dest: /etc/apt/keyrings/slack.asc
         mode: '0644'
 
+    # A host provisioned by an older revision carries slack.list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy Slack .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/slack.list
+        state: absent
+
     - name: Add Slack apt repository
       ansible.builtin.deb822_repository:
         name: slack

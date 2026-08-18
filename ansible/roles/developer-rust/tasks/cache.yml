@@ -1,0 +1,122 @@
+---
+# Bound every Rust cache that would otherwise grow without limit.
+#
+# hyperi-rust-setup writes the caps that the caches read for themselves
+# (sccache, ccache) and points build.build-dir at a single pool.
+# hyperi-rust-cache-prune bounds that pool on a schedule, because cargo does
+# not track build artefacts and nothing upstream ever reclaims them.
+#
+# The whole file is optional: a machine with no cap still builds, so nothing
+# here may fail the run.
+
+- name: Install the hyperi-rust-cache-prune tool
+  ansible.builtin.copy:
+    src: hyperi-rust-cache-prune
+    dest: /usr/local/bin/hyperi-rust-cache-prune
+    owner: "{{ 'root' if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+    group: "{{ 'root' if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+    mode: '0755'
+  become: true
+
+# ============================================================
+# Scheduled prune -- systemd on Linux, launchd on macOS
+# ============================================================
+
+- name: Schedule the prune (Linux)
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+  block:
+    - name: Install the rust cache prune service
+      ansible.builtin.template:
+        src: hyperi-rust-cache-prune.service.j2
+        dest: /etc/systemd/system/hyperi-rust-cache-prune.service
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+
+    - name: Install the rust cache prune timer
+      ansible.builtin.template:
+        src: hyperi-rust-cache-prune.timer.j2
+        dest: /etc/systemd/system/hyperi-rust-cache-prune.timer
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+
+    # Check mode does not write the unit files above, so systemd has nothing to
+    # enable and the task would fail the run rather than preview it.
+    - name: Enable and start the rust cache prune timer
+      ansible.builtin.systemd:
+        name: hyperi-rust-cache-prune.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      become: true
+      when: not ansible_check_mode
+
+- name: Schedule the prune (macOS)
+  when: ansible_facts['distribution'] == 'MacOSX'
+  block:
+    # launchd agents are per-user and live in the user's own LaunchAgents
+    # directory; there is no system-wide equivalent scoped to one login.
+    - name: Create the LaunchAgents directory
+      ansible.builtin.file:
+        path: "{{ user_home }}/Library/LaunchAgents"
+        state: directory
+        mode: '0755'
+      become: false
+
+    - name: Install the rust cache prune launch agent
+      ansible.builtin.template:
+        src: io.hyperi.rust-cache-prune.plist.j2
+        dest: "{{ rust_cache_prune_plist }}"
+        mode: '0644'
+      become: false
+      register: developer_rust_prune_plist
+
+    # `launchctl print` is the only reliable "is it loaded" probe; `list` greps
+    # a label that may match a different agent's prefix.
+    - name: Check whether the launch agent is already loaded
+      ansible.builtin.command:
+        cmd: "launchctl print gui/{{ ansible_facts['user_uid'] }}/{{ rust_cache_prune_label }}"
+      become: false
+      register: developer_rust_prune_loaded
+      changed_when: false
+      failed_when: false
+
+    # bootout first: bootstrap on an already-loaded label is an error, and the
+    # plist may have changed underneath it.
+    - name: Unload the previous launch agent
+      ansible.builtin.command:
+        cmd: "launchctl bootout gui/{{ ansible_facts['user_uid'] }}/{{ rust_cache_prune_label }}"
+      become: false
+      changed_when: false
+      failed_when: false
+      when:
+        - not ansible_check_mode
+        - developer_rust_prune_loaded.rc == 0
+        - developer_rust_prune_plist.changed
+
+    - name: Load the rust cache prune launch agent
+      ansible.builtin.command:
+        cmd: >-
+          launchctl bootstrap gui/{{ ansible_facts['user_uid'] }}
+          {{ rust_cache_prune_plist }}
+      become: false
+      register: developer_rust_prune_bootstrap
+      changed_when: developer_rust_prune_bootstrap.rc == 0
+      failed_when: false
+      when:
+        - not ansible_check_mode
+        - developer_rust_prune_loaded.rc != 0 or developer_rust_prune_plist.changed
+
+    - name: Warn when the launch agent did not load
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Load the rust cache prune launch agent: '
+                ~ (developer_rust_prune_bootstrap.stderr | default('unknown error'))] }}
+      when:
+        - not ansible_check_mode
+        - developer_rust_prune_bootstrap is defined
+        - developer_rust_prune_bootstrap.rc | default(0) != 0

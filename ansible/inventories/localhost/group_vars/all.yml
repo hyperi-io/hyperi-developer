@@ -16,14 +16,14 @@
 hyperi_pinned: false
 
 hyperi_versions:
-  alint: v0.14.0
+  alint: v0.14.1
   gitleaks: v8.30.1
-  hadolint: v2.14.0
+  hadolint: v2.15.1
   kubeconform: v0.8.0
   kube-linter: v0.8.3
   osv-scanner: v2.4.0
   golangci-lint: v2.12.2
-  gosec: v2.27.1
+  gosec: v2.28.0
   govulncheck: v1.1.4
   cargo-audit: v0.22.2
   cargo-deny: 0.20.2

@@ -34,6 +34,21 @@ docker_repo_url: "{{ docker_repo_base_url }}/{{ docker_distro_name }}"
 # amd64 only if the playbook-level fact is somehow absent (it is set in
 # pre_tasks under `always`, so it should not be).
 docker_arch: "{{ hyperi_arch_deb | default('amd64') }}"
+# Docker publishes one suite per Ubuntu codename and lags new releases.
+# Deriving the suite from the version number installs another release's build
+# against the wrong libc, so list what upstream actually publishes.
+# Tracks the supported window (min_ubuntu_version), oldest first; the last entry
+# is the fallback for a release upstream has not published yet.
+docker_supported_suites:
+  - noble
+  - resolute
+# Upstream's docker-ce.repo resolves $releasever against the running Fedora, so
+# a release Docker has not built for turns into a 404 at install time.
+# Tracks the supported window (min_fedora_version), oldest first; the last entry
+# is the fallback for a release upstream has not published yet.
+docker_fedora_supported_releases:
+  - '43'
+  - '44'
 
 # Node.js configuration
 #
@@ -63,6 +78,14 @@ gh_deb_gpg_url: "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
 # apt repo uses -- these two URLs are taken from GitHub's own gh-cli.repo.
 gh_rpm_repo_url: "https://cli.github.com/packages/rpm"
 gh_rpm_gpg_url: "https://cli.github.com/packages/githubcli-archive-keyring.asc"
+
+# Launchpad builds the git-core PPA per Ubuntu series, and a new series appears
+# only once Launchpad opens it.
+# Tracks the supported window (min_ubuntu_version), oldest first; the last entry
+# is the fallback for a series Launchpad has not opened yet.
+git_ppa_supported_suites:
+  - noble
+  - resolute
 
 # ============================================================================
 # BRANDING / CUSTOMIZATION

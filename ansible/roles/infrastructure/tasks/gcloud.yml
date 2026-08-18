@@ -58,6 +58,13 @@
         path: /tmp/cloud.google.asc
         state: absent
 
+    # A host provisioned by an older revision carries google-cloud-sdk.list
+    # beside the .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy Google Cloud CLI .list
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/google-cloud-sdk.list
+        state: absent
+
     - name: Add Google Cloud CLI repository
       ansible.builtin.deb822_repository:
         name: google-cloud-sdk

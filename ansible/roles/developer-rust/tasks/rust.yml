@@ -216,6 +216,8 @@
 # Cargo tools installation
 # ============================================================
 
+# Tagged rust-cache too: the setup script below runs under this environment,
+# and an untagged set_fact leaves it undefined when only the cap tag is selected.
 - name: Set cargo environment (Linux)
   ansible.builtin.set_fact:
     cargo_env:
@@ -223,6 +225,7 @@
       CARGO_HOME: "{{ user_home }}/.cargo"
       RUSTUP_HOME: "{{ user_home }}/.rustup"
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  tags: ['rust-cache']
 
 - name: Set cargo environment (macOS)
   ansible.builtin.set_fact:
@@ -230,6 +233,18 @@
       PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
       CARGO_HOME: "{{ user_home }}/.cargo"
   when: ansible_facts['distribution'] == 'MacOSX'
+  tags: ['rust-cache']
+
+# cargo-binstall goes FIRST and on purpose: every cargo tool below prefers a
+# prebuilt binary when it is present, so installing it last would mean paying
+# for a from-source build of the whole set on a fresh box.
+- name: Install cargo-binstall (prebuilt cargo tool fetcher)
+  ansible.builtin.command:
+    cmd: cargo install cargo-binstall --locked
+    creates: "{{ user_home }}/.cargo/bin/cargo-binstall"
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
 # Install cargo tools - these compile from source so may take a while
 - name: Install cargo-bacon (background code checker)
@@ -256,14 +271,45 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
-- name: Install cargo-tarpaulin (code coverage)
+# Coverage is cargo-llvm-cov, not cargo-tarpaulin. tarpaulin is ptrace-based and
+# therefore Linux-x86_64 only, which left a macOS developer with no coverage tool
+# at all -- hyperi-ci reports "No coverage tool found" and runs the tests bare.
+# llvm-cov uses rustc's own source-based instrumentation and works on all three.
+- name: Install cargo-llvm-cov (code coverage)
   ansible.builtin.command:
-    cmd: cargo install cargo-tarpaulin --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-tarpaulin"
+    cmd: cargo install cargo-llvm-cov --locked
+    creates: "{{ user_home }}/.cargo/bin/cargo-llvm-cov"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']  # Linux only (uses ptrace)
+
+- name: Install the llvm-tools component (cargo-llvm-cov dependency)
+  ansible.builtin.command:
+    cmd: "{{ user_home }}/.cargo/bin/rustup component add llvm-tools-preview"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  environment: "{{ cargo_env }}"
+  register: developer_rust_llvm_tools
+  changed_when: "'is up to date' not in developer_rust_llvm_tools.stderr"
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# hyperi-ci prefers tarpaulin over llvm-cov when both are present, so leaving a
+# stale copy behind would keep Linux on the tool macOS cannot run.
+- name: Remove the superseded cargo-tarpaulin
+  ansible.builtin.command:
+    cmd: cargo uninstall cargo-tarpaulin
+    removes: "{{ user_home }}/.cargo/bin/cargo-tarpaulin"
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+- name: Install cargo-pgo (profile-guided optimisation)
+  ansible.builtin.command:
+    cmd: cargo install cargo-pgo --locked
+    creates: "{{ user_home }}/.cargo/bin/cargo-pgo"
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
 - name: Install cargo-chef (Docker layer caching)
   ansible.builtin.command:
@@ -316,6 +362,8 @@
 # people who run the whole playbook. A dev who wants a fast Rust box on a
 # machine we do not manage should be able to run one command.
 
+# Tagged rust-cache as well: this script writes the cache caps, so the cap tag
+# has to be able to install and run it without a full toolchain converge.
 - name: Install the hyperi-rust-setup tool
   ansible.builtin.copy:
     src: hyperi-rust-setup
@@ -324,6 +372,7 @@
     group: root
     mode: '0755'
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+  tags: ['rust-cache']
 
 - name: Install the hyperi-rust-setup tool (macOS)
   ansible.builtin.copy:
@@ -332,12 +381,18 @@
     mode: '0755'
   become: true
   when: ansible_facts['distribution'] == 'MacOSX'
+  tags: ['rust-cache']
 
 # --yes because Ansible is the unattended caller; a human running it by hand
 # gets the confirmation prompt instead.
 - name: Configure the Rust build environment
   ansible.builtin.command:
-    cmd: /usr/local/bin/hyperi-rust-setup --yes
+    cmd: >-
+      /usr/local/bin/hyperi-rust-setup --yes
+      --sccache-size {{ rust_cache_sccache_max }}
+      --ccache-size {{ rust_cache_ccache_max }}
+      --sccache-basedirs {{ rust_cache_sccache_basedirs | quote }}
+      {{ '' if rust_cache_central_build_dir else '--no-build-dir' }}
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   environment: "{{ cargo_env }}"
@@ -345,8 +400,24 @@
   changed_when: "'CHANGED' in developer_rust_setup.stdout"
   # An optional build accelerator must never abort the run (see S1.T11).
   failed_when: false
+  tags: ['rust-cache']
 
 - name: Report Rust build environment setup
   ansible.builtin.debug:
     msg: "{{ developer_rust_setup.stdout_lines | default(['(no output)']) }}"
   when: developer_rust_setup.rc | default(0) != 0
+  tags: ['rust-cache']
+
+# ============================================================
+# Build cache caps
+# ============================================================
+# Separate file because it is the only part with a scheduled component, and it
+# is switchable independently of the accelerators above.
+
+- name: Bound the Rust build caches
+  ansible.builtin.include_tasks:
+    file: cache.yml
+    apply:
+      tags: ['developer-rust', 'rust', 'rust-cache']
+  when: rust_cache_manage | default(true)
+  tags: ['developer-rust', 'rust', 'rust-cache']
