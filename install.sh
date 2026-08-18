@@ -174,6 +174,8 @@ Infrastructure (infrastructure):
     k8s               kubectl, helm, kubectx/kubens, k9s, kind, argocd,
                       kustomize, kubeconform, kube-linter, dive
     data              data group: clickhouse-client, rpk, valkey-cli, vector
+    cloudflare        cloudflare group: flarectl, wrangler (flarectl builds
+                      from source; Linux needs developer-go)
 
 Contributor (contributor) - to work ON a HyperI product, no org policy:
     hyperi-ci         hyperi-ci + semgrep, alint

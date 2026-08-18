@@ -1,0 +1,46 @@
+---
+# Verification -- infrastructure role tools.
+#
+# Exercised rather than stat'd: `command -v tofu` proves a file exists, `tofu
+# version` proves it runs. Presence is not function.
+#
+# Nothing here fails the run. Every install in this role already records its own
+# deploy_warnings entry on failure, so failing again here would report the same
+# thing twice and abort a run that may still have configured everything else.
+# The report is the point: a tool reading NOT AVAILABLE is the signal.
+#
+# Version flags are not uniform across these CLIs, so the command is carried
+# per tool rather than assembled from a name plus a fixed flag.
+
+- name: Check the infrastructure CLIs
+  ansible.builtin.command: "{{ item.cmd }}"
+  environment:
+    PATH: >-
+      {{ user_home }}/go/bin:{{ user_home }}/.npm-global/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{
+      user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}
+  loop:
+    - {name: OpenTofu, cmd: tofu version}
+    - {name: OpenBao, cmd: bao version}
+    - {name: AWS CLI, cmd: aws --version}
+    - {name: Helm, cmd: helm version --short}
+    - {name: kubectl, cmd: kubectl version --client}
+    - {name: Azure CLI, cmd: az version}
+    - {name: gcloud, cmd: gcloud version}
+    - {name: checkov, cmd: checkov --version}
+    - {name: flarectl, cmd: flarectl --version}
+    - {name: wrangler, cmd: wrangler --version}
+  loop_control:
+    label: "{{ item.name }}"
+  register: infrastructure_verify_tools
+  changed_when: false
+  failed_when: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+- name: Display infrastructure tools verification
+  ansible.builtin.debug:
+    msg: |
+      Infrastructure toolchain:
+      {% for r in infrastructure_verify_tools.results %}
+      - {{ r.item.name }}: {{ r.stdout_lines[0] | default('installed') if r.rc == 0 else 'NOT AVAILABLE' }}
+      {% endfor %}

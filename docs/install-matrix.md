@@ -114,6 +114,7 @@ without the whole role.
 
 | Group | Tag | Role | Tools |
 |---|---|---|---|
+| cloudflare | `cloudflare` | infrastructure | flarectl, wrangler |
 | data | `data` | infrastructure | clickhouse-client, rpk, valkey-cli, vector |
 | forgejo | `forgejo` / `codeberg` | soe | tea (Forgejo/Gitea CLI) |
 | rdp-client | `rdp-client` | rdp-client | Remmina (Linux), Thincast (macOS) |
@@ -247,6 +248,14 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 | openbao | all | Ubuntu snap / Fedora dnf / brew | version |
 | azure-cli, google-cloud-cli | all | vendor-repo / cask | version |
 | clickhouse-client, rpk, valkey-cli, vector (the `data` group) | Linux; macOS partial | vendor-repo / distro | version |
+| wrangler (the `cloudflare` group) | all | npm-global / brew | version |
+| flarectl (the `cloudflare` group) | all | `go install` from source / brew | source tag |
+
+Cloudflare publishes no flarectl binary and no distro packages it, so both
+platforms build it from source. It also lives on cloudflare-go's `v0` branch --
+from v4 that SDK is generated and carries no `cmd/` directory. The Linux build
+needs a Go toolchain (`--tags developer-go`); without one the run records a
+warning and continues.
 
 ### contributor (CI toolchain - what `hyperi-ci check` drives)
 

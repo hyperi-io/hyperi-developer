@@ -57,3 +57,18 @@
     apply:
       tags: ['infrastructure', 'data']
   tags: ['infrastructure', 'data']
+
+- name: Install Cloudflare CLIs
+  ansible.builtin.include_tasks:
+    file: cloudflare.yml
+    apply:
+      tags: ['infrastructure', 'cloudflare']
+  tags: ['infrastructure', 'cloudflare']
+
+# Last: report what actually runs, once every install above has had its turn.
+- name: Verify the infrastructure toolchain
+  ansible.builtin.include_tasks:
+    file: verify.yml
+    apply:
+      tags: ['infrastructure', 'verify']
+  tags: ['infrastructure', 'verify']
