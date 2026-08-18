@@ -256,7 +256,7 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 |---|---|---|---|
 | hyperi-ci, semgrep | all | uv-tool (Tier 2) / brew | version |
 | alint | all | cargo (Tier 2) / brew | version |
-| osv-scanner | all | Ubuntu snap / Fedora re-fetch (Tier 3) / brew | version / SHA256 |
+| osv-scanner | all | Linux re-fetch (Tier 3) / brew | version / SHA256 |
 | gitleaks | all | distro (apt universe / dnf) / brew | version |
 | act | all | Fedora COPR / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | trivy | all | vendor-repo (official aquasecurity apt/dnf) / brew | version |

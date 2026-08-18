@@ -132,9 +132,14 @@
 # osv-scanner
 # ============================================================================
 # hyperi-ci calls it for Rust and TypeScript dependency audits. brew has it; no
-# distro packages it. Ubuntu has an OS-swept community snap (snapd auto-refresh,
-# classic confinement); Fedora has no channel, so it stays a re-fetched GitHub
-# release (Tier 3 -- hyperi-update pulls the latest on each run).
+# distro packages it, so both Linuxes take the official google/osv-scanner
+# release binary (Tier 3 -- hyperi-update pulls the latest on each run).
+#
+# Not the `osv-scanner` snap: it is published strict, so `classic: true` is not
+# honoured and the confined build can read only $HOME. Repos under /projects are
+# invisible to it, and the resulting scan failure surfaces through hyperi-ci as
+# "issues found (non-blocking)" -- a gate failing open while reading like a
+# result. It also ignores hyperi_versions and refreshes on snapd's schedule.
 - name: Install osv-scanner (macOS)
   community.general.homebrew:
     name: osv-scanner
@@ -143,37 +148,38 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Install osv-scanner (Ubuntu)
-  block:
-    - name: Install osv-scanner via snap (Ubuntu)
-      community.general.snap:
-        name: osv-scanner
-        classic: true
-        state: present
-
-  rescue:
-    # noqa: var-naming[no-role-prefix] -- see the note above.
-    - name: Record that osv-scanner did not install (Ubuntu)
-      ansible.builtin.set_fact:
-        deploy_warnings: >-
-          {{ deploy_warnings | default([])
-             + ['osv-scanner: ' ~ (ansible_failed_result.msg | default('snap install failed'))] }}
-
+- name: Remove the strict-confined osv-scanner snap (Ubuntu)
+  community.general.snap:
+    name: osv-scanner
+    state: absent
+  failed_when: false
   when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Install osv-scanner (Fedora — re-fetched GitHub release, Tier 3)
+- name: Install osv-scanner (Linux -- re-fetched GitHub release, Tier 3)
+  when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
   block:
+    # --pinned takes the CI-exact tag from group_vars; latest otherwise -- and
+    # only then do we hit the GitHub API, so a pinned install does not depend
+    # on it. Same shape as kubeconform in the infrastructure role.
     - name: Get latest osv-scanner version
       ansible.builtin.uri:
         url: https://api.github.com/repos/google/osv-scanner/releases/latest
         return_content: true
       register: contributor_osv_latest
       check_mode: false
+      when: not (hyperi_pinned | default(false) and 'osv-scanner' in (hyperi_versions | default({})))
+
+    - name: Resolve the osv-scanner tag (pinned or latest)
+      ansible.builtin.set_fact:
+        contributor_osv_ref: >-
+          {{ hyperi_versions['osv-scanner']
+             if (hyperi_pinned | default(false) and 'osv-scanner' in (hyperi_versions | default({})))
+             else contributor_osv_latest.json.tag_name }}
 
     - name: Download osv-scanner
       ansible.builtin.get_url:
         url: >-
-          https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_latest.json.tag_name }}/osv-scanner_linux_{{ hyperi_arch_deb }}
+          https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_ref }}/osv-scanner_linux_{{ hyperi_arch_deb }}
         dest: /usr/local/bin/osv-scanner
         owner: root
         group: root
@@ -181,10 +187,8 @@
 
   rescue:
     # noqa: var-naming[no-role-prefix] -- see the note above.
-    - name: Record that osv-scanner did not install (Fedora)
+    - name: Record that osv-scanner did not install (Linux)
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
              + ['osv-scanner: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
-
-  when: ansible_facts['distribution'] == 'Fedora'
