@@ -73,9 +73,13 @@
 - name: Install flarectl (Linux)
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   block:
+    # `go version` rather than `command -v go`: command is a shell builtin, and
+    # ansible.builtin.command execs directly, so probing with it fails on every
+    # host and takes the install with it. Running go also proves the toolchain
+    # works, not merely that a file is on PATH.
     - name: Check for a Go toolchain
       ansible.builtin.command:
-        cmd: command -v go
+        cmd: go version
       register: infrastructure_go_present
       changed_when: false
       failed_when: false
