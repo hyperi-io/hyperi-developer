@@ -103,13 +103,26 @@ disk; check free space before reaching for a shorter schedule, and change
 
 sccache and ccache keep fixed ceilings; both enforce their own.
 
-**A cargo-installed sccache shadows a packaged one.** `~/.cargo/bin` precedes
-`/usr/bin` on PATH, the two are routinely different versions, and only the one
-named as `rustc-wrapper` in the cargo config is serving builds. A hand-run
-`sccache --show-stats` then talks a newer client protocol at the older running
-server and fails, which reads as a dead cache while every build is still being
-cached normally. The prune reports which binary builds use, and queries that
-one. The setup tool prints the `cargo uninstall` line; removing a binary a
+**sccache comes from upstream's release, not the distro.** Ubuntu ships 0.13.0
+against an upstream on 0.17.x, and a wrapper four versions behind is what a
+developer meets when a hand-run `sccache --show-stats` fails against the server
+their build started. The setup tool fetches the latest `mozilla/sccache`
+release to `/usr/local/bin/sccache` on every run, checked against the `.sha256`
+published beside each asset, and removes the distro package so only one
+packaged copy answers. Re-running is a no-op once the installed version matches
+the latest tag, so install and upgrade are the same call. macOS keeps brew,
+which already tracks upstream.
+
+This does not reopen the objection in the SSoT note below: crates.io stays out
+of the global `rustc-wrapper` path. The binary is the project's own release
+artefact, digest-checked, not an unpinned `cargo install`.
+
+**A cargo-installed sccache still shadows it.** `~/.cargo/bin` precedes
+`/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy
+while builds keep using the absolute path in the cargo config. That split is
+what makes a failed `--show-stats` look like a dead cache when every build is
+being cached normally. The prune reports which binary builds use and queries
+that one; the setup tool prints the `cargo uninstall` line. Removing a binary a
 developer installed is their call.
 
 `build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
