@@ -44,6 +44,7 @@ warning line, never a crash and never a guess.
 
 import argparse
 import json
+import os
 import platform
 import re
 import shutil
@@ -361,6 +362,21 @@ def managed_settings_for(home, editor):
     return settings
 
 
+def read_exact(path):
+    """Read without translating line endings.
+
+    The default universal-newline mode turns a CRLF file into LF in memory, and
+    writing it back rewrites every line in the file rather than only the block
+    this manages -- silently, and in a file the developer owns.
+    """
+    return path.read_text(encoding="utf-8", newline="")
+
+
+def write_exact(path, text):
+    """Write back verbatim, so the only bytes that change are the ones built here."""
+    path.write_text(text, encoding="utf-8", newline="")
+
+
 def backup_if_needed(path, check):
     """Back up the pristine, pre-managed settings.json exactly once -- a
     backup that already exists is left alone, not refreshed."""
@@ -375,11 +391,42 @@ def backup_if_needed(path, check):
 
 def apply_editor(home, editor, is_macos, check):
     path = settings_file_for(home, editor, is_macos)
+
+    # A settings.json symlinked into a dotfiles repo would be written THROUGH,
+    # editing a tracked file the developer did not point this at. The backup
+    # lands beside the symlink and would not cover it either.
+    if path.is_symlink():
+        return (
+            "WARN",
+            (
+                f"WARN {editor['name']}: {path} is a symlink to "
+                f"{os.readlink(path)} -- left untouched. Apply the profile to "
+                "the real file, or inline it."
+            ),
+        )
+
     existed = path.exists() and path.stat().st_size > 0
-    original = path.read_text(encoding="utf-8") if existed else "{}\n"
+    original = read_exact(path) if existed else "{}\n"
 
     settings = managed_settings_for(home, editor)
-    base_text, _ = strip_managed_block(original)
+    base_text, stripped = strip_managed_block(original)
+
+    # strip_managed_block only removes a block matching the exact shape it was
+    # written in, so a reformat of the file (a JSON formatter on save, a
+    # dotfiles templater) leaves the old block in place and unrecognised.
+    # Inserting anyway would add a SECOND block and duplicate every managed key
+    # on each run, so the file is left alone and the conflict reported.
+    if not stripped and BEGIN_MARKER in base_text:
+        return (
+            "WARN",
+            (
+                f"WARN {editor['name']}: a managed block is present but no longer "
+                f"matches the shape this writes ({path}) -- the file was probably "
+                "reformatted or hand-edited. Left untouched; remove the block "
+                "between the two marker lines to re-apply."
+            ),
+        )
+
     new_text = insert_block(base_text, settings)
     if new_text is None:
         return (
@@ -413,7 +460,7 @@ def apply_editor(home, editor, is_macos, check):
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         detail = "new file, no backup needed"
-    path.write_text(new_text, encoding="utf-8")
+    write_exact(path, new_text)
     return ("CHANGED", f"CHANGED {editor['name']}: applied managed settings ({detail}){suffix}")
 
 
@@ -422,7 +469,7 @@ def uninstall_editor(home, editor, is_macos, check):
     if not path.exists() or path.stat().st_size == 0:
         return ("OK", f"OK {editor['name']}: nothing to uninstall (file absent)")
 
-    original = path.read_text(encoding="utf-8")
+    original = read_exact(path)
     base_text, had_block = strip_managed_block(original)
     if not had_block:
         return ("OK", f"OK {editor['name']}: nothing to uninstall (no managed block)")
@@ -432,7 +479,7 @@ def uninstall_editor(home, editor, is_macos, check):
 
     backup, made = backup_if_needed(path, check)
     detail = f"backup {backup}" if made else f"backup already at {backup}"
-    path.write_text(base_text, encoding="utf-8")
+    write_exact(path, base_text)
     return ("CHANGED", f"CHANGED {editor['name']}: removed managed block ({detail})")
 
 

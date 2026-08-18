@@ -21,6 +21,7 @@ QUIET=false
 REQUESTED_TAGS=""
 PROBLEM_COUNT=0
 UNRESOLVED_COUNT=0
+MISSING_COUNT=0
 
 TMP_DIR=""
 # A false test here (nothing to clean up yet) must not itself become the
@@ -348,7 +349,7 @@ report_packages() {
     local scope_source="$1"
     shift
     local -a roles=("$@")
-    local role missing_count=0 checked_count
+    local role checked_count
 
     : > "${TMP_DIR}/tasks.jsonl"
     for role in "${roles[@]}"; do
@@ -374,17 +375,23 @@ report_packages() {
         pkg_role="$(jq -r '.role' <<<"${entry}")"
         if ! pkg_installed "${pkg_name}"; then
             problem "MISSING: ${pkg_name}  (declared by role '${pkg_role}')"
-            missing_count=$((missing_count + 1))
+            MISSING_COUNT=$((MISSING_COUNT + 1))
         fi
     done < <(jq -c '.packages[]' "${TMP_DIR}/resolved.json")
 
-    note "Missing: ${missing_count}"
+    note "Missing: ${MISSING_COUNT}"
     note ""
-    note "Unresolved package name(s): ${UNRESOLVED_COUNT}"
+
+    # Printed through problem(), not note(), so --quiet cannot hide it. A quiet
+    # run that checked nothing and said nothing is indistinguishable from a
+    # clean host, which is the exact failure this tool exists to report.
     if [[ "${UNRESOLVED_COUNT}" -gt 0 ]]; then
+        problem "UNRESOLVED: ${UNRESOLVED_COUNT} package name(s) could not be checked."
         note "These are loop-, variable-, or Jinja-built package names this static"
         note "YAML scan cannot evaluate. They are NOT checked above -- a clean report"
         note "does not mean these are present. Inspect the role task files directly."
+    else
+        note "Unresolved package name(s): 0"
     fi
     note ""
 }
@@ -425,8 +432,15 @@ main() {
 
     report_packages "${scope_source}" "${roles[@]}"
 
-    if [[ "${PROBLEM_COUNT}" -gt 0 ]]; then
+    # Three outcomes, not two. "Nothing missing" and "could not check everything"
+    # are different answers, and collapsing them into exit 0 is what lets a
+    # drift check pass a host it never looked at.
+    if [[ "${MISSING_COUNT}" -gt 0 ]]; then
         exit 1
+    fi
+    if [[ "${UNRESOLVED_COUNT}" -gt 0 ]]; then
+        note "Nothing missing among the names that could be resolved."
+        exit 2
     fi
     note "No declared packages missing for this scope."
     exit 0

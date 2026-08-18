@@ -34,6 +34,12 @@
   register: infrastructure_verify_tools
   changed_when: false
   failed_when: false
+  # Reading a version is not a mutation, and without this the whole looped task
+  # is skipped under --check. A skipped loop item still carries rc 0 and an
+  # empty stdout, so the report below would print "installed" for every tool on
+  # a machine that has none of them -- and CLAUDE.md tells people to preview
+  # with --check first.
+  check_mode: false
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 

@@ -74,7 +74,11 @@
         suites: "{{ azure_cli_codename }}"
         components: main
         signed_by: /usr/share/keyrings/microsoft.asc
-        architectures: amd64
+        # Microsoft publishes amd64 and arm64 for this repo (arm64 since Azure
+        # CLI 2.46.0). Hardcoding amd64 is the documented cause of "Unable to
+        # locate package azure-cli" on an arm64 host, where it reads as the
+        # package not existing rather than the repo excluding the machine.
+        architectures: "{{ hyperi_arch_deb }}"
         state: present
 
     - name: Install Azure CLI

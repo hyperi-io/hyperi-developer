@@ -127,10 +127,17 @@ Per-app tags stay too (`--tags vscode`, `--tags slack`, ...): run
 
 `Method` is how the tool is fetched. **Default installs are always latest and
 unpinned** - the `Pinned` column applies ONLY when you opt into `--pinned`, and
-then says what that mode does: **SHA256** = manual binary, pin the version and
-verify a checksum; **version** = repo/brew-signed, pin the version only; **n/a**
-= not pinnable/meta. Only the manual-binary (SHA256) rows carry supply-chain risk
-that a checksum closes.
+then says what that mode does: **SHA256** = manual binary; **version** =
+repo/brew-signed, pin the version only; **n/a** = not pinnable/meta.
+
+**SHA256 marks the rows that NEED a checksum, not the rows that have one.**
+Pinning is by tag today across the board, and digest verification at download is
+still the planned hardening (see Auto-update below, and hyperi-ci #66). A tag can
+be force-moved, so those rows currently rest on HTTPS and the tag alone.
+
+Three fetches do verify a digest today, and they are the ones whose SHA is held
+in the repo or read from a vendor manifest: the Go toolchain, rustup-init, and
+the Claude Code binary.
 
 ### developer (base, additive - runs bare)
 

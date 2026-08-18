@@ -66,9 +66,14 @@
 # path below resolves only along the v0 line and `@latest` cannot jump to a
 # version without flarectl in it.
 #
+# Pinned to a tag rather than @latest. v0.x carries no semver compatibility
+# promise, so @latest can change behaviour on the next fresh box with nothing
+# recording what the previous one had. The Go module proxy verifies the module
+# against sum.golang.org, so the tag is the reproducibility gap, not integrity.
+#
 # `creates:` supplies the idempotency, at the cost of no auto-update on a later
 # run: `go install` re-links unconditionally and there is no version to compare
-# against. Reinstalling means removing the binary first.
+# against. Bumping the pin means removing the binary first.
 
 - name: Install flarectl (Linux)
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
@@ -95,7 +100,9 @@
 
     - name: Build and install flarectl
       ansible.builtin.command:
-        cmd: go install github.com/cloudflare/cloudflare-go/cmd/flarectl@latest
+        cmd: >-
+          go install
+          github.com/cloudflare/cloudflare-go/cmd/flarectl@{{ infrastructure_flarectl_version }}
         creates: "{{ user_home }}/go/bin/flarectl"
       become: true
       become_user: "{{ actual_user }}"
