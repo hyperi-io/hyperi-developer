@@ -359,6 +359,14 @@ hardening** (tracked upstream as hyperi-ci #66) - when it lands, add `sha256:`
 per tool and a `checksum:` on the fetch. The distro-first packaging ladder keeps
 the manual-binary set small.
 
+That mirror is checked, not assumed. `tools/ci/run-tests.sh` reads hyperi-ci's
+pins through its own interpreter and fails on any disagreement, in either
+direction -- a missed bump upstream and a hand-edit here are the same defect.
+A tool hyperi-ci pins that is absent here is fine and reported as a note: an
+absent entry falls back to latest, which is the documented behaviour. The
+reverse is not, because an entry with no counterpart pins a version CI never
+runs.
+
 **Packaging ladder** (pick the highest that works): distro repo (auto-updates) >
 official vendor apt/dnf repo > official snap/flatpak > manual binary (last
 resort, and the only rung that needs a SHA pin). The `Method` column above is the

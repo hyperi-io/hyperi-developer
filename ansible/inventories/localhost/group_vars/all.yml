@@ -5,7 +5,9 @@
 # then fetches the exact tag below instead of /releases/latest.
 #
 # hyperi_versions MIRRORS hyperi-ci's config/versions.yaml `tools:` block, so a
-# pinned local box matches CI exactly. Keep it in sync as hyperi-ci bumps.
+# pinned local box matches CI exactly. `tools/ci/run-tests.sh` compares the two
+# and fails on any disagreement, so this no longer relies on someone
+# remembering; edit a version here and the test says which side is wrong.
 #
 # Pinning is by TAG, exactly as hyperi-ci does today -- a fetched release ASSET
 # cannot be force-moved by a tag rewrite, but it is not yet digest-verified.
