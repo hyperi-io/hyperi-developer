@@ -6,7 +6,7 @@ Optimizes GNOME Remote Desktop for use over RDP connections, including automatic
 
 1. **Disables Desktop Sharing** - Conflicts with Remote Login
 2. **Enables Remote Login (RDP)** - For remote desktop connections
-3. **Configures Auto-Resize** - Desktop automatically resizes to match RDP client window
+3. **Configures Auto-Resize** - Desktop automatically resizes to match RDP client window (which is also what strands windows off-screen on reconnect -- see [Window placement across resolution changes](#window-placement-across-resolution-changes))
 4. **Performance Tuning** - TCP optimizations for RDP traffic
 5. **Certificates** - Auto-generates system certificates for secure connections
 
@@ -164,12 +164,60 @@ an unprivileged systemd user manager cannot lower niceness on its own and
 systemd does not warn when it silently fails to. That is what
 `/etc/security/limits.d/50-rdp-nice.conf` is for.
 
+### Windows land off-screen when you reconnect at a different size
+
+Unfixable from this role, and it can strand a window where the mouse cannot
+reach it. Mechanism and workarounds:
+[Window placement across resolution changes](#window-placement-across-resolution-changes).
+
 ### Do not restart GRD on a live session
 
 `systemctl restart gnome-remote-desktop.service` kills the GNOME session it is
 serving. This role restarts the service at the end of a run, so **applying it
 over RDP will drop your own connection mid-run**. Apply over SSH, from a local
 console, or accept the reconnect.
+
+## Window placement across resolution changes
+
+Reconnect at a smaller geometry than the last session and some windows are
+partly or wholly outside the new screen. A window whose title bar is off-screen
+cannot be dragged back with the mouse, so it is effectively lost.
+
+The cause is the gap between sessions, not the resize. On disconnect GRD
+destroys its virtual monitor and the session is left with **no logical monitor
+at all** -- the 640x480 you see in the logs is the default stage size that
+remains. Mutter only rescales window positions when the old and the new logical
+monitor both exist: `meta_window_update_for_monitors_changed` reaches
+`meta_window_move_between_rects` only in that case (mutter 50,
+`src/core/window.c`). Disconnect gives it no new monitor and reconnect gives it
+no old one, so both transitions skip the rescale and every window keeps the
+absolute coordinates it had. A window at x=1400 on a 1710-wide session is
+outside a 1280-wide one, and nothing ever pulls it back.
+
+The corollary is the useful half: **reconnecting at the SAME geometry is
+harmless**, because the old coordinates are still valid. So the fix available
+today is to stop the geometry varying -- set your client to a fixed resolution
+and turn off dynamic resolution update, rather than letting it match the client
+window. That trades away the auto-resize this role advertises above, and it is
+the only thing that removes the fault outright.
+
+None of it can be pinned on the server. `grdctl` has no monitor or geometry
+subcommand; the system daemon hard-codes `rdp-screen-share-mode` to `EXTEND` in
+`grd_settings_system_new`, so mirror-primary is unreachable; and its `grd.conf`
+accepts only `enabled`, `tls-cert`, `tls-key` and `port`. Remote Login takes
+the geometry from the client on every connect, full stop.
+
+To rescue a window that is already stranded, hold Super and drag it from
+anywhere in its surface -- the title bar does not have to be visible. Alt+F7
+then arrow keys does the same from the keyboard.
+
+We used to ship the Window State Manager GNOME extension for this. It saved and
+restored window state across screen changes, and on the disconnect transition it
+repositioned windows onto the monitor that had just been destroyed, tripping
+`meta_window_get_work_area_for_logical_monitor: assertion failed:
+(logical_monitor)`. That aborts gnome-shell, which takes gnome-session and every
+application in it. It is gone (hyperi-io/hyperi-developer#39, #40), and any
+replacement has to survive a state where no monitor exists at all.
 
 ## Recovering from a failed handover
 
