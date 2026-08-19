@@ -3,6 +3,12 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [2.24.10](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.9...v2.24.10) (2026-08-19)
+
+### Bug Fixes
+
+* **ci:** fail the tests when hyperi_versions drifts from hyperi-ci ([#37](https://github.com/hyperi-io/hyperi-developer/issues/37)) ([101ac36](https://github.com/hyperi-io/hyperi-developer/commit/101ac36a7afa42e313f2fdd83bb5f4c9cd7e9400)), closes [#32](https://github.com/hyperi-io/hyperi-developer/issues/32)
+
 ## [2.24.9](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.8...v2.24.9) (2026-08-18)
 
 ### Bug Fixes
