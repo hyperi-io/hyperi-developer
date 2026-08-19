@@ -37,8 +37,10 @@ readonly EXT_DASH_TO_PANEL="dash-to-panel@jderose9.github.com"
 readonly EXT_DASH_TO_DOCK="dash-to-dock@micxgx.gmail.com"
 readonly EXT_LOGO_MENU="logomenu@aryan_k"
 readonly EXT_MAGIC_LAMP="compiz-alike-magic-lamp-effect@hermes83.github.com"
-readonly EXT_WINDOW_STATE="window-state-manager@kishorv06.github.io"
 readonly EXT_UBUNTU_DOCK="ubuntu-dock@ubuntu.com"
+
+# Window State Manager is retired (tombstoned in developer/tasks/removals.yml):
+# it crashed gnome-shell on RDP disconnect and took the whole session with it.
 
 # All extensions we manage
 readonly ALL_EXTENSIONS=(
@@ -47,14 +49,12 @@ readonly ALL_EXTENSIONS=(
     "$EXT_DASH_TO_DOCK"
     "$EXT_LOGO_MENU"
     "$EXT_MAGIC_LAMP"
-    "$EXT_WINDOW_STATE"
 )
 
 # Extensions for each mode
 readonly WINLIKE_EXTENSIONS=(
     "$EXT_ASTRA_MONITOR"
     "$EXT_DASH_TO_PANEL"
-    "$EXT_WINDOW_STATE"
 )
 
 readonly MACLIKE_EXTENSIONS=(
@@ -62,7 +62,6 @@ readonly MACLIKE_EXTENSIONS=(
     "$EXT_DASH_TO_DOCK"
     "$EXT_LOGO_MENU"
     "$EXT_MAGIC_LAMP"
-    "$EXT_WINDOW_STATE"
 )
 
 # State file location

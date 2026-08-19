@@ -235,3 +235,25 @@
           so the shim now prepends paths for packages we no longer install.
         success_msg: "GNU tools PATH shim absent from ~/.zprofile"
       when: verify_zprofile.content is defined
+
+    # ------------------------------------------------------------------
+    # RETIRED GNOME EXTENSIONS -- user-scoped, and only checkable here
+    # ------------------------------------------------------------------
+    # The container scenario cannot cover this: everything gated on has_gnome is
+    # skipped there, so a real desktop host is the only place the tombstone is
+    # exercised at all.
+    - name: Stat the retired Window State Manager extension
+      ansible.builtin.stat:
+        path: "{{ verify_home }}/.local/share/gnome-shell/extensions/window-state-manager@kishorv06.github.io"
+      register: verify_window_state
+      become: true
+
+    - name: Assert the retired Window State Manager extension is gone
+      ansible.builtin.assert:
+        that:
+          - not verify_window_state.stat.exists
+        fail_msg: >-
+          Window State Manager is still installed. On any host serving RDP it
+          aborts mutter when the virtual monitor is removed at disconnect, which
+          kills gnome-shell and every application in the session with it.
+        success_msg: "retired Window State Manager extension absent"

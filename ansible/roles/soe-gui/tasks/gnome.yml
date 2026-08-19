@@ -154,22 +154,6 @@
     - has_gnome | default(false)
     - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
 
-# Common extension: Window State Manager - used by both modes
-- name: Install Window State Manager extension via gext
-  ansible.builtin.command:
-    cmd: "{{ user_home }}/.local/bin/gext -F install window-state-manager@kishorv06.github.io"
-  become: true
-  become_user: "{{ actual_user }}"
-  register: window_state_install
-  changed_when: "'already installed' not in window_state_install.stdout"
-  failed_when:
-    - window_state_install.rc != 0
-    - "'already installed' not in window_state_install.stdout"
-  tags: ['winlike', 'maclike', 'never']
-  when:
-    - has_gnome | default(false)
-    - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
-
 # ============================================================================
 # WINLIKE MODE: Install Dash to Panel, remove maclike extensions
 # ============================================================================
