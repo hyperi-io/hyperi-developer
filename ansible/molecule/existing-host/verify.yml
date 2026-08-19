@@ -257,3 +257,23 @@
           aborts mutter when the virtual monitor is removed at disconnect, which
           kills gnome-shell and every application in the session with it.
         success_msg: "retired Window State Manager extension absent"
+
+    # ------------------------------------------------------------------
+    # WINDOW FIT -- the replacement, and user-scoped for the same reason
+    # ------------------------------------------------------------------
+    - name: Stat the window-fit extension
+      ansible.builtin.stat:
+        path: "{{ verify_home }}/.local/share/gnome-shell/extensions/rdp-window-fit@hyperi.io/extension.js"
+      register: verify_window_fit
+      become: true
+
+    - name: Assert the window-fit extension is installed
+      ansible.builtin.assert:
+        that:
+          - verify_window_fit.stat.exists
+        fail_msg: >-
+          The window-fit extension is missing. Without it a reconnect at a
+          smaller resolution leaves windows jammed against the screen edge,
+          showing a sliver of themselves.
+        success_msg: "window-fit extension installed"
+      when: rdp_window_fit_enabled | default(true) | bool

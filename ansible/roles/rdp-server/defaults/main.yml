@@ -51,3 +51,16 @@ rdp_cert_subject: >-
 # ssh access that a remote-desktop host may not have. Set false where something
 # else already supervises the daemon.
 rdp_handover_watchdog_enabled: true
+
+# Refit windows into the work area after a screen change, so a reconnect at a
+# smaller resolution cannot leave a window off-screen and out of reach.
+#
+# On by default: the client geometry changes on any reconnect from a different
+# machine, and the alternative is dragging windows back by a sliver of title
+# bar. Set false to leave placement entirely to mutter.
+rdp_window_fit_enabled: true
+
+# The extension is ours and is installed from this role, not from
+# extensions.gnome.org, so the uuid and path are fixed rather than discovered.
+rdp_window_fit_uuid: "rdp-window-fit@hyperi.io"
+rdp_window_fit_path: "{{ user_home }}/.local/share/gnome-shell/extensions/{{ rdp_window_fit_uuid }}"

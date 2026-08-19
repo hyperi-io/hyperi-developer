@@ -164,12 +164,6 @@ an unprivileged systemd user manager cannot lower niceness on its own and
 systemd does not warn when it silently fails to. That is what
 `/etc/security/limits.d/50-rdp-nice.conf` is for.
 
-### Windows land off-screen when you reconnect at a different size
-
-Unfixable from this role, and it can strand a window where the mouse cannot
-reach it. Mechanism and workarounds:
-[Window placement across resolution changes](#window-placement-across-resolution-changes).
-
 ### Do not restart GRD on a live session
 
 `systemctl restart gnome-remote-desktop.service` kills the GNOME session it is
@@ -179,37 +173,53 @@ console, or accept the reconnect.
 
 ## Window placement across resolution changes
 
-Reconnect at a smaller geometry than the last session and some windows are
-partly or wholly outside the new screen. A window whose title bar is off-screen
-cannot be dragged back with the mouse, so it is effectively lost.
+Reconnect at a smaller geometry than the last session and windows end up jammed
+against the right and bottom edges, showing a sliver of themselves. `rdp_window_fit_enabled`
+puts them back; the rest of this section is what it is fixing and why nothing
+simpler works.
 
 The cause is the gap between sessions, not the resize. On disconnect GRD
 destroys its virtual monitor and the session is left with **no logical monitor
-at all** -- the 640x480 you see in the logs is the default stage size that
-remains. Mutter only rescales window positions when the old and the new logical
-monitor both exist: `meta_window_update_for_monitors_changed` reaches
-`meta_window_move_between_rects` only in that case (mutter 50,
+at all** -- measured on Ubuntu 26.04 / GNOME 50, GNOME Shell reports
+`monitors: 0, primary: -1`, and the 640x480 in the logs is the leftover stage
+size rather than a small monitor. Mutter rescales window positions only when the
+old and the new logical monitor both exist: `meta_window_update_for_monitors_changed`
+reaches `meta_window_move_between_rects` only in that case (mutter 50,
 `src/core/window.c`). Disconnect gives it no new monitor and reconnect gives it
-no old one, so both transitions skip the rescale and every window keeps the
-absolute coordinates it had. A window at x=1400 on a 1710-wide session is
-outside a 1280-wide one, and nothing ever pulls it back.
+no old one, so both transitions skip the rescale.
 
-The corollary is the useful half: **reconnecting at the SAME geometry is
-harmless**, because the old coordinates are still valid. So the fix available
-today is to stop the geometry varying -- set your client to a fixed resolution
-and turn off dynamic resolution update, rather than letting it match the client
-window. That trades away the auto-resize this role advertises above, and it is
-the only thing that removes the fault outright.
+What survives is mutter's constraint pass, which clamps a window just far enough
+to keep a strip on screen but never resizes it. A 700px-wide window sitting at
+x=1450 on a 1710-wide session comes back at x=1205 on a 1280-wide one: 75px of
+it visible, technically grabbable, useless. Reconnecting at the SAME geometry is
+harmless, because the old coordinates are still valid.
 
 None of it can be pinned on the server. `grdctl` has no monitor or geometry
 subcommand; the system daemon hard-codes `rdp-screen-share-mode` to `EXTEND` in
 `grd_settings_system_new`, so mirror-primary is unreachable; and its `grd.conf`
 accepts only `enabled`, `tls-cert`, `tls-key` and `port`. Remote Login takes
-the geometry from the client on every connect, full stop.
+the geometry from the client on every connect, full stop. Pinning the CLIENT to
+a fixed resolution does avoid the whole thing, at the cost of the auto-resize
+this role advertises above.
 
-To rescue a window that is already stranded, hold Super and drag it from
-anywhere in its surface -- the title bar does not have to be visible. Alt+F7
-then arrow keys does the same from the keyboard.
+Since nothing outside the compositor can move a window on Wayland, the fix is a
+GNOME Shell extension: `files/rdp-window-fit`, installed into the desktop user's
+home and enabled through `enabled-extensions`. It takes effect at the next
+login, because the shell only scans for extensions at startup. On the same
+1710x1107 -> 1280x800 reconnect it returns that window fully on screen, and a
+1600x1000 window is resized to the 1280x752 work area instead of being left
+hanging off two edges.
+
+It is deliberately not the Window State Manager approach that was retired in
+hyperi-io/hyperi-developer#39. It is stateless -- it saves no geometry, so it can
+never restore a window onto a screen that no longer exists -- and it returns
+immediately while no monitor exists, which is the state that made WSM trip
+mutter's `meta_window_get_work_area_for_logical_monitor` assertion and abort
+gnome-shell, taking every application in the session with it.
+
+To rescue a window by hand, hold Super and drag it from anywhere in its surface
+-- the title bar does not have to be visible. Alt+F7 then arrow keys does the
+same from the keyboard.
 
 We used to ship the Window State Manager GNOME extension for this. It saved and
 restored window state across screen changes, and on the disconnect transition it
@@ -300,6 +310,7 @@ gdm's problem, not this role's.
 - `/etc/sysctl.d/98-rdp-tcp.conf` - TCP optimizations
 - `/etc/sysctl.d/98-rdp-mtu.conf` - MTU settings
 - `/etc/security/limits.d/50-rdp-nice.conf` - RLIMIT_NICE headroom for the handover daemon
+- `~/.local/share/gnome-shell/extensions/rdp-window-fit@hyperi.io/` - window refit extension (desktop user's home)
 - `/etc/systemd/system/gnome-remote-desktop.service.d/priority.conf` - Nice=-10 (software-encode path only)
 - `/etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf` - as above, user service
 - System dconf settings - Window resize behavior, animations off

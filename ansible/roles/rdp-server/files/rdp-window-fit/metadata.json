@@ -1,0 +1,7 @@
+{
+  "uuid": "rdp-window-fit@hyperi.io",
+  "name": "RDP window fit",
+  "description": "Refits windows into the work area after a screen change, so reconnecting over RDP at a smaller resolution cannot leave a window off-screen and out of reach. Stateless: it never saves or restores geometry, and it never touches a window while no monitor exists.",
+  "shell-version": ["48", "49", "50"],
+  "url": "https://github.com/hyperi-io/hyperi-developer"
+}

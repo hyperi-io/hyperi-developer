@@ -1,0 +1,110 @@
+---
+# Refit windows after a screen change (the why is in files/rdp-window-fit/extension.js).
+
+# Every task is scoped to actual_user: on a fleet machine the connecting account
+# is not the desktop one, and its home holds no extensions.
+- name: Install the window-fit extension
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+    - rdp_window_fit_enabled | bool
+  block:
+    - name: Create the window-fit extension directory
+      ansible.builtin.file:
+        path: "{{ rdp_window_fit_path }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ actual_user }}"
+      become: true
+      become_user: "{{ actual_user }}"
+
+    - name: Deploy the window-fit extension
+      ansible.builtin.copy:
+        src: "rdp-window-fit/{{ item }}"
+        dest: "{{ rdp_window_fit_path }}/{{ item }}"
+        mode: '0644'
+        owner: "{{ actual_user }}"
+      become: true
+      become_user: "{{ actual_user }}"
+      loop:
+        - metadata.json
+        - extension.js
+      register: rdp_window_fit_files
+
+    # gnome-extensions(1) needs a session bus an Ansible run does not have, so
+    # the enabled list is edited directly. Either way the shell reads it at
+    # startup, so this takes effect at the next login.
+    - name: Read the enabled GNOME extensions
+      community.general.dconf:
+        key: /org/gnome/shell/enabled-extensions
+        state: read
+      become: true
+      become_user: "{{ actual_user }}"
+      register: rdp_window_fit_enabled_list
+
+    # set_fact rather than task vars: dconf hands the list back as a GVariant
+    # string, and only a fact keeps the parsed result a list.
+    - name: Parse the enabled extension list
+      ansible.builtin.set_fact:
+        rdp_window_fit_current: "{{ (rdp_window_fit_enabled_list.value | default('[]', true)) | from_yaml | list }}"
+
+    - name: Enable the window-fit extension
+      community.general.dconf:
+        key: /org/gnome/shell/enabled-extensions
+        value: "{{ rdp_window_fit_gvariant }}"
+        state: present
+      become: true
+      become_user: "{{ actual_user }}"
+      vars:
+        rdp_window_fit_gvariant: >-
+          [{{ (rdp_window_fit_current | union([rdp_window_fit_uuid]))
+               | map('regex_replace', '^(.*)$', "'\1'") | join(', ') }}]
+      when: rdp_window_fit_uuid not in rdp_window_fit_current
+
+  rescue:
+    - name: Record the window-fit failure
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['window-fit extension: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
+# Turning it off has to take the installed copy with it, or the shell keeps
+# loading an extension nobody maintains any more.
+- name: Remove the window-fit extension
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+    - not (rdp_window_fit_enabled | bool)
+  block:
+    - name: Read the enabled GNOME extensions for removal
+      community.general.dconf:
+        key: /org/gnome/shell/enabled-extensions
+        state: read
+      become: true
+      become_user: "{{ actual_user }}"
+      register: rdp_window_fit_removal_list
+
+    - name: Parse the enabled extension list for removal
+      ansible.builtin.set_fact:
+        rdp_window_fit_current: "{{ (rdp_window_fit_removal_list.value | default('[]', true)) | from_yaml | list }}"
+
+    - name: Disable the window-fit extension
+      community.general.dconf:
+        key: /org/gnome/shell/enabled-extensions
+        value: "{{ rdp_window_fit_gvariant }}"
+        state: present
+      become: true
+      become_user: "{{ actual_user }}"
+      vars:
+        rdp_window_fit_gvariant: >-
+          [{{ (rdp_window_fit_current | reject('equalto', rdp_window_fit_uuid) | list)
+               | map('regex_replace', '^(.*)$', "'\1'") | join(', ') }}]
+      when: rdp_window_fit_uuid in rdp_window_fit_current
+
+    - name: Remove the window-fit extension directory
+      ansible.builtin.file:
+        path: "{{ rdp_window_fit_path }}"
+        state: absent
+      become: true
+      become_user: "{{ actual_user }}"
