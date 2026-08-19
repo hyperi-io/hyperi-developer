@@ -354,3 +354,32 @@
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
   failed_when: false
+
+# ============================================================================
+# RETIRED GNOME EXTENSIONS -- user-scoped, under the desktop user's home.
+# ============================================================================
+
+# Window State Manager crashes the whole GNOME session on any host serving RDP.
+# Disconnecting removes the virtual monitor, the screen drops to the 640x480
+# headless stub, the extension repositions windows onto the monitor that just
+# went away, and mutter aborts on window.c:6399 `assertion failed:
+# (logical_monitor)`. Losing gnome-shell loses gnome-session, so every
+# application in the session dies and the reconnect lands in a fresh session.
+# Observed twice in three days on Ubuntu 26.04, GNOME Shell 50.1, mutter
+# 50.1-0ubuntu2.2.
+#
+# The crash is a race, not deterministic -- most disconnects survive the same
+# monitor transition -- so leaving it installed but disabled is not a resting
+# state anyone can rely on.
+#
+# Removing the directory rather than calling gext: a tombstone has to work on a
+# host with nobody logged in, and gnome-shell ignores a UUID in
+# enabled-extensions with no extension behind it.
+- name: Remove the retired Window State Manager GNOME extension (crashes gnome-shell on RDP disconnect)
+  ansible.builtin.file:
+    path: "{{ user_home }}/.local/share/gnome-shell/extensions/window-state-manager@kishorv06.github.io"
+    state: absent
+  become: true
+  become_user: "{{ actual_user }}"
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  failed_when: false
