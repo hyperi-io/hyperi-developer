@@ -145,9 +145,8 @@
 # System-wide Managed Settings
 # ============================================================================
 # These settings apply to all users and cannot be overridden.
-# - Disables telemetry and error reporting
-# - Disables Co-Authored-By commit attribution
-# - Prompts before accessing sensitive files (.env, secrets, keys, credentials)
+# - Disables telemetry, error reporting and the feedback prompts
+# - Disables Co-Authored-By and "Generated with Claude Code" attribution
 
 - name: Create Claude Code managed settings directory (Linux)
   ansible.builtin.file:
