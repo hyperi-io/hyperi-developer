@@ -63,6 +63,8 @@
 
   rescue:
     - name: Record the window-fit failure
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # cross-role accumulator the play summarises at the end
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])

@@ -210,6 +210,11 @@ login, because the shell only scans for extensions at startup. On the same
 1600x1000 window is resized to the 1280x752 work area instead of being left
 hanging off two edges.
 
+Verified on GNOME Shell 50 (Ubuntu 26.04). `metadata.json` also declares 48 and
+49, which are not tested -- if it turns out to break on one, that is where to
+narrow it. A failing extension is logged and disabled by the shell rather than
+taking the session down, which is the point of the two rules below.
+
 It is deliberately not the Window State Manager approach that was retired in
 hyperi-io/hyperi-developer#39. It is stateless -- it saves no geometry, so it can
 never restore a window onto a screen that no longer exists -- and it returns
