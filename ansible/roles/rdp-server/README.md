@@ -6,7 +6,7 @@ Optimizes GNOME Remote Desktop for use over RDP connections, including automatic
 
 1. **Disables Desktop Sharing** - Conflicts with Remote Login
 2. **Enables Remote Login (RDP)** - For remote desktop connections
-3. **Configures Auto-Resize** - Desktop automatically resizes to match RDP client window
+3. **Configures Auto-Resize** - Desktop automatically resizes to match RDP client window (which is also what strands windows off-screen on reconnect -- see [Window placement across resolution changes](#window-placement-across-resolution-changes))
 4. **Performance Tuning** - TCP optimizations for RDP traffic
 5. **Certificates** - Auto-generates system certificates for secure connections
 
@@ -171,6 +171,69 @@ serving. This role restarts the service at the end of a run, so **applying it
 over RDP will drop your own connection mid-run**. Apply over SSH, from a local
 console, or accept the reconnect.
 
+## Window placement across resolution changes
+
+Reconnect at a smaller geometry than the last session and windows end up jammed
+against the right and bottom edges, showing a sliver of themselves. `rdp_window_fit_enabled`
+puts them back; the rest of this section is what it is fixing and why nothing
+simpler works.
+
+The cause is the gap between sessions, not the resize. On disconnect GRD
+destroys its virtual monitor and the session is left with **no logical monitor
+at all** -- measured on Ubuntu 26.04 / GNOME 50, GNOME Shell reports
+`monitors: 0, primary: -1`, and the 640x480 in the logs is the leftover stage
+size rather than a small monitor. Mutter rescales window positions only when the
+old and the new logical monitor both exist: `meta_window_update_for_monitors_changed`
+reaches `meta_window_move_between_rects` only in that case (mutter 50,
+`src/core/window.c`). Disconnect gives it no new monitor and reconnect gives it
+no old one, so both transitions skip the rescale.
+
+What survives is mutter's constraint pass, which clamps a window just far enough
+to keep a strip on screen but never resizes it. A 700px-wide window sitting at
+x=1450 on a 1710-wide session comes back at x=1205 on a 1280-wide one: 75px of
+it visible, technically grabbable, useless. Reconnecting at the SAME geometry is
+harmless, because the old coordinates are still valid.
+
+None of it can be pinned on the server. `grdctl` has no monitor or geometry
+subcommand; the system daemon hard-codes `rdp-screen-share-mode` to `EXTEND` in
+`grd_settings_system_new`, so mirror-primary is unreachable; and its `grd.conf`
+accepts only `enabled`, `tls-cert`, `tls-key` and `port`. Remote Login takes
+the geometry from the client on every connect, full stop. Pinning the CLIENT to
+a fixed resolution does avoid the whole thing, at the cost of the auto-resize
+this role advertises above.
+
+Since nothing outside the compositor can move a window on Wayland, the fix is a
+GNOME Shell extension: `files/rdp-window-fit`, installed into the desktop user's
+home and enabled through `enabled-extensions`. It takes effect at the next
+login, because the shell only scans for extensions at startup. On the same
+1710x1107 -> 1280x800 reconnect it returns that window fully on screen, and a
+1600x1000 window is resized to the 1280x752 work area instead of being left
+hanging off two edges.
+
+Verified on GNOME Shell 50 (Ubuntu 26.04). `metadata.json` also declares 48 and
+49, which are not tested -- if it turns out to break on one, that is where to
+narrow it. A failing extension is logged and disabled by the shell rather than
+taking the session down, which is the point of the two rules below.
+
+It is deliberately not the Window State Manager approach that was retired in
+hyperi-io/hyperi-developer#39. It is stateless -- it saves no geometry, so it can
+never restore a window onto a screen that no longer exists -- and it returns
+immediately while no monitor exists, which is the state that made WSM trip
+mutter's `meta_window_get_work_area_for_logical_monitor` assertion and abort
+gnome-shell, taking every application in the session with it.
+
+To rescue a window by hand, hold Super and drag it from anywhere in its surface
+-- the title bar does not have to be visible. Alt+F7 then arrow keys does the
+same from the keyboard.
+
+We used to ship the Window State Manager GNOME extension for this. It saved and
+restored window state across screen changes, and on the disconnect transition it
+repositioned windows onto the monitor that had just been destroyed, tripping
+`meta_window_get_work_area_for_logical_monitor: assertion failed:
+(logical_monitor)`. That aborts gnome-shell, which takes gnome-session and every
+application in it. It is gone (hyperi-io/hyperi-developer#39, #40), and any
+replacement has to survive a state where no monitor exists at all.
+
 ## Recovering from a failed handover
 
 Logging in over RDP while another session is already open for the same user
@@ -252,6 +315,7 @@ gdm's problem, not this role's.
 - `/etc/sysctl.d/98-rdp-tcp.conf` - TCP optimizations
 - `/etc/sysctl.d/98-rdp-mtu.conf` - MTU settings
 - `/etc/security/limits.d/50-rdp-nice.conf` - RLIMIT_NICE headroom for the handover daemon
+- `~/.local/share/gnome-shell/extensions/rdp-window-fit@hyperi.io/` - window refit extension (desktop user's home)
 - `/etc/systemd/system/gnome-remote-desktop.service.d/priority.conf` - Nice=-10 (software-encode path only)
 - `/etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf` - as above, user service
 - System dconf settings - Window resize behavior, animations off

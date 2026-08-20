@@ -83,6 +83,13 @@
       tags: ['handover-watchdog']
   tags: ['handover-watchdog']
 
+- name: Refit windows after a screen change
+  ansible.builtin.include_tasks:
+    file: window_fit.yml
+    apply:
+      tags: ['window-fit']
+  tags: ['window-fit']
+
 - name: Verify RDP optimizations
   ansible.builtin.include_tasks:
     file: verify.yml
