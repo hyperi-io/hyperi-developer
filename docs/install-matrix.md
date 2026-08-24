@@ -279,6 +279,10 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 | wrangler (the `cloudflare` group) | all | npm-global / brew | version |
 | flarectl (the `cloudflare` group) | all | `go install` from source / brew | source tag |
 
+Every macOS path resolves to brew or a cask. The language managers that remain
+there carry no formula at all: `alint` and `maid` have none, and semantic-release
+needs its plugin set installed alongside it, which only npm gives.
+
 Cloudflare publishes no flarectl binary and no distro packages it, so both
 platforms build it from source. It also lives on cloudflare-go's `v0` branch --
 from v4 that SDK is generated and carries no `cmd/` directory. The Linux build

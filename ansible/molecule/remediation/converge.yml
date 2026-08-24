@@ -1,0 +1,9 @@
+---
+# Run the real playbook against the drifted fixture.
+#
+# The removals are the remediation, and they gate on `ansible_run_tags`, so a
+# converge without the `removals` tag deletes nothing and the scenario passes
+# vacuously. molecule.yml passes it; do not drop it.
+
+- name: Remediate the drifted host
+  ansible.builtin.import_playbook: ../../playbooks/main.yml

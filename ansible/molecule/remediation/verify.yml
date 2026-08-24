@@ -9,6 +9,9 @@
 - name: Verify remediation
   hosts: all
   gather_facts: true
+  # molecule.yml scopes the run to `--tags removals`, and that tag reaches every
+  # playbook. The assertions must run regardless.
+  tags: always
 
   tasks:
     # ==================================================================
@@ -90,8 +93,13 @@
         label: "{{ item.item }}"
 
     # ==================================================================
-    # THE REPLACEMENT ACTUALLY WORKS — removing the old thing is not enough
-    # if the new one never arrived.
+    # THE STALE COPY NO LONGER WINS — removing the tombstoned binary is only
+    # worth anything if nothing still resolves to it.
+    #
+    # This scenario converges `--tags removals`, which removes and installs
+    # nothing, so it cannot assert the replacement ARRIVED. That half belongs to
+    # `existing-host`, which converges the whole playbook. Asserting it here
+    # would only ever prove the scenario's own tag scope.
     # ==================================================================
     - name: Resolve which uv wins on PATH after remediation
       ansible.builtin.command: which uv
@@ -99,17 +107,17 @@
       changed_when: false
       failed_when: false
 
-    - name: Assert uv resolves to the managed install, not a stale copy
+    - name: Assert uv no longer resolves to the stale /usr/local/bin copy
       ansible.builtin.assert:
         that:
-          - verify_uv_which.rc == 0
           - "'/usr/local/bin/uv' not in verify_uv_which.stdout"
         fail_msg: >-
-          uv resolves to '{{ verify_uv_which.stdout }}'. Expected the managed
-          install (repo on Fedora, ~/.local/bin on Ubuntu). If it still points
-          at /usr/local/bin the host looks current while silently rotting —
-          which is exactly the failure this test exists to catch.
-        success_msg: "uv resolves to {{ verify_uv_which.stdout }}"
+          uv still resolves to '{{ verify_uv_which.stdout }}'. The tombstone did
+          not fire, so the host looks current while silently rotting — which is
+          exactly the failure this test exists to catch.
+        success_msg: >-
+          uv does not resolve to the stale copy
+          (resolved: '{{ verify_uv_which.stdout | default('nothing', true) }}')
 
     # ==================================================================
     # CHANNEL MIGRATIONS — a tool that moved to a repo must resolve to the
@@ -160,29 +168,8 @@
         success_msg: "DBeaver flatpak removed"
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    # ==================================================================
-    # PATH HYGIENE — the unguarded prepends must be gone, and each directory
-    # must appear exactly once in a login shell.
-    # ==================================================================
-    - name: Read the PATH a login shell ends up with
-      ansible.builtin.shell: bash -lc 'printf "%s" "$PATH"'
-      register: verify_login_path
-      changed_when: false
-
-    - name: Assert no directory is stacked on PATH
-      ansible.builtin.assert:
-        that:
-          - verify_login_path.stdout.split(':') | select('equalto', item) | list | length <= 1
-        fail_msg: >-
-          {{ item }} appears
-          {{ verify_login_path.stdout.split(':') | select('equalto', item) | list | length }}
-          times on PATH. Every prepend must test `case ":$PATH:"` first —
-          /etc/profile is re-read by each login shell and ~/.bashrc by each
-          interactive one, so an unguarded one stacks a copy per nested shell.
-        success_msg: "{{ item }} appears once on PATH"
-      loop:
-        - "{{ ansible_env.HOME }}/.cargo/bin"
-        - "{{ ansible_env.HOME }}/.local/bin"
-        - "{{ ansible_env.HOME }}/.npm-global/bin"
-      loop_control:
-        label: "{{ item }}"
+    # PATH hygiene is NOT asserted here. The tasks that drop the unguarded
+    # ~/.bashrc prepends live in the install path of the developer and
+    # developer-rust roles, not under the `removals` tag this scenario
+    # converges, so an assertion would only ever measure the tag scope. It needs
+    # a full converge -- `existing-host`.

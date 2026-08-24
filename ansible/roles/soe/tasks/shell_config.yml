@@ -40,6 +40,35 @@
     mode: '0644'
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
+# zsh does not read /etc/profile.d on its own. Fedora's /etc/zshrc already
+# sources it, and its /etc/zprofile sources /etc/profile, so Fedora needs
+# nothing. Ubuntu's /etc/zsh/zprofile is comments only, which leaves a zsh user
+# there with no dev-path.sh and no hyperi-go.sh.
+#
+# Only acts where zsh is installed -- this project never installs it on Linux.
+# The file is a dpkg conffile, so the block carries a marker and touches nothing
+# else.
+- name: Check for the system zsh login config (Ubuntu)
+  ansible.builtin.stat:
+    path: /etc/zsh/zprofile
+  register: shell_zsh_zprofile
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Source /etc/profile.d from zsh login shells (Ubuntu)
+  ansible.builtin.blockinfile:
+    path: /etc/zsh/zprofile
+    marker: "# {mark} HYPERI: /etc/profile.d for zsh"
+    block: |
+      # zsh skips /etc/profile.d; these are sh scripts, so run them under sh
+      # emulation to keep zsh's own parsing rules out of it.
+      for hyperi_profile_script in /etc/profile.d/*.sh; do
+          [ -r "$hyperi_profile_script" ] && emulate sh -c ". $hyperi_profile_script"
+      done
+      unset hyperi_profile_script
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - shell_zsh_zprofile.stat.exists | default(false)
+
 # ============================================================================
 # BASH HISTORY AUTO-COMMIT (SYSTEM-WIDE)
 # Commands are written to history immediately (not just on shell exit)

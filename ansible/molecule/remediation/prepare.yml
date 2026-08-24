@@ -26,6 +26,9 @@
 - name: Manufacture the drift of an old hyperi-developer host
   hosts: all
   gather_facts: true
+  # molecule.yml scopes the run to `--tags removals` for the converge, and that
+  # tag reaches every playbook. The fixture must be planted regardless.
+  tags: always
 
   tasks:
     # ------------------------------------------------------------------
@@ -160,18 +163,7 @@
       when: ansible_facts['distribution'] == 'Ubuntu'
       failed_when: false
 
-    # ------------------------------------------------------------------
-    # DERIVED -- the unguarded PATH lines. Written by an older revision into
-    # ~/.bashrc with no `case ":$PATH:"` test, so every nested shell stacked
-    # another copy. Reproduced verbatim, including the duplication.
-    # ------------------------------------------------------------------
-    - name: Plant the unguarded PATH lines in .bashrc
-      ansible.builtin.blockinfile:
-        path: "{{ ansible_env.HOME }}/.bashrc"
-        create: true
-        mode: '0644'
-        marker: "# {mark} FIXTURE: pre-guard PATH lines"
-        block: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          export PATH="$HOME/.npm-global/bin:$PATH"
-          export PNPM_HOME="$HOME/.local/share/pnpm"; export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+    # The unguarded ~/.bashrc PATH lines are deliberately NOT planted. The tasks
+    # that remove them sit in the install path of the developer and
+    # developer-rust roles, not under the `removals` tag this scenario
+    # converges, so the fixture would be planted and never cleared.

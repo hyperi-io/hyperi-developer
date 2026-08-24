@@ -33,14 +33,27 @@ what we removed is correct here; an allowlist of what is permitted is not.
 | scenario | driver | state | what it proves |
 |---|---|---|---|
 | `existing-host` | delegated (real machine) | **runnable** | an OLD host converges to current, and the old artefacts are GONE |
-| `remediation` | containers | fixture only | the same, reproducibly, without a real machine |
+| `remediation` | docker | **runnable** | the same, reproducibly, without a real machine |
 | `matrix` | containers | not written | a clean install works on each supported release |
 
-Only `existing-host` runs today. `remediation` carries its `prepare.yml` and
-`verify.yml` but no `molecule.yml`, so there is nothing to invoke; `matrix` has
-`vars.yml` and no scenario directory. Molecule 25 dropped its built-in drivers,
-so finishing either means writing `create.yml` / `destroy.yml` playbooks against
-`community.docker`.
+`matrix` still has `vars.yml` and no scenario directory.
+
+`remediation` needs the docker driver, which molecule no longer bundles:
+
+    uv tool install --with molecule-plugins[docker] --with docker molecule
+    ansible-galaxy collection install -r ansible/requirements.yml
+    molecule test -s remediation
+
+It converges `--tags removals` only, so it removes and installs NOTHING. That
+scopes what it can assert: the tombstones fired, and the things that are not
+ours survived. Whether a REPLACEMENT arrived needs a full converge, which is
+`existing-host`'s job. The same limit is why the unguarded `~/.bashrc` PATH
+lines are not part of its fixture -- the tasks that clear those sit in the
+install path, not under the `removals` tag.
+
+The tag reaches every playbook molecule runs, so `prepare.yml` and `verify.yml`
+carry `tags: always`. Without it the fixture is never planted and nothing is
+ever asserted -- and the scenario passes, vacuously.
 
 ### matrix
 
@@ -57,17 +70,14 @@ n and n-1 gives one rule for both distros, and the declared minimum IS n-1.
 
 ### remediation
 
-The upgrade path:
+`prepare` manufactures the drift, `converge` runs the real removals path over
+it, `verify` asserts both directions.
 
-1. `prepare` — provision the container using an OLD tag of this project
-2. `converge` — run the CURRENT playbook over the top
-3. `verify` — assert the old artefacts are gone, not merely that the new ones
-   arrived
-
-Step 3 is the point. The dangerous class is **shadowing**, where the host
-looks fine but isn't: a stale `~/.cargo/bin/uv` shadows the repo uv on PATH,
-so `uv` runs, reports a plausible version, and no system update ever touches
-it again.
+The dangerous class is **shadowing**, where the host looks fine but isn't: a
+stale `/usr/local/bin/uv` shadows the packaged uv on PATH, so `uv` runs, reports
+a plausible version, and no system update ever touches it again. Every channel
+move — a binary superseded by a package, a snap or flatpak superseded by a repo
+— creates one, because `/usr/local/bin` and `/snap/bin` both precede `/usr/bin`.
 
 ### existing-host
 
