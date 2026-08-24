@@ -137,15 +137,36 @@
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Add cargo bin to PATH in .bashrc (Linux)
+# ~/.profile, not ~/.bashrc: bash reads .bashrc only for INTERACTIVE shells, so
+# a PATH set there is invisible to `bash -c cargo ...`, to an IDE-spawned build
+# and to a systemd user unit. .profile is read once at login and inherited by
+# everything the session starts.
+#
+# The guard is required either way -- an unguarded prepend stacks a copy per
+# nested shell -- and it also makes this a no-op on a soe box, where
+# /etc/profile.d/dev-path.sh already covers ~/.cargo/bin.
+- name: Add cargo bin to PATH in .profile (Linux)
+  ansible.builtin.blockinfile:
+    path: "{{ user_home }}/.profile"
+    marker: "# {mark} HYPERI: cargo bin on PATH"
+    create: true
+    owner: "{{ actual_user }}"
+    group: "{{ actual_user }}"
+    mode: '0644'
+    block: |
+      case ":$PATH:" in
+          *":$HOME/.cargo/bin:"*) ;;
+          *) export PATH="$HOME/.cargo/bin:$PATH" ;;
+      esac
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# The unguarded line this replaces stacked a duplicate per nested shell.
+- name: Remove the retired cargo PATH line from .bashrc (Linux)
   ansible.builtin.lineinfile:
     path: "{{ user_home }}/.bashrc"
     regexp: "^export PATH=.*\\.cargo/bin"
-    line: 'export PATH="{{ user_home }}/.cargo/bin:$PATH"'
-    state: present
-    owner: "{{ actual_user }}"
-    group: "{{ actual_user }}"
-    create: true
+    state: absent
+  failed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Add cargo bin to PATH in .zshrc (macOS)

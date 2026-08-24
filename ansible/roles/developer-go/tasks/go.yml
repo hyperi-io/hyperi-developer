@@ -64,12 +64,17 @@
         path: "/tmp/go{{ go_version }}.linux-{{ hyperi_arch_deb }}.tar.gz"
         state: absent
 
+    # /etc/profile is re-read by every login shell, so the prepend must test
+    # PATH first or it stacks a copy per nested shell, per tmux pane, per `su -`.
     - name: Add the Go toolchain to PATH (system-wide)
       ansible.builtin.copy:
         content: |
           # Managed by hyperi-developer. Go is installed from the upstream
           # tarball into /usr/local/go -- see developer-go/tasks/go.yml.
-          export PATH="/usr/local/go/bin:$PATH"
+          case ":$PATH:" in
+              *":/usr/local/go/bin:"*) ;;
+              *) export PATH="/usr/local/go/bin:$PATH" ;;
+          esac
         dest: /etc/profile.d/hyperi-go.sh
         owner: root
         group: root
