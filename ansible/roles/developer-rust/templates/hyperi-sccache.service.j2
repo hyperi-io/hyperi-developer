@@ -1,0 +1,21 @@
+[Unit]
+Description=sccache compilation cache server
+Documentation=https://github.com/mozilla/sccache
+
+[Service]
+# Without this unit the server is started on demand by whichever process
+# compiles first, and inherits that process's cgroup and resource limits for
+# its whole life -- every later build on the box then runs in an editor's or a
+# terminal's context, decided by a startup race.
+Type=simple
+Environment=SCCACHE_START_SERVER=1
+Environment=SCCACHE_NO_DAEMON=1
+# The server exits after 600s idle by default, which systemd would read as the
+# service failing.
+Environment=SCCACHE_IDLE_TIMEOUT=0
+ExecStart=/usr/local/bin/sccache
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
