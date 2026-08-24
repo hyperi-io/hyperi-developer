@@ -1,0 +1,77 @@
+---
+# Own the sccache server's lifecycle.
+#
+# sccache clients start the server on demand, so it inherits the cgroup and
+# resource limits of whichever process compiled first and keeps them until it
+# exits. On a desktop that is routinely an editor: every Rust compile on the
+# box then runs inside that editor's resource context.
+#
+# A user unit rather than a system one: the cache and the server are per-user.
+#
+# Nothing here may fail the run. Without the unit, clients start a server on
+# demand exactly as they do today.
+
+- name: Create the user systemd directory
+  ansible.builtin.file:
+    path: "{{ user_home }}/.config/systemd/user"
+    state: directory
+    mode: '0755'
+  become: true
+  become_user: "{{ actual_user }}"
+
+- name: Install the sccache server unit
+  ansible.builtin.template:
+    src: hyperi-sccache.service.j2
+    dest: "{{ user_home }}/.config/systemd/user/hyperi-sccache.service"
+    mode: '0644'
+  become: true
+  become_user: "{{ actual_user }}"
+  register: developer_rust_sccache_unit
+
+- name: Find a server this unit does not own
+  ansible.builtin.command:
+    cmd: pgrep -u {{ actual_user }} -x sccache
+  register: developer_rust_sccache_running
+  changed_when: false
+  failed_when: false
+
+- name: Enable the sccache server unit
+  ansible.builtin.systemd:
+    name: hyperi-sccache.service
+    enabled: true
+    scope: user
+    daemon_reload: true
+  become: true
+  become_user: "{{ actual_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] | default(1000) }}"
+  when: not ansible_check_mode
+  failed_when: false
+
+# Starting it while an unmanaged server holds the port would fail with
+# "Address in use", and stopping that server first would kill any compile
+# running through it. The unit takes over at the next login instead.
+- name: Start the sccache server unit
+  ansible.builtin.systemd:
+    name: hyperi-sccache.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ actual_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] | default(1000) }}"
+  when:
+    - not ansible_check_mode
+    - developer_rust_sccache_running.rc != 0
+  failed_when: false
+
+- name: Note that the sccache unit takes over at the next login
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['sccache: an unmanaged server is already running, so the new unit'
+            ~ ' was enabled but not started. It takes over at the next login,'
+            ~ ' or run: systemctl --user start hyperi-sccache'] }}
+  when:
+    - not ansible_check_mode
+    - developer_rust_sccache_running.rc == 0

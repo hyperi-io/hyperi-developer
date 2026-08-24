@@ -47,3 +47,8 @@ rust_cache_prune_schedule_hour: 3
 # macOS launchd only; systemd takes its unit name from the file.
 rust_cache_prune_label: "io.hyperi.rust-cache-prune"
 rust_cache_prune_plist: "{{ user_home }}/Library/LaunchAgents/{{ rust_cache_prune_label }}.plist"
+
+# Start the sccache server from a systemd user unit rather than leaving it to
+# whichever process compiles first, which decides the server's cgroup and
+# resource limits for its whole life.
+rust_sccache_service_manage: true

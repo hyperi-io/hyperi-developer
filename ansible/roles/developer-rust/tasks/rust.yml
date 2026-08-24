@@ -421,3 +421,19 @@
       tags: ['developer-rust', 'rust', 'rust-cache']
   when: rust_cache_manage | default(true)
   tags: ['developer-rust', 'rust', 'rust-cache']
+
+# ============================================================
+# sccache server lifecycle
+# ============================================================
+# Linux only: the unit shape is systemd's. The same lifecycle problem exists on
+# macOS and wants a launchd agent, which is not written yet.
+
+- name: Own the sccache server lifecycle
+  ansible.builtin.include_tasks:
+    file: sccache_service.yml
+    apply:
+      tags: ['developer-rust', 'rust', 'rust-cache']
+  when:
+    - rust_sccache_service_manage | default(true)
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
+  tags: ['developer-rust', 'rust', 'rust-cache']
