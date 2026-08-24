@@ -315,16 +315,35 @@
   changed_when: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Add the npm global bin to PATH in .bashrc (Linux)
-  ansible.builtin.lineinfile:
-    path: "{{ user_home }}/.bashrc"
-    regexp: "^export PATH=.*\\.npm-global/bin"
-    line: 'export PATH="{{ user_home }}/.npm-global/bin:$PATH"'
-    state: present
+# ~/.profile, not ~/.bashrc: bash reads .bashrc only for INTERACTIVE shells, so
+# a PATH set there is invisible to a non-interactive `bash -c`, to an
+# IDE-spawned process and to a systemd user unit.
+#
+# The guard is required either way -- an unguarded prepend stacks a copy per
+# nested shell -- and it also makes this a no-op on a soe box, where
+# /etc/profile.d/dev-path.sh already covers ~/.npm-global/bin.
+- name: Add the npm global bin to PATH in .profile (Linux)
+  ansible.builtin.blockinfile:
+    path: "{{ user_home }}/.profile"
+    marker: "# {mark} HYPERI: npm global bin on PATH"
+    create: true
     owner: "{{ actual_user }}"
     group: "{{ actual_user }}"
     mode: '0644'
-    create: true
+    block: |
+      case ":$PATH:" in
+          *":$HOME/.npm-global/bin:"*) ;;
+          *) export PATH="$HOME/.npm-global/bin:$PATH" ;;
+      esac
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# The unguarded line this replaces stacked a duplicate per nested shell.
+- name: Remove the retired npm global PATH line from .bashrc (Linux)
+  ansible.builtin.lineinfile:
+    path: "{{ user_home }}/.bashrc"
+    regexp: "^export PATH=.*\\.npm-global/bin"
+    state: absent
+  failed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Add the npm global bin to PATH in .zshrc (macOS)
@@ -412,16 +431,31 @@
         '/opt/homebrew/bin:/usr/local/bin:' if ansible_facts['distribution'] == 'MacOSX' else ''
         }}{{ ansible_facts['env'].PATH }}
 
-- name: Add PNPM_HOME to .bashrc (Linux)
-  ansible.builtin.lineinfile:
-    path: "{{ user_home }}/.bashrc"
-    regexp: '^export PNPM_HOME='
-    line: 'export PNPM_HOME="{{ user_home }}/.local/share/pnpm"; export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"'
-    state: present
+# PNPM_HOME is an environment variable pnpm itself reads, so it has to be set
+# for non-interactive shells too -- ~/.profile, not ~/.bashrc.
+- name: Add PNPM_HOME to .profile (Linux)
+  ansible.builtin.blockinfile:
+    path: "{{ user_home }}/.profile"
+    marker: "# {mark} HYPERI: pnpm"
+    create: true
     owner: "{{ actual_user }}"
     group: "{{ actual_user }}"
     mode: '0644'
-    create: true
+    block: |
+      export PNPM_HOME="$HOME/.local/share/pnpm"
+      case ":$PATH:" in
+          *":$PNPM_HOME:"*) ;;
+          *) export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH" ;;
+      esac
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# The unguarded line this replaces stacked a duplicate per nested shell.
+- name: Remove the retired PNPM_HOME line from .bashrc (Linux)
+  ansible.builtin.lineinfile:
+    path: "{{ user_home }}/.bashrc"
+    regexp: '^export PNPM_HOME='
+    state: absent
+  failed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Add PNPM_HOME to .zshrc (macOS)

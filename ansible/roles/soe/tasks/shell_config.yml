@@ -5,28 +5,38 @@
 # PATH CONFIGURATION (SYSTEM-WIDE)
 # Add common tool directories to PATH for all users
 # ============================================================================
-
+# The directories are under $HOME, but the POLICY is system-wide: one file
+# covers every user on the box, including ones created later, and it is read by
+# login shells so non-interactive children inherit it. Per-user rc files cannot
+# do either.
+#
+# Each entry MUST test PATH before prepending. /etc/profile is re-read by every
+# login shell, so an unguarded prepend stacks a fresh copy per nested shell, per
+# tmux pane, per `su -`.
 - name: Configure PATH additions system-wide (Linux)
   ansible.builtin.copy:
     dest: /etc/profile.d/dev-path.sh
     content: |
       # Developer Environment PATH additions
       # System-wide configuration for all users
+      #
+      # Managed by hyperi-developer -- soe/tasks/shell_config.yml.
 
-      # Add ~/.cargo/bin for UV, Rust tools
-      if [ -d "$HOME/.cargo/bin" ]; then
-          export PATH="$HOME/.cargo/bin:$PATH"
-      fi
+      # Prepend only if the directory exists AND is not already on PATH.
+      hyperi_path_prepend() {
+          [ -d "$1" ] || return 0
+          case ":$PATH:" in
+              *":$1:"*) ;;
+              *) PATH="$1:$PATH" ;;
+          esac
+      }
 
-      # Add ~/.local/bin for user-installed tools (pipx, gext, etc.)
-      if [ -d "$HOME/.local/bin" ]; then
-          export PATH="$HOME/.local/bin:$PATH"
-      fi
+      hyperi_path_prepend "$HOME/.cargo/bin"      # rustup and cargo-installed tools
+      hyperi_path_prepend "$HOME/.local/bin"      # uv tools, pipx, gext
+      hyperi_path_prepend "$HOME/.npm-global/bin" # npm global tools (semantic-release)
 
-      # Add ~/.npm-global/bin for npm global tools (semantic-release, etc.)
-      if [ -d "$HOME/.npm-global/bin" ]; then
-          export PATH="$HOME/.npm-global/bin:$PATH"
-      fi
+      export PATH
+      unset -f hyperi_path_prepend
     mode: '0644'
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
