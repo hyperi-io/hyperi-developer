@@ -1,5 +1,6 @@
 ---
-# Cloud tools installation (AWS CLI, Helm, OpenTofu, OpenBao)
+# Cloud tools installation (AWS CLI, Helm, OpenTofu, OpenBao, checkov,
+# terraform-docs)
 # Note: kubectl moved to k8s.yml
 #
 # NO HASHICORP TOOLS. HashiCorp relicensed the lot to BUSL in 2023 and IBM
@@ -372,3 +373,57 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - infrastructure_checkov.rc | default(0) != 0
+
+# ============================================================================
+# TERRAFORM-DOCS - module reference generator for OpenTofu / Terraform
+# ============================================================================
+# Engine-agnostic despite the name -- it parses `.tf` whichever binary runs it,
+# and OpenTofu ships no native `tofu docs` (opentofu/opentofu#2081 open).
+#
+# Module code must stay in `.tf`: `.tofu` parsing is limited, so a `.tofu`
+# module yields an incomplete inputs/outputs table rather than failing loudly.
+#
+# No distro packages it. The project ships release tarballs, so Linux takes the
+# binary (Tier 3: hyperi-update re-fetches it) and macOS the brew formula --
+# neither path needs a Go toolchain.
+- name: Install terraform-docs (macOS)
+  community.general.homebrew:
+    name: terraform-docs
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install terraform-docs (Linux)
+  block:
+    - name: Get latest terraform-docs version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/terraform-docs/terraform-docs/releases/latest
+        return_content: true
+      register: terraform_docs_latest
+      check_mode: false
+
+    # The asset carries the tag verbatim, v and all:
+    # terraform-docs-v0.24.0-linux-amd64.tar.gz. The tarball holds LICENSE,
+    # README.md and the binary at the root, so only the binary is extracted.
+    - name: Download and extract terraform-docs
+      ansible.builtin.unarchive:
+        src: >-
+          https://github.com/terraform-docs/terraform-docs/releases/download/{{
+          terraform_docs_latest.json.tag_name }}/terraform-docs-{{
+          terraform_docs_latest.json.tag_name }}-linux-{{ hyperi_arch_deb }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: terraform-docs
+        mode: '0755'
+      when: not ansible_check_mode
+
+  rescue:
+    - name: Record that terraform-docs did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['terraform-docs: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

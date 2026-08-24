@@ -267,6 +267,7 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 | kind, argocd (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
 | kustomize (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
 | checkov | all | uv-tool (Tier 2) / brew | version |
+| terraform-docs (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
 | dive | all | Ubuntu snap / Fedora re-fetch (Tier 3) / brew | version / SHA256 |
 | aws-cli v2 | all | official snap / brew | version |
 | aws-vault (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
@@ -389,8 +390,9 @@ cargo-audit, cargo-hack, typos, govulncheck, maid.
 
 **Tier 3 - static binaries.** A handful ship only as a GitHub-release binary with
 no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter,
-aws-vault, kustomize, tea (plus a few tools on whichever single distro lacks a
-package). `hyperi-update` re-fetches the latest release for these.
+aws-vault, kustomize, tea, terraform-docs (plus a few tools on whichever single
+distro lacks a package). `hyperi-update` re-fetches the latest release for
+these.
 
 `hyperi-update` (the "update my system" command) runs all three tiers plus the
 OS / snap / flatpak sweep, so one command brings everything current. soe
