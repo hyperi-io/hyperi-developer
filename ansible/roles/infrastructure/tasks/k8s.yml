@@ -213,31 +213,44 @@
         mode: '0755'
       when: not ansible_check_mode
 
-    # kustomize -- a monorepo: /releases/latest can point at a non-CLI component
+    # kustomize -- Fedora packages it natively and currently matches upstream
+    # exactly, so only Ubuntu runs the release dance below.
+    #
+    # It is a monorepo: /releases/latest can point at a non-CLI component
     # (api/, cmd/config/), so we take the newest `kustomize/vX` release and use
     # its own asset URL (which already carries the correctly-encoded tag path).
-    - name: Get kustomize releases
+    - name: Install kustomize (Fedora)
+      ansible.builtin.dnf:
+        name: kustomize
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Get kustomize releases (Ubuntu)
       ansible.builtin.uri:
         url: https://api.github.com/repos/kubernetes-sigs/kustomize/releases
         return_content: true
       register: kustomize_releases
       check_mode: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Select the latest kustomize CLI asset URL
+    - name: Select the latest kustomize CLI asset URL (Ubuntu)
       ansible.builtin.set_fact:
         kustomize_asset_url: >-
           {{ (kustomize_releases.json | selectattr('tag_name', 'match', 'kustomize/v') | list | first).assets
              | selectattr('name', 'search', '_linux_' ~ hyperi_arch_deb ~ '.tar.gz')
              | map(attribute='browser_download_url') | first }}
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Download and extract kustomize
+    - name: Download and extract kustomize (Ubuntu)
       ansible.builtin.unarchive:
         src: "{{ kustomize_asset_url }}"
         dest: /usr/local/bin
         remote_src: true
         include: kustomize
         mode: '0755'
-      when: not ansible_check_mode
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not ansible_check_mode
 
     # kubeconform (CI parity: hyperi-ci runs it as a blocking gate). --pinned
     # takes the CI-exact tag from group_vars; latest otherwise -- and only then

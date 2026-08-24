@@ -1,14 +1,72 @@
 ---
 # DBeaver Community — DB GUI client (universal: MySQL, Postgres, ClickHouse,
 # SQLite, Oracle, MSSQL, etc.).
+#
+# Container format by distro: Ubuntu uses snap, Fedora uses flatpak. DBeaver
+# needs neither on Ubuntu, because the project runs its own APT repo -- a
+# higher rung than either, and it drops the flatpak sandbox that sits between
+# DBeaver and ~/.ssh, unix sockets and native client libraries.
+#
+# The repo is flat (`suites: /`, no components), the same shape as the
+# kubernetes repo in infrastructure/tasks/k8s.yml. It is signed by
+# BDFB19F681514B43875D16FA132C13A8A330F403, the primary key of
+# `DBeaver Support <support@dbeaver.com>` -- verify that chain again before
+# changing the URL.
+#
+# Fedora has no vendor dnf repo, so it keeps the flatpak.
 
-- name: Install DBeaver via Flatpak (Linux)
+- name: Install DBeaver from the official repository (Ubuntu)
+  block:
+    - name: Add the DBeaver GPG key
+      ansible.builtin.get_url:
+        url: https://dbeaver.io/debs/dbeaver.gpg.key
+        dest: /etc/apt/keyrings/dbeaver.asc
+        mode: '0644'
+
+    - name: Add the DBeaver repository
+      ansible.builtin.deb822_repository:
+        name: dbeaver
+        types: deb
+        uris: "https://dbeaver.io/debs/dbeaver-ce"
+        suites: "/"
+        signed_by: /etc/apt/keyrings/dbeaver.asc
+        state: present
+
+    - name: Install DBeaver CE
+      ansible.builtin.apt:
+        name: dbeaver-ce
+        state: present
+        update_cache: true
+
+  rescue:
+    - name: Record that DBeaver did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator playbooks/main.yml reports from.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['DBeaver: ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Install DBeaver via Flatpak (Fedora)
   community.general.flatpak:
     name: io.dbeaver.DBeaverCommunity
     state: present
     method: system
   become: true
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# An Ubuntu box provisioned by an older revision carries the flatpak, which
+# would shadow the apt build in the desktop menu.
+- name: Remove the DBeaver flatpak (Ubuntu — superseded by the official repo)
+  community.general.flatpak:
+    name: io.dbeaver.DBeaverCommunity
+    state: absent
+    method: system
+  become: true
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
 
 - name: Install DBeaver via Homebrew cask (macOS)
   community.general.homebrew_cask:
