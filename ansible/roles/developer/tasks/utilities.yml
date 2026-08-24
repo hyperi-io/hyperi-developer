@@ -156,6 +156,15 @@
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 
+# Fedora installed yq to /usr/local/bin before it moved to dnf (/usr/bin).
+# /usr/local/bin precedes /usr/bin on the default PATH, so leaving the old copy
+# means `yq` keeps resolving to a binary nothing updates.
+- name: Remove the superseded /usr/local/bin/yq (Fedora)
+  ansible.builtin.file:
+    path: /usr/local/bin/yq
+    state: absent
+  when: ansible_facts['distribution'] == 'Fedora'
+
 # sd - sane sed replacement (binary download for Fedora, apt for Ubuntu)
 - name: Install sd (Fedora)
   block:

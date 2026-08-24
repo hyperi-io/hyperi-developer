@@ -110,3 +110,79 @@
           at /usr/local/bin the host looks current while silently rotting —
           which is exactly the failure this test exists to catch.
         success_msg: "uv resolves to {{ verify_uv_which.stdout }}"
+
+    # ==================================================================
+    # CHANNEL MIGRATIONS — a tool that moved to a repo must resolve to the
+    # PACKAGE, not to the binary the old revision left in /usr/local/bin.
+    # Removing the old copy is the whole point: /usr/local/bin precedes
+    # /usr/bin, so a survivor wins forever and no update ever touches it.
+    # ==================================================================
+    - name: Resolve the tools that moved to a distro package (Fedora)
+      ansible.builtin.command: "which {{ item }}"
+      loop:
+        - yq
+        - kustomize
+      register: verify_migrated
+      changed_when: false
+      failed_when: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Assert the migrated tools resolve to the packaged copy
+      ansible.builtin.assert:
+        that:
+          - item.rc == 0
+          - "'/usr/local/bin/' not in item.stdout"
+        fail_msg: >-
+          {{ item.item }} resolves to '{{ item.stdout }}'. It moved to the dnf
+          package in /usr/bin, so a /usr/local/bin survivor shadows it on the
+          default PATH and pins the host to a copy nothing updates.
+        success_msg: "{{ item.item }} resolves to {{ item.stdout }}"
+      loop: "{{ verify_migrated.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('skipped') }}"
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: List the installed flatpaks (Ubuntu)
+      ansible.builtin.command: flatpak list --app --columns=application
+      register: verify_flatpaks
+      changed_when: false
+      failed_when: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Assert the DBeaver flatpak gave way to the apt package (Ubuntu)
+      ansible.builtin.assert:
+        that:
+          - "'io.dbeaver.DBeaverCommunity' not in verify_flatpaks.stdout"
+        fail_msg: >-
+          The DBeaver flatpak survived. Ubuntu takes DBeaver from the vendor apt
+          repo now, and leaving the flatpak puts a second DBeaver in the desktop
+          menu — the sandboxed one, which cannot read ~/.ssh or a unix socket.
+        success_msg: "DBeaver flatpak removed"
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # ==================================================================
+    # PATH HYGIENE — the unguarded prepends must be gone, and each directory
+    # must appear exactly once in a login shell.
+    # ==================================================================
+    - name: Read the PATH a login shell ends up with
+      ansible.builtin.shell: bash -lc 'printf "%s" "$PATH"'
+      register: verify_login_path
+      changed_when: false
+
+    - name: Assert no directory is stacked on PATH
+      ansible.builtin.assert:
+        that:
+          - verify_login_path.stdout.split(':') | select('equalto', item) | list | length <= 1
+        fail_msg: >-
+          {{ item }} appears
+          {{ verify_login_path.stdout.split(':') | select('equalto', item) | list | length }}
+          times on PATH. Every prepend must test `case ":$PATH:"` first —
+          /etc/profile is re-read by each login shell and ~/.bashrc by each
+          interactive one, so an unguarded one stacks a copy per nested shell.
+        success_msg: "{{ item }} appears once on PATH"
+      loop:
+        - "{{ ansible_env.HOME }}/.cargo/bin"
+        - "{{ ansible_env.HOME }}/.local/bin"
+        - "{{ ansible_env.HOME }}/.npm-global/bin"
+      loop_control:
+        label: "{{ item }}"

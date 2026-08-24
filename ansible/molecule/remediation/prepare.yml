@@ -15,6 +15,13 @@
 #
 # Adding to this fixture: only add what you have OBSERVED on a real host.
 # A fixture that tests our assumptions rather than reality is worse than none.
+#
+# The one exception, marked DERIVED below: an artefact whose existence follows
+# deterministically from a revision of this repo -- the channel migrations. If
+# an older revision wrote /usr/local/bin/yq and the current one installs the dnf
+# package to /usr/bin, every host provisioned by that revision carries the old
+# path. That is not an assumption about the world, it is a fact about our own
+# git history, and it is checkable by reading the task that used to write it.
 
 - name: Manufacture the drift of an old hyperi-developer host
   hosts: all
@@ -122,3 +129,49 @@
       loop:
         - tinygo
         - github-mcp-server
+
+    # ------------------------------------------------------------------
+    # DERIVED -- channel migrations. A tool that moved from a binary or a
+    # container format to a repo leaves its old copy behind, and on the default
+    # PATH /usr/local/bin and /snap/bin both precede /usr/bin. Same shadowing
+    # class as the stale uv above, reached by a different route.
+    # ------------------------------------------------------------------
+    - name: Plant binaries superseded by a distro package (Fedora)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          # Fixture for the /usr/local/bin copy an older revision installed,
+          # before {{ item }} moved to the dnf package in /usr/bin.
+          echo "superseded {{ item }} fixture"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - yq          # was a GitHub binary on both distros
+        - kustomize   # was a GitHub binary on both distros
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install the DBeaver flatpak superseded by the vendor apt repo (Ubuntu)
+      community.general.flatpak:
+        name: io.dbeaver.DBeaverCommunity
+        state: present
+        method: system
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      failed_when: false
+
+    # ------------------------------------------------------------------
+    # DERIVED -- the unguarded PATH lines. Written by an older revision into
+    # ~/.bashrc with no `case ":$PATH:"` test, so every nested shell stacked
+    # another copy. Reproduced verbatim, including the duplication.
+    # ------------------------------------------------------------------
+    - name: Plant the unguarded PATH lines in .bashrc
+      ansible.builtin.blockinfile:
+        path: "{{ ansible_env.HOME }}/.bashrc"
+        create: true
+        mode: '0644'
+        marker: "# {mark} FIXTURE: pre-guard PATH lines"
+        block: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          export PATH="$HOME/.npm-global/bin:$PATH"
+          export PNPM_HOME="$HOME/.local/share/pnpm"; export PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
