@@ -7,6 +7,16 @@
 # is fourteen minors adrift on a secret scanner. It also cannot honour the
 # `hyperi_versions` pin, so a `--pinned` box ran a different scanner from CI.
 #
+# There is no better Linux channel to move to, and it was looked for. Upstream
+# documents only Homebrew, Docker, Go and the release binaries -- they run no
+# apt or dnf repo, and there is no snap. Debian sid carries 8.26.0 and trixie
+# 8.16.0, which is where Ubuntu's came from; neither is current, and mixing sid
+# into Ubuntu is not on. For a secret scanner an unofficial third-party repo is
+# a worse trust proposition than the upstream release anyway.
+#
+# The release carries `gitleaks_<ver>_checksums.txt`, so this fetch can be
+# digest-verified when hyperi-ci #66 lands the repo-wide hardening.
+#
 # The binary was dropped once for 404ing on arm64. The cause was a hardcoded
 # `linux_x64`, not the channel: gitleaks names amd64 "x64" and arm64 "arm64", so
 # the arch token needs mapping rather than substituting.

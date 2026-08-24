@@ -34,9 +34,27 @@ what we removed is correct here; an allowlist of what is permitted is not.
 |---|---|---|---|
 | `existing-host` | delegated (real machine) | **runnable** | an OLD host converges to current, and the old artefacts are GONE |
 | `remediation` | docker | **runnable** | the same, reproducibly, without a real machine |
-| `matrix` | containers | not written | a clean install works on each supported release |
+| `matrix` | docker | **runnable** | a clean install works on each supported release |
 
-`matrix` still has `vars.yml` and no scenario directory.
+`matrix` covers all four declared releases -- Fedora 44 and 43, Ubuntu 26.04 and
+24.04 -- and is where Fedora coverage lives, since a fresh Fedora box must come
+up correctly even though none have been deployed to drift.
+
+It converges the CLI base only (`repository,utilities,git`). `repository` is not
+optional in that set: it installs python3-debian, which every
+`deb822_repository` task needs and a minimal image has no other source for.
+Docker, snap and the GNOME paths want a daemon or a session a container has not
+got, so widening the set means privileged or systemd containers first.
+
+`sd` and `lazygit` are reported, not asserted. They come from GitHub releases on
+at least one distro, and four containers sharing one unauthenticated GitHub API
+quota get rate-limited -- a hard assertion would fail on GitHub's limiter rather
+than on the playbook. The rescue path turns those into `deploy_warnings`, which
+is the designed behaviour.
+
+`../vars.yml` remains the SSoT for WHICH releases are supported. molecule.yml
+cannot include another YAML file, so its platform list duplicates it and must be
+bumped alongside.
 
 `remediation` needs the docker driver, which molecule no longer bundles:
 
@@ -61,8 +79,8 @@ ever asserted -- and the scenario passes, vacuously.
 
 ### matrix
 
-Clean install across the supported set. Config-driven from `vars.yml` — n and
-n-1 per distro, never hardcoded, because both n-1 slots roll within a year:
+Clean install across the supported set — n and n-1 per distro, because both n-1
+slots roll within a year:
 
 - Ubuntu LTS 26.04 (n), 24.04 (n-1)
 - Fedora 44 (n), 43 (n-1)

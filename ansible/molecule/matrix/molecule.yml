@@ -1,0 +1,87 @@
+---
+# Initial-deploy coverage: a CLEAN install on each supported release.
+#
+# The counterpart to `remediation`, which only ever removes. This one only ever
+# installs, which is why Fedora belongs here -- there are no deployed Fedora
+# clients to have drifted, but a fresh Fedora box must come up correctly.
+#
+# Scoped to the CLI base (`repository`, `utilities`, `git`). Docker, snap and the
+# GNOME paths need a daemon or a session a container does not have, so widening
+# the tag set means solving that first -- privileged containers or systemd
+# images -- not just adding a tag.
+#
+# `repository` is not optional in that set: it installs python3-debian, which
+# every `deb822_repository` task needs, and a minimal image has no other source
+# for it.
+#
+# The role's own `verify` tag is deliberately NOT in that set. Those tasks are a
+# full-install gate and hard-fail on a missing tool, docker included, so they
+# cannot pass a partial converge. verify.yml here is the assertion layer.
+#
+# `../vars.yml` stays the SSoT for WHICH releases are supported. molecule.yml
+# cannot include another YAML file, so the platform list below duplicates it and
+# must be bumped with it.
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_PROJECT_DIRECTORY}/requirements.yml
+    ignore-errors: true
+
+driver:
+  name: docker
+
+# pre_build_image: false so molecule builds an Ansible-compatible layer over the
+# stock image -- none of these bases ship python3, and every module needs one.
+platforms:
+  - name: matrix-fedora-44
+    image: docker.io/library/fedora:44
+    pre_build_image: false
+    command: /bin/sleep infinity
+
+  - name: matrix-fedora-43
+    image: docker.io/library/fedora:43
+    pre_build_image: false
+    command: /bin/sleep infinity
+
+  - name: matrix-ubuntu-2604
+    image: docker.io/library/ubuntu:26.04
+    pre_build_image: false
+    command: /bin/sleep infinity
+
+  - name: matrix-ubuntu-2404
+    image: docker.io/library/ubuntu:24.04
+    pre_build_image: false
+    command: /bin/sleep infinity
+
+ansible:
+  cfg:
+    defaults:
+      interpreter_python: auto_silent
+      # Molecule writes its own ansible.cfg and points ANSIBLE_CONFIG at it, so
+      # `ansible/ansible.cfg` is never read and no role resolves without this.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+  env:
+    ANSIBLE_FORCE_COLOR: "1"
+  executor:
+    backend: ansible-playbook
+    args:
+      ansible_playbook:
+        - --diff
+        - --tags
+        - repository,utilities,git
+  playbooks:
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: matrix
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - converge
+    - idempotence
+    - verify
+    - destroy

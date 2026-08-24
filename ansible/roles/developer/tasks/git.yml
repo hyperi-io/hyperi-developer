@@ -25,6 +25,17 @@
 
 - name: Install latest Git via PPA (Ubuntu)
   block:
+    # The key import shells out to curl and gpg. Neither is guaranteed on a
+    # minimal Ubuntu -- cloud and container images ship without curl -- and the
+    # shell fails rc 127 rather than saying what is missing.
+    - name: Ensure the key-import prerequisites are present
+      ansible.builtin.apt:
+        name:
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+
     - name: Import git-core PPA GPG keys via HTTP (more reliable than keyserver)
       ansible.builtin.shell:
         cmd: |
