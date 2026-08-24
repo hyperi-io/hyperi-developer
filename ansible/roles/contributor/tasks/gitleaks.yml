@@ -1,10 +1,15 @@
 ---
 # Gitleaks - Secret detection tool (blocking gate for `hyperi-ci check`).
 #
-# Channel: distro package everywhere, so the host's own updates keep it current
-# (Ubuntu universe apt / Fedora dnf / macOS brew). This drops the old hardcoded
-# `linux_x64` GitHub-binary download, which 404'd on arm64 -- the distro package
-# selects the right architecture itself.
+# Fedora dnf (8.30.0 against upstream 8.30.1), Ubuntu release binary, macOS brew.
+#
+# Ubuntu universe carries 8.16.0 and freezes for the life of the release, which
+# is fourteen minors adrift on a secret scanner. It also cannot honour the
+# `hyperi_versions` pin, so a `--pinned` box ran a different scanner from CI.
+#
+# The binary was dropped once for 404ing on arm64. The cause was a hardcoded
+# `linux_x64`, not the channel: gitleaks names amd64 "x64" and arm64 "arm64", so
+# the arch token needs mapping rather than substituting.
 
 # ============================================================================
 # MACOS - Install via Homebrew
@@ -18,33 +23,82 @@
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================
-# LINUX - distro package (Ubuntu universe / Fedora dnf)
+# FEDORA - dnf (tracks upstream within a release)
 # ============================================================================
 
-- name: Install Gitleaks (Linux)
+- name: Install Gitleaks (Fedora)
   block:
-    - name: Install Gitleaks (Fedora)
+    - name: Install Gitleaks via dnf (Fedora)
       ansible.builtin.dnf:
         name: gitleaks
         state: present
-      when: ansible_facts['distribution'] == 'Fedora'
-
-    - name: Install Gitleaks (Ubuntu)
-      ansible.builtin.apt:
-        name: gitleaks
-        state: present
-        update_cache: true
-      when: ansible_facts['distribution'] == 'Ubuntu'
 
   rescue:
-    - name: Record that Gitleaks did not install (Linux)
-      # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately NOT
-      # role-prefixed: it is the shared accumulator that playbooks/main.yml
-      # post_tasks reports from. A per-role name would give every role its own
-      # list and the summary would report almost nothing.
+    - name: Record that Gitleaks did not install (Fedora)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator playbooks/main.yml post_tasks reports from.
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['gitleaks: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+             + ['gitleaks: ' ~ (ansible_failed_result.msg | default('dnf install failed'))] }}
 
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# ============================================================================
+# UBUNTU - GitHub release binary (Tier 3: hyperi-update re-fetches it)
+# ============================================================================
+
+- name: Install Gitleaks (Ubuntu)
+  block:
+    - name: Get latest Gitleaks version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/gitleaks/gitleaks/releases/latest
+        return_content: true
+      register: contributor_gitleaks_latest
+      check_mode: false
+      when: not (hyperi_pinned | default(false) and 'gitleaks' in (hyperi_versions | default({})))
+
+    - name: Resolve the Gitleaks tag (pinned or latest)
+      ansible.builtin.set_fact:
+        contributor_gitleaks_ref: >-
+          {{ hyperi_versions['gitleaks']
+             if (hyperi_pinned | default(false) and 'gitleaks' in (hyperi_versions | default({})))
+             else contributor_gitleaks_latest.json.tag_name }}
+
+    # gitleaks calls amd64 "x64"; arm64 keeps its own name.
+    - name: Map the architecture to the Gitleaks asset token
+      ansible.builtin.set_fact:
+        contributor_gitleaks_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x64' }}"
+
+    - name: Download and extract Gitleaks
+      ansible.builtin.unarchive:
+        src: >-
+          https://github.com/gitleaks/gitleaks/releases/download/{{ contributor_gitleaks_ref | trim }}/gitleaks_{{
+          contributor_gitleaks_ref | trim | regex_replace('^v', '') }}_linux_{{ contributor_gitleaks_arch }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: gitleaks
+        mode: '0755'
+      when: not ansible_check_mode
+
+  rescue:
+    - name: Record that Gitleaks did not install (Ubuntu)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator playbooks/main.yml post_tasks reports from.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['gitleaks: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# An Ubuntu box provisioned by an older revision carries the universe package,
+# and /usr/bin/gitleaks would lose to /usr/local/bin -- but the stale copy stays
+# on disk and apt keeps it. Remove it so there is one gitleaks.
+- name: Remove the superseded gitleaks apt package (Ubuntu)
+  ansible.builtin.apt:
+    name: gitleaks
+    state: absent
+    purge: false
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Ubuntu'

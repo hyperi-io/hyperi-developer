@@ -27,11 +27,15 @@ dependency:
 driver:
   name: docker
 
+# Ubuntu only. Remediation is about hosts that have been in the field long
+# enough to drift, and there are no deployed Fedora clients to drift. Fedora
+# belongs in initial-deploy coverage (`matrix`), not here.
+#
+# pre_build_image: false so molecule builds an Ansible-compatible layer over the
+# stock image. The base ships no python3, and every module needs one.
 platforms:
-  # pre_build_image: false so molecule builds an Ansible-compatible layer over
-  # the stock image. ubuntu:26.04 ships no python3, and every module needs one.
   - name: hyperi-remediation-ubuntu
-    image: ubuntu:26.04
+    image: docker.io/library/ubuntu:26.04
     pre_build_image: false
     command: /bin/sleep infinity
     privileged: false

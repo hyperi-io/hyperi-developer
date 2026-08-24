@@ -298,7 +298,7 @@ warning and continues.
 | hyperi-ci, semgrep | all | uv-tool (Tier 2) / brew | version |
 | alint | all | cargo (Tier 2) / brew | version |
 | osv-scanner | all | Linux re-fetch (Tier 3) / brew | version / SHA256 |
-| gitleaks | all | distro (apt universe / dnf) / brew | version |
+| gitleaks* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | act | all | Fedora COPR / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | trivy | all | vendor-repo (official aquasecurity apt/dnf) / brew | version |
 | hadolint* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
@@ -377,6 +377,11 @@ runs.
 official vendor apt/dnf repo > official snap/flatpak > manual binary (last
 resort, and the only rung that needs a SHA pin). The `Method` column above is the
 resolved channel per tool - chosen to be the highest auto-updating rung available.
+
+**How current is current enough.** A repo that is ALMOST up to date is fine --
+a few patches, or a minor, behind upstream. A channel that leaves the tool weeks
+or months behind is not, whatever rung it sits on. Measure before promoting, and
+measure the actual package, not the repo's reputation.
 
 **A rung only counts if it actually moves.** "Distro repo" is two different
 things, and the difference decides most of the table:

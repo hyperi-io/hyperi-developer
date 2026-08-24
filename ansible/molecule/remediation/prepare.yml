@@ -139,22 +139,9 @@
     # PATH /usr/local/bin and /snap/bin both precede /usr/bin. Same shadowing
     # class as the stale uv above, reached by a different route.
     # ------------------------------------------------------------------
-    - name: Plant binaries superseded by a distro package (Fedora)
-      ansible.builtin.copy:
-        content: |
-          #!/bin/sh
-          # Fixture for the /usr/local/bin copy an older revision installed,
-          # before {{ item }} moved to the dnf package in /usr/bin.
-          echo "superseded {{ item }} fixture"
-        dest: "/usr/local/bin/{{ item }}"
-        owner: root
-        group: root
-        mode: '0755'
-      loop:
-        - yq          # was a GitHub binary on both distros
-        - kustomize   # was a GitHub binary on both distros
-      when: ansible_facts['distribution'] == 'Fedora'
-
+    # The Fedora binaries superseded by dnf (yq, kustomize) are NOT planted.
+    # This scenario is Ubuntu only, because remediation targets hosts that have
+    # drifted in the field and there are no deployed Fedora clients.
     - name: Install the DBeaver flatpak superseded by the vendor apt repo (Ubuntu)
       community.general.flatpak:
         name: io.dbeaver.DBeaverCommunity

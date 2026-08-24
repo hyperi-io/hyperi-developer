@@ -51,6 +51,10 @@ ours survived. Whether a REPLACEMENT arrived needs a full converge, which is
 lines are not part of its fixture -- the tasks that clear those sit in the
 install path, not under the `removals` tag.
 
+Ubuntu only, deliberately. Remediation targets hosts that have been in the field
+long enough to drift, and there are no deployed Fedora clients to drift. Fedora
+coverage belongs to initial-deploy testing -- `matrix`, still unwritten.
+
 The tag reaches every playbook molecule runs, so `prepare.yml` and `verify.yml`
 carry `tags: always`. Without it the fixture is never planted and nothing is
 ever asserted -- and the scenario passes, vacuously.

@@ -44,6 +44,8 @@
       ansible.builtin.package_facts:
         manager: auto
 
+    # Ubuntu only: prepare.yml installs these through apt, and the names are
+    # Debian's.
     - name: Assert retired packages were removed
       ansible.builtin.assert:
         that:
@@ -61,6 +63,7 @@
         - docker-desktop
       loop_control:
         label: "{{ item }}"
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
     # ==================================================================
     # MUST SURVIVE — the half that stops us becoming destructive
@@ -119,37 +122,10 @@
           uv does not resolve to the stale copy
           (resolved: '{{ verify_uv_which.stdout | default('nothing', true) }}')
 
-    # ==================================================================
-    # CHANNEL MIGRATIONS — a tool that moved to a repo must resolve to the
-    # PACKAGE, not to the binary the old revision left in /usr/local/bin.
-    # Removing the old copy is the whole point: /usr/local/bin precedes
-    # /usr/bin, so a survivor wins forever and no update ever touches it.
-    # ==================================================================
-    - name: Resolve the tools that moved to a distro package (Fedora)
-      ansible.builtin.command: "which {{ item }}"
-      loop:
-        - yq
-        - kustomize
-      register: verify_migrated
-      changed_when: false
-      failed_when: false
-      when: ansible_facts['distribution'] == 'Fedora'
-
-    - name: Assert the migrated tools resolve to the packaged copy
-      ansible.builtin.assert:
-        that:
-          - item.rc == 0
-          - "'/usr/local/bin/' not in item.stdout"
-        fail_msg: >-
-          {{ item.item }} resolves to '{{ item.stdout }}'. It moved to the dnf
-          package in /usr/bin, so a /usr/local/bin survivor shadows it on the
-          default PATH and pins the host to a copy nothing updates.
-        success_msg: "{{ item.item }} resolves to {{ item.stdout }}"
-      loop: "{{ verify_migrated.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item | default('skipped') }}"
-      when: ansible_facts['distribution'] == 'Fedora'
-
+    # The Fedora binary-to-dnf migrations (yq, kustomize) are not asserted here.
+    # This scenario is Ubuntu only -- see molecule.yml -- and the assertion would
+    # need a full converge anyway, since a removals-only run never installs the
+    # package that is supposed to win.
     - name: List the installed flatpaks (Ubuntu)
       ansible.builtin.command: flatpak list --app --columns=application
       register: verify_flatpaks
