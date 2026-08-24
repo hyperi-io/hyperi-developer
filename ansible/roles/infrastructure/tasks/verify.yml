@@ -27,6 +27,7 @@
     - {name: Azure CLI, cmd: az version}
     - {name: gcloud, cmd: gcloud version}
     - {name: checkov, cmd: checkov --version}
+    - {name: terraform-docs, cmd: terraform-docs --version}
     - {name: flarectl, cmd: flarectl --version}
     - {name: wrangler, cmd: wrangler --version}
   loop_control:

@@ -168,7 +168,7 @@ Languages (developer-<lang>; --languages [list] or developer-languages for all):
     developer-c           C/C++ build tools
 
 Infrastructure (infrastructure):
-    cloud             OpenTofu, OpenBao, AWS CLI v2, checkov
+    cloud             OpenTofu, OpenBao, AWS CLI v2, checkov, terraform-docs
     azure             Azure CLI
     gcloud            Google Cloud CLI
     k8s               kubectl, helm, kubectx/kubens, k9s, kind, argocd,

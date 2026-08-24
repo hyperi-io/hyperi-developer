@@ -128,7 +128,7 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     have cargo-install-update && printf '  - cargo-installed tools\n'
     have go       && printf '  - go-installed tools (gopls, govulncheck)\n'
     have npm      && printf '  - npm global tools + pnpm\n'
-    printf '  - static release binaries (kind, argocd, kubeconform, kube-linter, dive, kustomize, k9s)\n'
+    printf '  - static release binaries (kind, argocd, kubeconform, kube-linter, dive, kustomize, k9s, yq, terraform-docs)\n'
     have claude   && printf '  - Claude Code CLI\n'
     [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
@@ -465,11 +465,15 @@ if [[ -n "$ARCH_DEB" ]]; then
         refetch_targz kube-linter stackrox/kube-linter "kube-linter-linux.tar.gz" kube-linter
     fi
     refetch_targz dive        wagoodman/dive        "dive_{VER}_linux_{ARCH}.tar.gz" dive
-    refetch_kustomize
-    # k9s: Fedora installs it from dnf (/usr/bin); only Ubuntu carries the
-    # /usr/local/bin binary, so only re-fetch there or we shadow the dnf copy.
+    refetch_targz terraform-docs terraform-docs/terraform-docs \
+        "terraform-docs-{TAG}-linux-{ARCH}.tar.gz" terraform-docs
+    # k9s, kustomize and yq: Fedora installs these from dnf (/usr/bin); only
+    # Ubuntu carries the /usr/local/bin binary, so only re-fetch there or we
+    # shadow the dnf copy.
     if [[ "$PKG_MGR" == apt ]]; then
         refetch_targz k9s derailed/k9s "k9s_Linux_{ARCH}.tar.gz" k9s
+        refetch_kustomize
+        refetch_raw   yq  mikefarah/yq  "yq_linux_{ARCH}"
     fi
 else
     skip "unknown CPU architecture ($(uname -m)) -- skipping static binaries"

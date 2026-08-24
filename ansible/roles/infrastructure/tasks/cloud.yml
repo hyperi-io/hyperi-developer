@@ -1,5 +1,6 @@
 ---
-# Cloud tools installation (AWS CLI, Helm, OpenTofu, OpenBao)
+# Cloud tools installation (AWS CLI, Helm, OpenTofu, OpenBao, checkov,
+# terraform-docs)
 # Note: kubectl moved to k8s.yml
 #
 # NO HASHICORP TOOLS. HashiCorp relicensed the lot to BUSL in 2023 and IBM
@@ -72,16 +73,35 @@
 # ============================================================================
 # AWS CLI V2 (Linux - official snap, classic confinement)
 # ============================================================================
-# Was the zip installer (`aws/install`): a static unpack with no update path --
-# you must re-run it to upgrade. The official `aws-cli` snap is the highest
-# OS-swept rung (snapd auto-refreshes it). classic confinement is required so
-# the CLI can read ~/.aws and the rest of the host filesystem.
+# Fedora packages awscli2 natively (2.36.0 in updates), which is the right rung
+# and, more to the point, the only one that works: nothing here installs snapd
+# and Fedora does not ship it, so a snap on Fedora is a warning line, not a
+# tool.
 #
-# Needs snapd present. Ubuntu ships it; on Fedora snapd is not installed by
-# default, so if it is absent this warns and carries on (see
-# docs/resilient-deploy.md) rather than silently falling back to an unmanaged
-# static install.
-- name: Install AWS CLI v2 via snap (Linux)
+# Ubuntu keeps the official snap. Its universe `awscli` IS v2 (2.31.35), but
+# universe freezes at release for five years while the AWS CLI ships weekly, so
+# the snap is the one that stays current. classic confinement is required so the
+# CLI can read ~/.aws and the rest of the host filesystem.
+#
+# The snap's DEFAULT track is `v2/stable`; `latest/stable` is still v1. Install
+# without naming a channel, as AWS documents, and do not "fix" it to latest.
+- name: Install AWS CLI v2 (Fedora)
+  block:
+    - name: Install awscli2
+      ansible.builtin.dnf:
+        name: awscli2
+        state: present
+
+  rescue:
+    - name: Record that AWS CLI v2 did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['AWS CLI v2: ' ~ (ansible_failed_result.msg | default('dnf install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install AWS CLI v2 via snap (Ubuntu)
   block:
     - name: Install the aws-cli snap (classic)
       community.general.snap:
@@ -90,13 +110,22 @@
         state: present
 
   rescue:
-    - name: Record that AWS CLI v2 did not install
+    - name: Record that AWS CLI v2 did not install (Ubuntu)
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['AWS CLI v2: ' ~ (ansible_failed_result.msg | default('snap install failed (snapd present?)'))] }}
+             + ['AWS CLI v2: ' ~ (ansible_failed_result.msg | default('snap install failed'))] }}
 
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# A Fedora box provisioned by an older revision carries the snap alongside the
+# dnf package, and the snap's /snap/bin can win on PATH.
+- name: Remove the aws-cli snap (Fedora -- superseded by awscli2)
+  community.general.snap:
+    name: aws-cli
+    state: absent
+  failed_when: false
+  when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
 # AWS SESSION MANAGER PLUGIN (for aws ssm start-session)
@@ -258,30 +287,58 @@
     state: present
   when: ansible_facts['distribution'] == 'Fedora'
 
-# OpenBao publishes no APT repo. It was a hand-pinned GitHub release .deb -- the
-# bottom rung of the packaging ladder (nothing auto-updates it), which is why
-# hosts out there carry a hand-installed openbao with no update path. The
-# publisher-verified `openbao` snap is the OS-swept replacement: snapd
-# auto-refreshes it. classic confinement is required. Fedora keeps its native
-# dnf package (a higher rung, above); macOS uses brew.
+# OpenBao now runs an official APT repo, so Ubuntu takes it. It replaces the
+# `openbao` snap, which never installed anything: both `2/stable` and
+# `latest/stable` are empty (only beta/edge carry a revision), so the task
+# failed into its rescue and every box got a warning line instead of `bao`.
+# The snap also asked for classic confinement on a strictly-confined snap.
+#
+# The repo is signed by the `[S]` subkey E617DCD4065C2AFC0B2CF7A7BA8BC08C0F691F94
+# of the project key below -- verify that chain again before changing the URL.
+# Fedora keeps its native dnf package (a higher rung); macOS uses brew.
 #
 # (openbao_version / openbao_deb_arch in defaults/main.yml are now unused on
 # Ubuntu -- kept for the opt-in --pinned path, which is out of scope here.)
-- name: Install OpenBao via snap (Ubuntu)
+- name: Install OpenBao from the official repository (Ubuntu)
   block:
-    - name: Install the openbao snap (classic)
-      community.general.snap:
+    - name: Add the OpenBao GPG key
+      ansible.builtin.get_url:
+        url: https://openbao.org/assets/openbao-gpg-pub-20240618.asc
+        dest: /etc/apt/keyrings/openbao.asc
+        mode: '0644'
+
+    - name: Add the OpenBao repository
+      ansible.builtin.deb822_repository:
         name: openbao
-        classic: true
+        types: deb
+        uris: "https://pkgs.openbao.org/deb/"
+        suites: stable
+        components: main
+        signed_by: /etc/apt/keyrings/openbao.asc
         state: present
+
+    - name: Install OpenBao
+      ansible.builtin.apt:
+        name: openbao
+        state: present
+        update_cache: true
 
   rescue:
     - name: Record that OpenBao did not install
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['OpenBao: ' ~ (ansible_failed_result.msg | default('snap install failed'))] }}
+             + ['OpenBao: ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
 
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# The snap never carried a stable revision, but a box that ran an older
+# revision of this role may still have it parked in a broken state.
+- name: Remove the openbao snap (Ubuntu -- superseded by the official repo)
+  community.general.snap:
+    name: openbao
+    state: absent
+  failed_when: false
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 # ============================================================================
@@ -372,3 +429,57 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - infrastructure_checkov.rc | default(0) != 0
+
+# ============================================================================
+# TERRAFORM-DOCS - module reference generator for OpenTofu / Terraform
+# ============================================================================
+# Engine-agnostic despite the name -- it parses `.tf` whichever binary runs it,
+# and OpenTofu ships no native `tofu docs` (opentofu/opentofu#2081 open).
+#
+# Module code must stay in `.tf`: `.tofu` parsing is limited, so a `.tofu`
+# module yields an incomplete inputs/outputs table rather than failing loudly.
+#
+# No distro packages it. The project ships release tarballs, so Linux takes the
+# binary (Tier 3: hyperi-update re-fetches it) and macOS the brew formula --
+# neither path needs a Go toolchain.
+- name: Install terraform-docs (macOS)
+  community.general.homebrew:
+    name: terraform-docs
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install terraform-docs (Linux)
+  block:
+    - name: Get latest terraform-docs version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/terraform-docs/terraform-docs/releases/latest
+        return_content: true
+      register: terraform_docs_latest
+      check_mode: false
+
+    # The asset carries the tag verbatim, v and all:
+    # terraform-docs-v0.24.0-linux-amd64.tar.gz. The tarball holds LICENSE,
+    # README.md and the binary at the root, so only the binary is extracted.
+    - name: Download and extract terraform-docs
+      ansible.builtin.unarchive:
+        src: >-
+          https://github.com/terraform-docs/terraform-docs/releases/download/{{
+          terraform_docs_latest.json.tag_name }}/terraform-docs-{{
+          terraform_docs_latest.json.tag_name }}-linux-{{ hyperi_arch_deb }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: terraform-docs
+        mode: '0755'
+      when: not ansible_check_mode
+
+  rescue:
+    - name: Record that terraform-docs did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['terraform-docs: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

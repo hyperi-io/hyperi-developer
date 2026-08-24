@@ -146,7 +146,7 @@ the Claude Code binary.
 | astral suite: uv, ruff, ty (uv bundles `uv audit` + `uv check`) | all | Fedora dnf / macOS brew; Ubuntu has no apt package (see Auto-update) | version / SHA256 |
 | CLI utils (jq, gron, bat, fzf, ripgrep, fd, git-delta, moreutils, miller, rsync, tmux, htop, wget, shellcheck, age, parallel, ...) | all | distro repo / brew | version |
 | sd | all | distro (apt/dnf) / brew | version |
-| yq (mikefarah; apt `yq` is a different tool) | all | Fedora dnf / Ubuntu snap / brew | version |
+| yq (mikefarah; apt `yq` is kislyuk/yq, a different tool) | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | lazygit | all | Fedora COPR / Ubuntu apt (re-fetch on 24.04 LTS) / brew | version / SHA256 |
 | docker (Engine on Linux, CLI-only on macOS) | all | vendor-repo / brew | version |
 | git, git-lfs, git-filter-repo, gh | all | distro/PPA/brew | version |
@@ -160,7 +160,7 @@ the Claude Code binary.
 | VS Code | all | vendor-repo / cask | version |
 | Ghostty | Fedora (COPR) / macOS (cask) | vendor-repo / cask | version |
 | Ghostty | Ubuntu | github-binary (.deb) | SHA256 |
-| DBeaver | Linux flatpak / macOS cask | flatpak / cask | version |
+| DBeaver | all | Ubuntu vendor-repo (dbeaver.io/debs) / Fedora flatpak / cask | version |
 | VS Code privacy profile (opt-in: `-e vscode_privacy_enabled=true`) | all | bundled script (`hyperi-vscode-privacy`) | n/a |
 
 The privacy profile is off by default because it edits a personal
@@ -225,7 +225,8 @@ That tag installs both tools, writes the caps, and schedules the prune
 |---|---|---|---|
 | go, delve | all | distro repo / brew | version |
 | gopls | all | go install | n/a |
-| golangci-lint, gosec, govulncheck | all | github-binary / go install | SHA256 |
+| golangci-lint | all | Fedora dnf / Ubuntu official snap / brew | version |
+| gosec, govulncheck | all | Fedora dnf / Ubuntu `go install` / brew | version |
 
 #### developer-python
 
@@ -265,13 +266,14 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 | kubectx, kubens | all | distro (apt universe / dnf) / brew | version |
 | k9s | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | kind, argocd (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
-| kustomize (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
+| kustomize | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | checkov | all | uv-tool (Tier 2) / brew | version |
-| dive | all | Ubuntu snap / Fedora re-fetch (Tier 3) / brew | version / SHA256 |
-| aws-cli v2 | all | official snap / brew | version |
+| terraform-docs (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
+| dive (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
+| aws-cli v2 | all | Fedora dnf (`awscli2`) / Ubuntu official snap / brew | version |
 | aws-vault (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
 | opentofu | all | vendor-repo (packages.opentofu.org) / brew | version |
-| openbao | all | Ubuntu snap / Fedora dnf / brew | version |
+| openbao | all | vendor-repo (pkgs.openbao.org) / Fedora dnf / brew | version |
 | azure-cli, google-cloud-cli | all | vendor-repo / cask | version |
 | clickhouse-client, rpk, valkey-cli, vector (the `data` group) | Linux; macOS partial | vendor-repo / distro | version |
 | wrangler (the `cloudflare` group) | all | npm-global / brew | version |
@@ -372,6 +374,32 @@ official vendor apt/dnf repo > official snap/flatpak > manual binary (last
 resort, and the only rung that needs a SHA pin). The `Method` column above is the
 resolved channel per tool - chosen to be the highest auto-updating rung available.
 
+**A rung only counts if it actually moves.** "Distro repo" is two different
+things, and the difference decides most of the table:
+
+- **Fedora updates packages within a release.** kustomize matches upstream
+  exactly, k9s matches, yq trails by a patch. Genuinely swept.
+- **Ubuntu LTS universe freezes at release for five years.** lazygit 0.57.0
+  against upstream 0.64.1, gitleaks 8.16.0 against 8.30.1. That is a pin
+  wearing a repo's clothes.
+
+So for a fast-moving tool a Tier 3 binary that `hyperi-update` re-fetches beats
+a universe package, and most distro promotions land on Fedora only. Check what
+a package actually ships before promoting a tool onto it -- and check it is the
+same tool at all. Three name collisions have already been ruled out: Ubuntu
+`tea` is a GUI text editor, Ubuntu `yq` is kislyuk/yq, and Fedora `act` is
+Autodesk's Automatic Component Toolkit.
+
+**Container format by distro: Ubuntu uses snap, Fedora uses flatpak.** Neither
+is used where a repo, brew or cask can keep the tool current instead. What
+remains on a container format, and why nothing better exists: the `aws-cli`
+snap on Ubuntu (universe's `awscli` is v2 but frozen), the `golangci-lint` snap
+on Ubuntu (no apt package; the snap tracks upstream exactly), the `actionlint`
+snap on Ubuntu (no apt package and no vendor repo), and the DBeaver flatpak on
+Fedora (no vendor dnf repo). Ubuntu installs no flatpak app at all; the flatpak
+binary stays only so the tombstones in `removals.yml` can clear ones an older
+revision left behind.
+
 ## Auto-update
 
 Every tool stays current; the mechanism depends on its channel. Three tiers:
@@ -381,6 +409,11 @@ repo, or an official snap are refreshed by the host's own updates:
 `unattended-upgrades` / `dnf-automatic` on Linux, snapd auto-refresh, or
 `brew upgrade` on macOS. The majority of tools. Nothing HyperI-specific runs.
 
+Swept does not mean current: an Ubuntu universe package is refreshed only for
+security, so it holds the version it shipped with for the life of the release
+(see the ladder note above). A vendor repo, a snap and Fedora's own packages
+all track upstream properly.
+
 **Tier 2 - language-manager tools.** Tools installed by uv / cargo / go / npm
 have no OS channel; `hyperi-update` refreshes them via each manager
 (`uv tool upgrade --all`, `rustup update && cargo install-update -a`,
@@ -389,8 +422,11 @@ cargo-audit, cargo-hack, typos, govulncheck, maid.
 
 **Tier 3 - static binaries.** A handful ship only as a GitHub-release binary with
 no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter,
-aws-vault, kustomize, tea (plus a few tools on whichever single distro lacks a
-package). `hyperi-update` re-fetches the latest release for these.
+aws-vault, dive, tea, terraform-docs (plus a few tools on whichever single
+distro lacks a package -- k9s, kustomize and yq are Ubuntu-only here, since
+Fedora packages all three). `hyperi-update` re-fetches the latest release for
+these, and skips the ones the running distro installs from a repo so the
+binary cannot shadow the packaged copy.
 
 `hyperi-update` (the "update my system" command) runs all three tiers plus the
 OS / snap / flatpak sweep, so one command brings everything current. soe

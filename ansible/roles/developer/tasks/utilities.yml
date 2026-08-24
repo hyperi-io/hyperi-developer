@@ -112,8 +112,31 @@
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
-# yq - Binary download (Linux only, macOS uses Homebrew above)
-- name: Install yq
+# yq - dnf on Fedora, binary download on Ubuntu, Homebrew on macOS.
+#
+# Ubuntu's `yq` is a DIFFERENT TOOL: universe ships kislyuk/yq 3.4.3, a jq
+# wrapper, not mikefarah/yq v4. Installing it would swap the CLI out from under
+# every script here, so Ubuntu takes the binary.
+- name: Install yq (Fedora)
+  block:
+    - name: Install yq via dnf (Fedora)
+      ansible.builtin.dnf:
+        name: yq
+        state: present
+
+  rescue:
+    - name: Record that yq did not install (Fedora)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately not
+      # role-prefixed: it is the shared accumulator playbooks/main.yml reports
+      # from. See docs/resilient-deploy.md.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['yq: ' ~ (ansible_failed_result.msg | default('dnf install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install yq (Ubuntu)
   block:
     - name: Download yq
       ansible.builtin.get_url:
@@ -122,7 +145,7 @@
         mode: '0755'
 
   rescue:
-    - name: Record that yq did not install
+    - name: Record that yq did not install (Ubuntu)
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately not
       # role-prefixed: it is the shared accumulator playbooks/main.yml reports
       # from. See docs/resilient-deploy.md.
@@ -131,7 +154,7 @@
           {{ deploy_warnings | default([])
              + ['yq: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  when: ansible_facts['distribution'] == 'Ubuntu'
 
 # sd - sane sed replacement (binary download for Fedora, apt for Ubuntu)
 - name: Install sd (Fedora)
@@ -223,7 +246,13 @@
 - name: Install GUI utilities
   when: has_gnome | default(false)
   block:
-    # Flatpak (needed for GUI apps)
+    # Container format by distro: Ubuntu uses snap, Fedora uses flatpak. Only
+    # Fedora gets Flathub, because nothing installs a flatpak app on Ubuntu any
+    # more (DBeaver, the last one, took the vendor apt repo).
+    #
+    # The flatpak BINARY still goes on Ubuntu: the tombstones in removals.yml
+    # uninstall flatpaks an older revision left behind, and they need it present
+    # to do that.
     - name: Install Flatpak (Ubuntu)
       ansible.builtin.apt:
         name: flatpak
@@ -236,13 +265,13 @@
         state: present
       when: ansible_facts['distribution'] == 'Fedora'
 
-    - name: Add Flathub repository (system-wide)
+    - name: Add Flathub repository (system-wide, Fedora)
       community.general.flatpak_remote:
         name: flathub
         state: present
         flatpakrepo_url: https://flathub.org/repo/flathub.flatpakrepo
         method: system
-      when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+      when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
 # Hyperi ADMIN TOOLS
