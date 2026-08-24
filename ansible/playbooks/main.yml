@@ -120,13 +120,13 @@
       tags: ['always']
 
     # We support n and n-1, so the declared minimum IS n-1: Fedora 43, Ubuntu
-    # 24.04 LTS. Fedora 42 went EOL 2026-05-27 and this gate still let it in.
+    # 24.04 LTS.
     #
-    # NOTE this duplicates the gate in roles/developer/tasks/init.yml, which
-    # reads min_fedora_version / min_ubuntu_version from that role's defaults.
-    # Two gates that can disagree is how the EOL version survived here after
-    # the role was fixed. Giving the gate one SSoT is S1.T0c; until then, bump
-    # BOTH, together, along with ansible/molecule/vars.yml.
+    # Hardcoded because pre_tasks run before role defaults are in scope, which
+    # makes this a second gate alongside roles/developer/tasks/init.yml. Two
+    # gates that could disagree is how Fedora 42 kept passing here after the
+    # role was fixed, so `tools/check_release_matrix.py` now fails the test run
+    # when these numbers drift from ansible/molecule/vars.yml.
     - name: Validate supported operating system
       ansible.builtin.fail:
         msg: >-

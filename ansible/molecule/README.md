@@ -52,9 +52,12 @@ quota get rate-limited -- a hard assertion would fail on GitHub's limiter rather
 than on the playbook. The rescue path turns those into `deploy_warnings`, which
 is the designed behaviour.
 
-`../vars.yml` remains the SSoT for WHICH releases are supported. molecule.yml
-cannot include another YAML file, so its platform list duplicates it and must be
-bumped alongside.
+`../vars.yml` is the SSoT for WHICH releases are supported. Two files
+necessarily restate it -- this scenario's platform list, because molecule cannot
+include another YAML file, and the OS gate's `min_fedora_version` /
+`min_ubuntu_version`. `tools/check_release_matrix.py` runs in the test gate and
+fails on any disagreement, so the window is bumped in `vars.yml` and the build
+tells you what else to move.
 
 `remediation` needs the docker driver, which molecule no longer bundles:
 

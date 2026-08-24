@@ -18,9 +18,9 @@
 # full-install gate and hard-fail on a missing tool, docker included, so they
 # cannot pass a partial converge. verify.yml here is the assertion layer.
 #
-# `../vars.yml` stays the SSoT for WHICH releases are supported. molecule.yml
-# cannot include another YAML file, so the platform list below duplicates it and
-# must be bumped with it.
+# `../vars.yml` is the SSoT for WHICH releases are supported. molecule.yml cannot
+# include another YAML file, so the platform list below restates it and
+# `tools/check_release_matrix.py` fails the test run on any disagreement.
 
 dependency:
   name: galaxy
