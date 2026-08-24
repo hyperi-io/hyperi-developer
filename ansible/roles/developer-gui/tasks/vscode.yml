@@ -100,8 +100,12 @@
 # We skip applying our config if either:
 #   (a) the operator already manages these keys via /etc/sysctl.conf or
 #       /etc/sysctl.d/ (don't fight existing intent), or
-#   (b) current live values already meet or exceed our targets
+#   (b) every live value already meets or exceeds our target
 #       (somebody already raised them — including via runtime sysctl).
+#
+# Targets are a FLOOR, applied per key. A box tuned to 1,000,000 watches but
+# stock elsewhere still needs the other two raised, and writing the target set
+# wholesale there would drop its watches to 524288.
 #
 # /usr/lib/sysctl.d/ is intentionally NOT treated as "operator-managed" since
 # that's where distro/package defaults live, not intentional overrides.
@@ -157,15 +161,21 @@
           register: inotify_other_owners
           changed_when: false
 
+        # Per key, the higher of live and target -- so raising one key never
+        # lowers another that is already above the floor.
         - name: Decide whether to manage inotify limits
           ansible.builtin.set_fact:
             inotify_other_owned: "{{ (inotify_other_owners.stdout | trim) | length > 0 }}"
-            inotify_values_sufficient: >-
-              {{
-                inotify_live['fs.inotify.max_user_watches']    >= inotify_targets['fs.inotify.max_user_watches']
-                and inotify_live['fs.inotify.max_user_instances'] >= inotify_targets['fs.inotify.max_user_instances']
-                and inotify_live['fs.inotify.max_queued_events']  >= inotify_targets['fs.inotify.max_queued_events']
-              }}
+            inotify_effective: >-
+              {{ dict(inotify_targets.keys() | list
+                      | zip(inotify_targets.keys() | list
+                            | map('extract', inotify_live) | list
+                            | zip(inotify_targets.values() | list)
+                            | map('max') | list)) }}
+
+        - name: Note whether any inotify limit is below the floor
+          ansible.builtin.set_fact:
+            inotify_values_sufficient: "{{ inotify_effective == inotify_live }}"
 
         - name: Report skip reason (existing operator-managed config)
           ansible.builtin.debug:
@@ -190,9 +200,9 @@
               #
               # See: https://code.visualstudio.com/docs/setup/linux
               #      (search: "Visual Studio Code is unable to watch for file changes")
-              fs.inotify.max_user_watches = {{ inotify_targets['fs.inotify.max_user_watches'] }}
-              fs.inotify.max_user_instances = {{ inotify_targets['fs.inotify.max_user_instances'] }}
-              fs.inotify.max_queued_events = {{ inotify_targets['fs.inotify.max_queued_events'] }}
+              fs.inotify.max_user_watches = {{ inotify_effective['fs.inotify.max_user_watches'] }}
+              fs.inotify.max_user_instances = {{ inotify_effective['fs.inotify.max_user_instances'] }}
+              fs.inotify.max_queued_events = {{ inotify_effective['fs.inotify.max_queued_events'] }}
             dest: "{{ inotify_managed_file }}"
             mode: '0644'
           register: inotify_sysctl_file
