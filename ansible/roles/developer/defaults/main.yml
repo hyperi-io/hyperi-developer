@@ -5,15 +5,14 @@
 
 # Supported platforms (used for validation in init.yml)
 #
-# We support n and n-1, so the declared minimum IS n-1. Both slots roll within
-# a year -- when they do, bump these AND ansible/molecule/vars.yml together.
+# We support n and n-1, so the declared minimum IS n-1. `ansible/molecule/
+# vars.yml` is the SSoT for that window; these two mirror its n-1 entries and
+# `tools/check_release_matrix.py` fails the test run when they disagree.
 #
-#   Fedora 44 (n), 43 (n-1). Fedora only ever supports two releases, so its
-#   n-2 is always EOL: 42 went EOL in May 2026, and this was still pinned to
-#   it. An EOL minimum means we claim to support a release whose mirrors are
-#   archived and whose security updates have stopped.
-#
-#   Ubuntu 26.04 LTS (n), 24.04 LTS (n-1).
+# An EOL minimum claims support for a release whose mirrors are archived and
+# whose security updates have stopped. Fedora only ever supports two releases,
+# so its n-2 is always EOL -- 42 died in May 2026 while this still pinned it,
+# which is why the drift is now checked rather than commented.
 supported_distros:
   - Fedora
   - Ubuntu

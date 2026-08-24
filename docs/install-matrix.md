@@ -225,7 +225,7 @@ That tag installs both tools, writes the caps, and schedules the prune
 |---|---|---|---|
 | go, delve | all | distro repo / brew | version |
 | gopls | all | go install | n/a |
-| golangci-lint | all | Fedora dnf / Ubuntu official snap / brew | version |
+| golangci-lint* (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
 | gosec, govulncheck | all | Fedora dnf / Ubuntu `go install` / brew | version |
 
 #### developer-python
@@ -279,6 +279,10 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 | wrangler (the `cloudflare` group) | all | npm-global / brew | version |
 | flarectl (the `cloudflare` group) | all | `go install` from source / brew | source tag |
 
+Every macOS path resolves to brew or a cask. The language managers that remain
+there carry no formula at all: `alint` and `maid` have none, and semantic-release
+needs its plugin set installed alongside it, which only npm gives.
+
 Cloudflare publishes no flarectl binary and no distro packages it, so both
 platforms build it from source. It also lives on cloudflare-go's `v0` branch --
 from v4 that SDK is generated and carries no `cmd/` directory. The Linux build
@@ -294,7 +298,7 @@ warning and continues.
 | hyperi-ci, semgrep | all | uv-tool (Tier 2) / brew | version |
 | alint | all | cargo (Tier 2) / brew | version |
 | osv-scanner | all | Linux re-fetch (Tier 3) / brew | version / SHA256 |
-| gitleaks | all | distro (apt universe / dnf) / brew | version |
+| gitleaks* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | act | all | Fedora COPR / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
 | trivy | all | vendor-repo (official aquasecurity apt/dnf) / brew | version |
 | hadolint* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
@@ -374,6 +378,11 @@ official vendor apt/dnf repo > official snap/flatpak > manual binary (last
 resort, and the only rung that needs a SHA pin). The `Method` column above is the
 resolved channel per tool - chosen to be the highest auto-updating rung available.
 
+**How current is current enough.** A repo that is ALMOST up to date is fine --
+a few patches, or a minor, behind upstream. A channel that leaves the tool weeks
+or months behind is not, whatever rung it sits on. Measure before promoting, and
+measure the actual package, not the repo's reputation.
+
 **A rung only counts if it actually moves.** "Distro repo" is two different
 things, and the difference decides most of the table:
 
@@ -393,12 +402,25 @@ Autodesk's Automatic Component Toolkit.
 **Container format by distro: Ubuntu uses snap, Fedora uses flatpak.** Neither
 is used where a repo, brew or cask can keep the tool current instead. What
 remains on a container format, and why nothing better exists: the `aws-cli`
-snap on Ubuntu (universe's `awscli` is v2 but frozen), the `golangci-lint` snap
-on Ubuntu (no apt package; the snap tracks upstream exactly), the `actionlint`
-snap on Ubuntu (no apt package and no vendor repo), and the DBeaver flatpak on
-Fedora (no vendor dnf repo). Ubuntu installs no flatpak app at all; the flatpak
-binary stays only so the tombstones in `removals.yml` can clear ones an older
-revision left behind.
+snap on Ubuntu (universe's `awscli` is v2 but frozen), the `actionlint` snap on
+Ubuntu (no apt package and no vendor repo), and the DBeaver flatpak on Fedora
+(no vendor dnf repo). Ubuntu installs no flatpak app at all; the flatpak binary
+stays only so the tombstones in `removals.yml` can clear ones an older revision
+left behind.
+
+**A pinned tool cannot live on a snap or a distro package.** Neither channel
+takes an arbitrary version, so a tool in `hyperi_versions` must come from a
+release binary or `--pinned` silently installs whatever the channel holds. That
+is why golangci-lint is a Tier 3 binary on Linux despite Fedora packaging it:
+the dnf build trailed the CI pin, so a "pinned" box was running a different
+linter from CI.
+
+**Moving a tool between channels leaves the old copy behind, and it wins.**
+`/usr/local/bin` and `/snap/bin` both precede `/usr/bin` on the default PATH, so
+a binary superseded by a package shadows it forever and no update ever touches
+it. Every channel move needs a tombstone for the path it vacated, and the
+`remediation` molecule scenario asserts the replacement is what `which` resolves
+to -- not merely that the new thing installed.
 
 ## Auto-update
 
@@ -422,11 +444,15 @@ cargo-audit, cargo-hack, typos, govulncheck, maid.
 
 **Tier 3 - static binaries.** A handful ship only as a GitHub-release binary with
 no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter,
-aws-vault, dive, tea, terraform-docs (plus a few tools on whichever single
-distro lacks a package -- k9s, kustomize and yq are Ubuntu-only here, since
-Fedora packages all three). `hyperi-update` re-fetches the latest release for
-these, and skips the ones the running distro installs from a repo so the
-binary cannot shadow the packaged copy.
+aws-vault, dive, tea, terraform-docs, golangci-lint (plus a few tools on
+whichever single distro lacks a package -- k9s, kustomize and yq are Ubuntu-only
+here, since Fedora packages all three). `hyperi-update` re-fetches the latest
+release for these, and skips the ones the running distro installs from a repo so
+the binary cannot shadow the packaged copy.
+
+golangci-lint is here for a different reason: Fedora does package it, but the
+package cannot honour the `hyperi_versions` pin and trailed it. A CI-parity tool
+belongs on the only channel that takes a version.
 
 `hyperi-update` (the "update my system" command) runs all three tiers plus the
 OS / snap / flatpak sweep, so one command brings everything current. soe

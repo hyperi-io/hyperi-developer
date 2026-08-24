@@ -8,19 +8,30 @@
 # default. The role is intentionally thin.
 
 # mypy is OPT-IN: `ty` (from the base) is the default type checker. Install mypy
-# only when explicitly requested (`--tags mypy`). uv is present (base astral),
-# so a user-owned uv tool install keeps it refreshable by hyperi-update.
-- name: Install mypy (opt-in legacy type checker; ty is the default)
+# only when explicitly requested (`--tags mypy`).
+#
+# brew on macOS, uv tool on Linux (Tier 2 -- hyperi-update refreshes it via
+# `uv tool upgrade --all`). No distro packages it.
+- name: Install mypy (macOS)
+  community.general.homebrew:
+    name: mypy
+    state: present
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  tags: ['mypy', 'never']
+
+- name: Install mypy (Linux)
   ansible.builtin.command:
     cmd: uv tool install mypy
   environment:
     PATH: "{{ user_home }}/.cargo/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
-  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become: true
   become_user: "{{ actual_user }}"
   register: devpy_mypy_install
   changed_when: "'already installed' not in (devpy_mypy_install.stderr | default(''))"
   failed_when: false
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'MacOSX']
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   tags: ['mypy', 'never']
 
 - name: Display the Python tier

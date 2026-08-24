@@ -225,6 +225,15 @@
         state: present
       when: ansible_facts['distribution'] == 'Fedora'
 
+    # Fedora installed kustomize to /usr/local/bin before it moved to dnf
+    # (/usr/bin). /usr/local/bin precedes /usr/bin on the default PATH, so the
+    # old copy would keep winning and nothing would ever update it.
+    - name: Remove the superseded /usr/local/bin/kustomize (Fedora)
+      ansible.builtin.file:
+        path: /usr/local/bin/kustomize
+        state: absent
+      when: ansible_facts['distribution'] == 'Fedora'
+
     - name: Get kustomize releases (Ubuntu)
       ansible.builtin.uri:
         url: https://api.github.com/repos/kubernetes-sigs/kustomize/releases

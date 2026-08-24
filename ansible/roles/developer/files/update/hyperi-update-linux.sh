@@ -128,7 +128,7 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     have cargo-install-update && printf '  - cargo-installed tools\n'
     have go       && printf '  - go-installed tools (gopls, govulncheck)\n'
     have npm      && printf '  - npm global tools + pnpm\n'
-    printf '  - static release binaries (kind, argocd, kubeconform, kube-linter, dive, kustomize, k9s, yq, terraform-docs)\n'
+    printf '  - static release binaries (kind, argocd, kubeconform, kube-linter, dive, kustomize, k9s, yq, terraform-docs, golangci-lint)\n'
     have claude   && printf '  - Claude Code CLI\n'
     [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
@@ -435,6 +435,28 @@ refetch_targz() {
     rm -rf "$tmp" "$dir"
 }
 
+# refetch_targz_nested <name> <repo> <asset-template>  -- as refetch_targz, but
+# the binary sits one directory deep in the tarball.
+refetch_targz_nested() {
+    local name="$1" repo="$2" tmpl="$3" tag ver asset url tmp dir
+    have "$name" || { skip "$name not installed"; return; }
+    tag="$(gh_latest_tag "$repo")"
+    [[ -n "$tag" ]] || { FAILURES+=("$name (no release tag)"); return; }
+    ver="${tag#v}"
+    asset="${tmpl//\{TAG\}/$tag}"; asset="${asset//\{VER\}/$ver}"; asset="${asset//\{ARCH\}/$ARCH_DEB}"
+    url="https://github.com/$repo/releases/download/$tag/$asset"
+    tmp="$(mktemp)"; dir="$(mktemp -d)"
+    if curl -fsSL "$url" -o "$tmp" \
+        && tar -xzf "$tmp" -C "$dir" --strip-components=1 --wildcards "*/$name" 2>/dev/null \
+        && [[ -s "$dir/$name" ]] && is_elf "$dir/$name"; then
+        sudo install -m 0755 "$dir/$name" "/usr/local/bin/$name" && ok "$name -> $tag" \
+            || FAILURES+=("$name (install)")
+    else
+        FAILURES+=("$name (download)")
+    fi
+    rm -rf "$tmp" "$dir"
+}
+
 # kustomize is a monorepo: /releases/latest can point at a non-CLI component, so
 # pull the newest kustomize CLI asset URL straight from the releases list.
 refetch_kustomize() {
@@ -467,6 +489,8 @@ if [[ -n "$ARCH_DEB" ]]; then
     refetch_targz dive        wagoodman/dive        "dive_{VER}_linux_{ARCH}.tar.gz" dive
     refetch_targz terraform-docs terraform-docs/terraform-docs \
         "terraform-docs-{TAG}-linux-{ARCH}.tar.gz" terraform-docs
+    refetch_targz_nested golangci-lint golangci/golangci-lint \
+        "golangci-lint-{VER}-linux-{ARCH}.tar.gz"
     # k9s, kustomize and yq: Fedora installs these from dnf (/usr/bin); only
     # Ubuntu carries the /usr/local/bin binary, so only re-fetch there or we
     # shadow the dnf copy.

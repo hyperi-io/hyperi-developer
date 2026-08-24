@@ -1,0 +1,5 @@
+---
+# Clean install of the CLI base. No fixture and no drift -- a fresh box.
+
+- name: Install onto a fresh host
+  ansible.builtin.import_playbook: ../../playbooks/main.yml

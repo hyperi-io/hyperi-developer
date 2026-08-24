@@ -119,15 +119,19 @@
 # CI-parity linters/scanners (the Go gates hyperi-ci drives).
 # ============================================================
 
-# golangci-lint: dnf on Fedora, official snap on Ubuntu, brew on macOS.
+# golangci-lint: GitHub release binary on Linux (Tier 3), brew on macOS.
 #
-# Fedora takes dnf because nothing here installs snapd and Fedora does not ship
-# it, so the snap was a warning line rather than a tool. dnf trails upstream a
-# little (2.11.3 against 2.13.1) -- an installed linter beats a current one that
-# is absent.
+# `hyperi_versions` pins it for CI parity, and neither a snap nor a dnf package
+# can honour a version pin -- so under `--pinned` the box ran whatever the
+# channel happened to hold instead of the version CI runs. The release binary is
+# the only Linux channel that takes the pin.
 #
-# Ubuntu keeps the snap: it is classic-confined, snapd refreshes it, and it
-# tracks upstream exactly. Ubuntu packages golangci-lint nowhere.
+# It is also the current one: Fedora's dnf package trails two minors behind
+# upstream, and the snap cannot install on Fedora at all because nothing here
+# installs snapd.
+#
+# The asset drops the leading v (v2.12.2 -> golangci-lint-2.12.2-linux-amd64)
+# and nests the binary one directory deep.
 - name: Install golangci-lint (macOS)
   community.general.homebrew:
     name: golangci-lint
@@ -136,51 +140,56 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Install golangci-lint (Fedora)
+- name: Install golangci-lint (Linux)
   block:
-    - name: Install golangci-lint via dnf (Fedora)
-      ansible.builtin.dnf:
-        name: golangci-lint
-        state: present
+    - name: Get latest golangci-lint version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/golangci/golangci-lint/releases/latest
+        return_content: true
+      register: golangci_latest
+      check_mode: false
+      when: not (hyperi_pinned | default(false) and 'golangci-lint' in (hyperi_versions | default({})))
+
+    - name: Resolve the golangci-lint tag (pinned or latest)
+      ansible.builtin.set_fact:
+        golangci_ref: >-
+          {{ hyperi_versions['golangci-lint']
+             if (hyperi_pinned | default(false) and 'golangci-lint' in (hyperi_versions | default({})))
+             else golangci_latest.json.tag_name }}
+
+    - name: Download and extract golangci-lint
+      ansible.builtin.unarchive:
+        src: >-
+          https://github.com/golangci/golangci-lint/releases/download/{{ golangci_ref | trim }}/golangci-lint-{{
+          golangci_ref | trim | regex_replace('^v', '') }}-linux-{{ hyperi_arch_deb }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        extra_opts:
+          - --strip-components=1
+          - --wildcards
+          - "*/golangci-lint"
+        mode: '0755'
+      when: not ansible_check_mode
 
   rescue:
-    - name: Record that golangci-lint did not install (Fedora)
+    - name: Record that golangci-lint did not install (Linux)
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
       # accumulator reported by playbooks/main.yml post_tasks.
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['golangci-lint: ' ~ (ansible_failed_result.msg | default('dnf install failed'))] }}
+             + ['golangci-lint: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
-  when: ansible_facts['distribution'] == 'Fedora'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Install golangci-lint (Ubuntu — snap)
-  block:
-    - name: Install golangci-lint via snap (Ubuntu)
-      community.general.snap:
-        name: golangci-lint
-        classic: true
-        state: present
-
-  rescue:
-    - name: Record that golangci-lint did not install (Ubuntu)
-      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
-      # accumulator reported by playbooks/main.yml post_tasks.
-      ansible.builtin.set_fact:
-        deploy_warnings: >-
-          {{ deploy_warnings | default([])
-             + ['golangci-lint: ' ~ (ansible_failed_result.msg | default('snap install failed'))] }}
-
-  when: ansible_facts['distribution'] == 'Ubuntu'
-
-# A Fedora box provisioned by an older revision carries the snap alongside the
-# dnf package, and the snap's /snap/bin can win on PATH.
-- name: Remove the golangci-lint snap (Fedora — superseded by dnf)
+# The snap shipped on both distros before this. /snap/bin can win on PATH over
+# /usr/local/bin, so leaving it turns the upgrade into a silent no-op.
+- name: Remove the golangci-lint snap (Linux — superseded by the release binary)
   community.general.snap:
     name: golangci-lint
     state: absent
   failed_when: false
-  when: ansible_facts['distribution'] == 'Fedora'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # gosec: Fedora dnf (OS-swept), Ubuntu go install (no distro package), brew macOS.
 - name: Install gosec (macOS)

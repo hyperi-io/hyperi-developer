@@ -29,7 +29,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 TARGET="$REPO_ROOT/ansible/roles/developer/files/update/hyperi-update-linux.sh"
 
-# n and n-1, matching ansible/molecule/vars.yml. Keep them in step.
+# n and n-1. ansible/molecule/vars.yml is the SSoT; tools/check_release_matrix.py
+# fails the test run when this list drifts from it.
 DEFAULT_IMAGES=(
     "ubuntu:26.04"
     "ubuntu:24.04"

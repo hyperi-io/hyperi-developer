@@ -15,10 +15,20 @@
 #
 # Adding to this fixture: only add what you have OBSERVED on a real host.
 # A fixture that tests our assumptions rather than reality is worse than none.
+#
+# The one exception, marked DERIVED below: an artefact whose existence follows
+# deterministically from a revision of this repo -- the channel migrations. If
+# an older revision wrote /usr/local/bin/yq and the current one installs the dnf
+# package to /usr/bin, every host provisioned by that revision carries the old
+# path. That is not an assumption about the world, it is a fact about our own
+# git history, and it is checkable by reading the task that used to write it.
 
 - name: Manufacture the drift of an old hyperi-developer host
   hosts: all
   gather_facts: true
+  # molecule.yml scopes the run to `--tags removals` for the converge, and that
+  # tag reaches every playbook. The fixture must be planted regardless.
+  tags: always
 
   tasks:
     # ------------------------------------------------------------------
@@ -122,3 +132,25 @@
       loop:
         - tinygo
         - github-mcp-server
+
+    # ------------------------------------------------------------------
+    # DERIVED -- channel migrations. A tool that moved from a binary or a
+    # container format to a repo leaves its old copy behind, and on the default
+    # PATH /usr/local/bin and /snap/bin both precede /usr/bin. Same shadowing
+    # class as the stale uv above, reached by a different route.
+    # ------------------------------------------------------------------
+    # The Fedora binaries superseded by dnf (yq, kustomize) are NOT planted.
+    # This scenario is Ubuntu only, because remediation targets hosts that have
+    # drifted in the field and there are no deployed Fedora clients.
+    - name: Install the DBeaver flatpak superseded by the vendor apt repo (Ubuntu)
+      community.general.flatpak:
+        name: io.dbeaver.DBeaverCommunity
+        state: present
+        method: system
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      failed_when: false
+
+    # The unguarded ~/.bashrc PATH lines are deliberately NOT planted. The tasks
+    # that remove them sit in the install path of the developer and
+    # developer-rust roles, not under the `removals` tag this scenario
+    # converges, so the fixture would be planted and never cleared.

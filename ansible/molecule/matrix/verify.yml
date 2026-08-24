@@ -1,0 +1,108 @@
+---
+# Assert the CLI base is installed AND runs.
+#
+# Exercised, not stat'd: a file at the right path proves nothing about whether
+# the binary matches the host's libc or architecture. `--version` proves it runs.
+
+- name: Verify a clean install
+  hosts: all
+  gather_facts: true
+  # molecule.yml scopes the run to a tag set, and that tag reaches every playbook
+  # it invokes. The assertions must run regardless.
+  tags: always
+
+  tasks:
+    # Debian renames bat's binary to batcat, because `bat` already belongs to
+    # bacula-console-qt. Fedora keeps the upstream name.
+    - name: Run each distro-packaged CLI base tool
+      ansible.builtin.command: "{{ item.cmd }}"
+      loop:
+        - {name: jq, cmd: jq --version}
+        - {name: ripgrep, cmd: rg --version}
+        - {name: fzf, cmd: fzf --version}
+        - name: bat
+          cmd: "{{ 'batcat' if ansible_facts['distribution'] == 'Ubuntu' else 'bat' }} --version"
+        - {name: yq, cmd: yq --version}
+        - {name: git, cmd: git --version}
+        - {name: tmux, cmd: tmux -V}
+        - {name: age, cmd: age --version}
+      loop_control:
+        label: "{{ item.name }}"
+      register: matrix_tools
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      environment:
+        PATH: "/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+
+    - name: Assert every CLI base tool runs
+      ansible.builtin.assert:
+        that:
+          - item.rc == 0
+        fail_msg: >-
+          {{ item.item.name }} did not run on
+          {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+          -- `{{ item.item.cmd }}` exited {{ item.rc }}. A clean install must
+          leave every base tool executable, not merely present.
+        success_msg: "{{ item.item.name }}: {{ item.stdout_lines[0] | default('ran') }}"
+      loop: "{{ matrix_tools.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    # sd and lazygit come from GitHub releases on at least one distro, and those
+    # fetches rescue into a deploy_warnings entry by design. Four containers
+    # sharing one unauthenticated GitHub API quota get rate-limited, so a hard
+    # assertion here fails on GitHub's limiter rather than on our playbook.
+    # Reported, not asserted.
+    - name: Run the release-binary tools
+      ansible.builtin.command: "{{ item.cmd }}"
+      loop:
+        - {name: sd, cmd: sd --version}
+        - {name: lazygit, cmd: lazygit --version}
+      loop_control:
+        label: "{{ item.name }}"
+      register: matrix_tier3
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      environment:
+        PATH: "/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+
+    - name: Report the release-binary tools
+      ansible.builtin.debug:
+        msg: |
+          Release-binary tools on {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}:
+          {% for r in matrix_tier3.results %}
+          - {{ r.item.name }}: {{ r.stdout_lines[0] | default('NOT AVAILABLE') if r.rc == 0 else 'NOT AVAILABLE' }}
+          {% endfor %}
+
+    # yq is the one where the wrong package is a silent failure rather than a
+    # missing binary: Ubuntu universe ships kislyuk/yq, a jq wrapper with
+    # different syntax, so presence proves nothing.
+    - name: Write a YAML fixture for the yq dialect check
+      ansible.builtin.copy:
+        content: |
+          a:
+            b: 42
+        dest: /tmp/matrix-yq.yaml
+        mode: '0644'
+
+    - name: Read the fixture with mikefarah v4 syntax
+      ansible.builtin.command: yq '.a.b' /tmp/matrix-yq.yaml
+      register: matrix_yq
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      environment:
+        PATH: "/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+
+    - name: Assert yq is mikefarah/yq, not the jq wrapper
+      ansible.builtin.assert:
+        that:
+          - matrix_yq.rc == 0
+          - matrix_yq.stdout | trim == '42'
+        fail_msg: >-
+          `yq '.a.b'` returned rc {{ matrix_yq.rc }} / '{{ matrix_yq.stdout | trim }}',
+          expected '42'. That is kislyuk/yq, a different tool with different
+          syntax, and every script here assumes mikefarah v4.
+        success_msg: "yq speaks mikefarah v4 syntax"

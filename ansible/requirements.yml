@@ -1,0 +1,17 @@
+---
+# Collections the roles and the molecule scenarios need.
+#
+# Both scenarios pointed at a `requirements.yml` that did not exist, with
+# `ignore-errors: true`, so the dependency step warned and moved on and the
+# collections were whatever happened to be on the box.
+#
+# Install with: ansible-galaxy collection install -r requirements.yml
+
+collections:
+  # snap, flatpak, homebrew, homebrew_cask and npm -- the install modules this
+  # project is built on.
+  - name: community.general
+
+  # Required by the molecule docker driver, not by any role.
+  - name: community.docker
+  - name: ansible.posix

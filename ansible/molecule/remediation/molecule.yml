@@ -1,0 +1,75 @@
+---
+# Remediation scenario -- a DISPOSABLE container, unlike `existing-host`.
+#
+# It manufactures the drift a long-lived workstation carries (prepare.yml), runs
+# the real removals path over it (converge.yml), and asserts both directions:
+# the retired things are gone, and the things that are not ours survived
+# (verify.yml).
+#
+# Create and destroy are safe here precisely because the target is a container
+# nobody owns. That is the opposite of `existing-host`, where both are absent.
+#
+# Scoped to the `removals` tag. The tombstones gate on `ansible_run_tags`, so a
+# converge without it removes nothing and every assertion would pass vacuously.
+# It also keeps the run to the remediation path instead of installing the whole
+# toolchain into a throwaway container.
+#
+# The tag applies to EVERY playbook molecule runs, converge included, so
+# prepare.yml and verify.yml carry `tags: always` -- without it the fixture is
+# never planted and nothing is ever asserted.
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ${MOLECULE_PROJECT_DIRECTORY}/requirements.yml
+    ignore-errors: true
+
+driver:
+  name: docker
+
+# Ubuntu only. Remediation is about hosts that have been in the field long
+# enough to drift, and there are no deployed Fedora clients to drift. Fedora
+# belongs in initial-deploy coverage (`matrix`), not here.
+#
+# pre_build_image: false so molecule builds an Ansible-compatible layer over the
+# stock image. The base ships no python3, and every module needs one.
+platforms:
+  - name: hyperi-remediation-ubuntu
+    image: docker.io/library/ubuntu:26.04
+    pre_build_image: false
+    command: /bin/sleep infinity
+    privileged: false
+
+ansible:
+  cfg:
+    defaults:
+      interpreter_python: auto_silent
+      # Molecule writes its own ansible.cfg and points ANSIBLE_CONFIG at it, so
+      # `ansible/ansible.cfg` is never read and no role resolves without this.
+      roles_path: ${MOLECULE_PROJECT_DIRECTORY}/roles
+  env:
+    ANSIBLE_FORCE_COLOR: "1"
+  executor:
+    backend: ansible-playbook
+    args:
+      ansible_playbook:
+        - --diff
+        - --tags
+        - removals
+  playbooks:
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+
+scenario:
+  name: remediation
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

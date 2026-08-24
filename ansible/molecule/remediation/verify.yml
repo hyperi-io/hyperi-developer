@@ -9,6 +9,9 @@
 - name: Verify remediation
   hosts: all
   gather_facts: true
+  # molecule.yml scopes the run to `--tags removals`, and that tag reaches every
+  # playbook. The assertions must run regardless.
+  tags: always
 
   tasks:
     # ==================================================================
@@ -41,6 +44,8 @@
       ansible.builtin.package_facts:
         manager: auto
 
+    # Ubuntu only: prepare.yml installs these through apt, and the names are
+    # Debian's.
     - name: Assert retired packages were removed
       ansible.builtin.assert:
         that:
@@ -58,6 +63,7 @@
         - docker-desktop
       loop_control:
         label: "{{ item }}"
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
     # ==================================================================
     # MUST SURVIVE — the half that stops us becoming destructive
@@ -90,8 +96,13 @@
         label: "{{ item.item }}"
 
     # ==================================================================
-    # THE REPLACEMENT ACTUALLY WORKS — removing the old thing is not enough
-    # if the new one never arrived.
+    # THE STALE COPY NO LONGER WINS — removing the tombstoned binary is only
+    # worth anything if nothing still resolves to it.
+    #
+    # This scenario converges `--tags removals`, which removes and installs
+    # nothing, so it cannot assert the replacement ARRIVED. That half belongs to
+    # `existing-host`, which converges the whole playbook. Asserting it here
+    # would only ever prove the scenario's own tag scope.
     # ==================================================================
     - name: Resolve which uv wins on PATH after remediation
       ansible.builtin.command: which uv
@@ -99,14 +110,42 @@
       changed_when: false
       failed_when: false
 
-    - name: Assert uv resolves to the managed install, not a stale copy
+    - name: Assert uv no longer resolves to the stale /usr/local/bin copy
       ansible.builtin.assert:
         that:
-          - verify_uv_which.rc == 0
           - "'/usr/local/bin/uv' not in verify_uv_which.stdout"
         fail_msg: >-
-          uv resolves to '{{ verify_uv_which.stdout }}'. Expected the managed
-          install (repo on Fedora, ~/.local/bin on Ubuntu). If it still points
-          at /usr/local/bin the host looks current while silently rotting —
-          which is exactly the failure this test exists to catch.
-        success_msg: "uv resolves to {{ verify_uv_which.stdout }}"
+          uv still resolves to '{{ verify_uv_which.stdout }}'. The tombstone did
+          not fire, so the host looks current while silently rotting — which is
+          exactly the failure this test exists to catch.
+        success_msg: >-
+          uv does not resolve to the stale copy
+          (resolved: '{{ verify_uv_which.stdout | default('nothing', true) }}')
+
+    # The Fedora binary-to-dnf migrations (yq, kustomize) are not asserted here.
+    # This scenario is Ubuntu only -- see molecule.yml -- and the assertion would
+    # need a full converge anyway, since a removals-only run never installs the
+    # package that is supposed to win.
+    - name: List the installed flatpaks (Ubuntu)
+      ansible.builtin.command: flatpak list --app --columns=application
+      register: verify_flatpaks
+      changed_when: false
+      failed_when: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Assert the DBeaver flatpak gave way to the apt package (Ubuntu)
+      ansible.builtin.assert:
+        that:
+          - "'io.dbeaver.DBeaverCommunity' not in verify_flatpaks.stdout"
+        fail_msg: >-
+          The DBeaver flatpak survived. Ubuntu takes DBeaver from the vendor apt
+          repo now, and leaving the flatpak puts a second DBeaver in the desktop
+          menu — the sandboxed one, which cannot read ~/.ssh or a unix socket.
+        success_msg: "DBeaver flatpak removed"
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # PATH hygiene is NOT asserted here. The tasks that drop the unguarded
+    # ~/.bashrc prepends live in the install path of the developer and
+    # developer-rust roles, not under the `removals` tag this scenario
+    # converges, so an assertion would only ever measure the tag scope. It needs
+    # a full converge -- `existing-host`.

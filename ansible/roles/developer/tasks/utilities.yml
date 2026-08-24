@@ -10,11 +10,13 @@
 # traceroute, tree, httpie. They are either superseded (ss over netstat, curl
 # over httpie, eza/fd over tree) or things a developer box has no business
 # shipping by default (nmap, telnet). Install them yourself if you want them.
+# gron is NOT here: Fedora packages it nowhere, and one absent name fails the
+# whole dnf transaction, taking the other twenty packages with it. It gets its
+# own task below.
 - name: Install CLI utilities (Fedora)
   ansible.builtin.dnf:
     name:
       - jq
-      - gron                  # make JSON greppable
       - bat
       - fzf
       - ripgrep
@@ -69,6 +71,9 @@
       - python3-pytest        # testing framework
       - age                   # file encryption
     state: present
+    # Every other apt task here updates the cache first. Without it an empty or
+    # stale cache fails the whole list on the first name it cannot resolve.
+    update_cache: true
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 # macOS utility list intentionally omits `ansible` and `python@3`:
@@ -111,6 +116,44 @@
   environment: "{{ homebrew_env }}"
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
+
+# gron - apt on Ubuntu (0.7.1, matching upstream), release binary on Fedora,
+# Homebrew on macOS. Upstream is dormant at 0.7.1, so the frozen-universe
+# objection does not apply here.
+#
+# The asset puts the arch BEFORE the version and uses .tgz:
+# gron-linux-amd64-0.7.1.tgz.
+- name: Install gron (Fedora)
+  block:
+    - name: Get latest gron version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/tomnomnom/gron/releases/latest
+        return_content: true
+      register: developer_gron_latest
+      check_mode: false
+
+    - name: Download and extract gron
+      ansible.builtin.unarchive:
+        src: >-
+          https://github.com/tomnomnom/gron/releases/download/{{ developer_gron_latest.json.tag_name }}/gron-linux-{{
+          hyperi_arch_deb }}-{{ developer_gron_latest.json.tag_name | regex_replace('^v', '') }}.tgz
+        dest: /usr/local/bin
+        remote_src: true
+        include: gron
+        mode: '0755'
+      when: not ansible_check_mode
+
+  rescue:
+    - name: Record that gron did not install (Fedora)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately not
+      # role-prefixed: it is the shared accumulator playbooks/main.yml reports
+      # from. See docs/resilient-deploy.md.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['gron: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'
 
 # yq - dnf on Fedora, binary download on Ubuntu, Homebrew on macOS.
 #
@@ -155,6 +198,15 @@
              + ['yq: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
   when: ansible_facts['distribution'] == 'Ubuntu'
+
+# Fedora installed yq to /usr/local/bin before it moved to dnf (/usr/bin).
+# /usr/local/bin precedes /usr/bin on the default PATH, so leaving the old copy
+# means `yq` keeps resolving to a binary nothing updates.
+- name: Remove the superseded /usr/local/bin/yq (Fedora)
+  ansible.builtin.file:
+    path: /usr/local/bin/yq
+    state: absent
+  when: ansible_facts['distribution'] == 'Fedora'
 
 # sd - sane sed replacement (binary download for Fedora, apt for Ubuntu)
 - name: Install sd (Fedora)
