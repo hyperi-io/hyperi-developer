@@ -110,7 +110,16 @@
 # /usr/lib/sysctl.d/ is intentionally NOT treated as "operator-managed" since
 # that's where distro/package defaults live, not intentional overrides.
 #
-# macOS uses FSEvents/kqueue (no per-user watch ceiling) and does not need this.
+# Linux only, and deliberately so. macOS watches via FSEvents, which has no
+# per-user watch ceiling, so the ENOSPC failure this guards against cannot occur
+# there and has no sysctl to raise.
+#
+# macOS has a different limit -- the file descriptors VS Code inherits from
+# launchd -- which surfaces as EMFILE, not ENOSPC. VS Code documents no fix for
+# it, a shell `ulimit -n` never reaches an app launched from the Dock, and
+# /etc/launchd.conf has been ignored since Yosemite. Raising it needs a
+# LaunchDaemon, and is not this task.
+#
 # Reference: https://code.visualstudio.com/docs/setup/linux#_visual-studio-code-is-unable-to-watch-for-file-changes-in-this-large-workspace-error-enospc
 
 - name: Configure inotify limits for VS Code file watcher (Linux)
