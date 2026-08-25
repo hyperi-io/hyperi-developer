@@ -111,6 +111,21 @@ else
     echo "--> PyYAML not installed, skipping the release matrix check"
 fi
 
+# Ansible resolves a copy: src: against the current role only, so a file left
+# behind by a task move breaks at run time on the host, partway through a real
+# install. Pure stdlib, so it runs wherever python3 does.
+if have python3; then
+    ran=$((ran + 1))
+    echo "==> role file references"
+    if python3 tools/check_role_file_refs.py; then
+        :
+    else
+        failures=$((failures + 1))
+    fi
+else
+    echo "--> python3 not installed, skipping the role file reference check"
+fi
+
 if [ "$ran" -eq 0 ]; then
     echo "No test tooling present on this runner -- nothing exercised."
 fi
