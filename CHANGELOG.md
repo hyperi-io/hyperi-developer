@@ -3,6 +3,20 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [2.24.11](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.10...v2.24.11) (2026-08-25)
+
+### Bug Fixes
+
+* keep the migrated tools current and pinnable, and tombstone the paths they vacated ([#46](https://github.com/hyperi-io/hyperi-developer/issues/46)) ([7592beb](https://github.com/hyperi-io/hyperi-developer/commit/7592bebb30bb67061b4000102e4508838ebc6f3d)), closes [#38](https://github.com/hyperi-io/hyperi-developer/issues/38) [#66](https://github.com/hyperi-io/hyperi-developer/issues/66)
+* own the sccache server lifecycle in a systemd user unit ([#48](https://github.com/hyperi-io/hyperi-developer/issues/48)) ([48b7e06](https://github.com/hyperi-io/hyperi-developer/commit/48b7e068a5007dc33e1d5bf79be619526463f6fc))
+* refit windows after an RDP reconnect changes the resolution ([#41](https://github.com/hyperi-io/hyperi-developer/issues/41)) ([1544ba8](https://github.com/hyperi-io/hyperi-developer/commit/1544ba802607e85d3ef19f84862feccaa3e8eb94))
+* ship terraform-docs, and move tools off snap/flatpak where a repo can keep them current ([#44](https://github.com/hyperi-io/hyperi-developer/issues/44)) ([6e8fe5a](https://github.com/hyperi-io/hyperi-developer/commit/6e8fe5afb142480913d628590468042987cab0ed)), closes [#38](https://github.com/hyperi-io/hyperi-developer/issues/38)
+* silence the remaining Claude Code prompts in managed settings ([#43](https://github.com/hyperi-io/hyperi-developer/issues/43)) ([00de29f](https://github.com/hyperi-io/hyperi-developer/commit/00de29fe655b6b526480cd4fbc3001aa5067f4e9))
+* stop shell init stacking duplicate PATH entries, and put PATH where non-interactive shells see it ([#45](https://github.com/hyperi-io/hyperi-developer/issues/45)) ([65e336c](https://github.com/hyperi-io/hyperi-developer/commit/65e336cd3cd56d0a24ddd4c61945aae3e9d11784)), closes [#38](https://github.com/hyperi-io/hyperi-developer/issues/38)
+* stop shipping the Window State Manager GNOME extension ([#40](https://github.com/hyperi-io/hyperi-developer/issues/40)) ([5abfe64](https://github.com/hyperi-io/hyperi-developer/commit/5abfe648671dd726253d4891fbe09af4140758a9)), closes [#39](https://github.com/hyperi-io/hyperi-developer/issues/39)
+* stop the inotify raise lowering a limit that is already higher ([#49](https://github.com/hyperi-io/hyperi-developer/issues/49)) ([bbcd9de](https://github.com/hyperi-io/hyperi-developer/commit/bbcd9deb3e9e8951e9e2d4a7cb2abe40a7b9e2d9))
+* take OpenTofu from its own repo on Fedora too, and stop removing HashiCorp on install ([#50](https://github.com/hyperi-io/hyperi-developer/issues/50)) ([6cc229b](https://github.com/hyperi-io/hyperi-developer/commit/6cc229bdf398f149546f5925f0d6e210c82121b5))
+
 ## [2.24.10](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.9...v2.24.10) (2026-08-19)
 
 ### Bug Fixes
