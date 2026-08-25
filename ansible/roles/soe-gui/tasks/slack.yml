@@ -42,6 +42,15 @@
         name: slack-desktop
         state: present
         update_cache: true
+
+  rescue:
+    - name: Record that Slack did not install (Ubuntu)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Slack: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
+
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
     - has_gnome | default(false)
@@ -64,6 +73,15 @@
       ansible.builtin.dnf:
         name: slack
         state: present
+
+  rescue:
+    - name: Record that Slack did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Slack: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
+
   when:
     - ansible_facts['distribution'] == 'Fedora'
     - has_gnome | default(false)

@@ -379,6 +379,15 @@
         name: kube-linter
         state: present
 
+  # One unavailable formula would otherwise cost the other nine.
+  rescue:
+    - name: Record that the Kubernetes tools did not install (macOS)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Kubernetes tools: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
   become: false
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'

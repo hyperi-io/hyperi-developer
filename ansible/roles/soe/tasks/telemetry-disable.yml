@@ -67,6 +67,16 @@
       changed_when: ubuntu_report.rc == 0
       failed_when: false
 
+  # Most tasks here already carry failed_when: false, so what reaches this is a
+  # file or lineinfile that could not be written -- worth a warning, not a stop.
+  rescue:
+    - name: Record that Ubuntu telemetry was not fully disabled
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Telemetry disable: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 # -----------------------------------------------------------------------------

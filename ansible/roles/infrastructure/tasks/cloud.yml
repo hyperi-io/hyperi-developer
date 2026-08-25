@@ -305,18 +305,35 @@
 # bao stays on Fedora's dnf, which trails upstream by a patch rather than a
 # minor.
 
-- name: Install OpenTofu (Ubuntu)
-  ansible.builtin.apt:
-    name: tofu
-    state: present
-    update_cache: true
-  when: ansible_facts['distribution'] == 'Ubuntu'
+# Both installs depend on a repository an earlier task adds, so they are the
+# one pair in this file that cannot succeed in check mode -- the repo is only
+# previewed and the package resolves against nothing. The rescue is what keeps
+# that a warning rather than an aborted remediation, and it covers an
+# unreachable vendor repo on a real run for the same reason.
+- name: Install OpenTofu
+  block:
+    - name: Install OpenTofu (Ubuntu)
+      ansible.builtin.apt:
+        name: tofu
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Install OpenTofu (Fedora)
-  ansible.builtin.dnf:
-    name: tofu
-    state: present
-  when: ansible_facts['distribution'] == 'Fedora'
+    - name: Install OpenTofu (Fedora)
+      ansible.builtin.dnf:
+        name: tofu
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+  rescue:
+    - name: Record that OpenTofu did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['OpenTofu: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Install OpenBao (Fedora)
   ansible.builtin.dnf:

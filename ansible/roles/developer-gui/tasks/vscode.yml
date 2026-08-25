@@ -26,6 +26,14 @@
         name: code
         state: present
 
+  rescue:
+    - name: Record that VS Code did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['VS Code: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
   when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
@@ -71,6 +79,14 @@
         name: code
         state: present
         update_cache: true
+
+  rescue:
+    - name: Record that VS Code did not install (Ubuntu)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['VS Code: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 

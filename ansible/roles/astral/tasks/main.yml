@@ -93,6 +93,10 @@
         path: "/tmp/uv-{{ uv_arch }}.tar.gz"
         state: absent
 
+# No rescue: ruff and ty below are installed by `uv tool install`, so warning
+# past a missing uv only moves the abort to a task that reports it as a missing
+# command.
+
 # ============================================================================
 # ruff + ty - repo-managed on Fedora/macOS; uv tools on Ubuntu
 # ============================================================================

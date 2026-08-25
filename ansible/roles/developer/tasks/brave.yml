@@ -21,6 +21,14 @@
         name: brave-browser
         state: present
 
+  rescue:
+    - name: Record that Brave did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Brave: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
   when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
@@ -57,6 +65,14 @@
         path: /usr/share/applications/com.brave.Browser.desktop
         state: absent
       notify: update desktop database
+
+  rescue:
+    - name: Record that Brave did not install (Ubuntu)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Brave: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 
