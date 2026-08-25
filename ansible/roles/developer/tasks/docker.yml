@@ -34,6 +34,9 @@
         gpgkey: "{{ docker_gpg_url }}"
         enabled: true
 
+  # No rescue: Install Docker CE below reads this repo and has none either, so
+  # warning here only defers the same abort to a task that reports it as a
+  # missing package rather than an unreachable repo.
   when: ansible_facts['distribution'] == 'Fedora'
 
 - name: Configure Docker repository (Ubuntu)
@@ -81,6 +84,9 @@
       ansible.builtin.apt:
         update_cache: true
 
+  # No rescue: Install Docker CE below reads this repo and has none either, so
+  # warning here only defers the same abort to a task that reports it as a
+  # missing package rather than an unreachable repo.
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 # ============================================================================

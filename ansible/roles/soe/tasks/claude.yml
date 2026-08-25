@@ -127,6 +127,16 @@
       ansible.builtin.debug:
         msg: "Claude Code {{ claude_version }} installed ({{ claude_platform }})"
 
+  # Check mode previews the download, so `claude install` runs against a binary
+  # that is not there and the whole soe run would otherwise stop at a preview.
+  rescue:
+    - name: Record that Claude Code did not install (Linux)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Claude Code: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================

@@ -152,6 +152,28 @@
         label: "{{ item.item | default('skipped') }}"
       when: ansible_facts['distribution'] == 'Ubuntu'
 
+    - name: Stat the retired vendor repository artefacts (Ubuntu)
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/apt/sources.list.d/jfrog-cli.list
+        - /etc/apt/sources.list.d/onlyoffice.list
+      register: verify_retired_repos
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Assert the retired vendor repositories were unhooked
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          {{ item.item }} survived remediation. The tool is long gone but its
+          repository keeps being fetched on every apt update.
+        success_msg: "{{ item.item }} removed"
+      loop: "{{ verify_retired_repos.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('skipped') }}"
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
     - name: List the installed flatpaks (Ubuntu)
       ansible.builtin.command: flatpak list --app --columns=application
       register: verify_flatpaks

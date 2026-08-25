@@ -193,6 +193,37 @@
       when: ansible_facts['distribution'] == 'Ubuntu'
       failed_when: false
 
+    # Observed on desktop-derek 2026-08-25, still configured months after the
+    # tools themselves were retired. A repository outlives the tool it served:
+    # nothing prunes it, and every apt update pays to fetch it.
+    #
+    # The retired flatpak apps observed alongside them (Slack, Remmina,
+    # Bitwarden) are deliberately not planted. The DBeaver flatpak above already
+    # covers that mechanism, and three more GUI downloads buy no new coverage.
+    - name: Plant the retired vendor apt repositories (Ubuntu)
+      ansible.builtin.copy:
+        content: "deb [trusted=yes] https://example.invalid/{{ item }} noble main\n"
+        dest: "/etc/apt/sources.list.d/{{ item }}.list"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - jfrog-cli
+        - onlyoffice
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # apt refuses every operation while any source list is unreachable as well
+    # as malformed, so the fixture host must never try to fetch example.invalid.
+    - name: Keep the planted repositories out of every apt update
+      ansible.builtin.copy:
+        content: |
+          APT::Get::List-Cleanup "0";
+        dest: /etc/apt/apt.conf.d/99-molecule-fixture
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
     # The unguarded ~/.bashrc PATH lines are deliberately NOT planted. The tasks
     # that remove them sit in the install path of the developer and
     # developer-rust roles, not under the `removals` tag this scenario

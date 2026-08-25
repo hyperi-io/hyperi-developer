@@ -104,6 +104,9 @@
       # "not changed", which is honest: the components are present either way.
       changed_when: "'is up to date' not in developer_rustup_components.stderr"
 
+  # No rescue: every `cargo install` below needs the toolchain this block
+  # bootstraps, so warning past it only moves the abort to a task that reports
+  # it as a missing command.
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Install Rust via Homebrew (macOS)

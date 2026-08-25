@@ -110,16 +110,18 @@
 # still installed at /opt/docker-desktop (inactive) months after we stopped
 # installing it -- Ansible cannot prune what it stops declaring.
 #
-# Removing it also takes `pass` and golang-docker-credential-helpers, which are
-# ONLY present as its credential-store dependency (verified: no
-# ~/.password-store, no credsStore in ~/.docker/config.json). That cascade is
-# intended. If a host DOES use `pass` for real, apt keeps it — it only removes
-# what nothing else needs.
+# NOT autoremove. Docker Desktop on Linux ships a VM, so its dependency tree
+# pulls in the whole QEMU/OVMF stack plus uidmap -- 44 packages on a real host.
+# uidmap is the dangerous one: rootless containers call newuidmap at run time
+# with no package dependency declaring it, so apt reclaims it and rootless
+# breaks silently afterwards.
+#
+# The orphans stay. They are clutter, and `apt autoremove` remains available to
+# whoever wants to reclaim them deliberately, having read the list.
 - name: Remove Docker Desktop (Ubuntu - dropped by decision; Engine/CLI replace it)
   ansible.builtin.apt:
     name: docker-desktop
     state: absent
-    autoremove: true
   when: ansible_facts['distribution'] == 'Ubuntu'
   failed_when: false
 
@@ -127,7 +129,6 @@
   ansible.builtin.dnf:
     name: docker-desktop
     state: absent
-    autoremove: true
   when: ansible_facts['distribution'] == 'Fedora'
   failed_when: false
 
@@ -254,6 +255,68 @@
   when: ansible_facts['distribution'] == 'MacOSX'
   failed_when: false
 
+# Slack and Remmina came from Flathub until 741e4b2 moved them to native
+# packages, and that commit added no tombstone -- so a host provisioned before
+# it runs both copies, with two entries in the app grid and two update paths.
+# The native package is the one the repo now manages.
+- name: Remove the retired Slack and Remmina flatpaks (superseded by native packages)
+  community.general.flatpak:
+    name: "{{ item }}"
+    state: absent
+    method: system
+  loop:
+    - com.slack.Slack
+    - org.remmina.Remmina
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  failed_when: false
+
+# Bitwarden was dropped entirely in 741e4b2, which deleted bitwarden.yml without
+# tombstoning anything it had installed. The CLI is covered by the
+# /usr/local/bin sweep below; the GUI is not.
+- name: Remove the retired Bitwarden GUI flatpak
+  community.general.flatpak:
+    name: com.bitwarden.desktop
+    state: absent
+    method: system
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  failed_when: false
+
+- name: Remove the retired Bitwarden GUI and CLI (macOS)
+  community.general.homebrew_cask:
+    name: bitwarden
+    state: absent
+  become: false
+  environment: "{{ homebrew_cask_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false
+
+- name: Remove the retired Bitwarden CLI formula (macOS)
+  community.general.homebrew:
+    name: bitwarden-cli
+    state: absent
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false
+
+# The JFrog CLI arrived as a PACKAGE from JFrog's own repo, not as a binary
+# drop, so the /usr/local/bin/jfrog entry below never matched anything.
+- name: Remove the retired JFrog CLI package
+  ansible.builtin.package:
+    name: jfrog-cli-v2-jf
+    state: absent
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  failed_when: false
+
+- name: Remove the retired JFrog CLI formula (macOS)
+  community.general.homebrew:
+    name: jfrog-cli
+    state: absent
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false
+
 # Binaries older versions dropped in /usr/local/bin and no longer install.
 # All root-owned with no update path, so they linger indefinitely.
 # Verified still present on a real long-lived host 2026-07-17: bw, linear.
@@ -342,6 +405,46 @@
 # ============================================================================
 # STALE CONFIG — blocks and repo files older versions wrote.
 # ============================================================================
+
+# A retired tool's repository outlives the tool. Left configured it keeps
+# serving updates for something nobody manages, and every apt update pays for
+# fetching it. Both filename forms go: deb822_repository writes .sources, and
+# the apt_repository calls these tools used wrote .list.
+#
+# netbird is deliberately NOT here. It is a VPN agent that may still be the
+# live path onto a host, and pulling its repo out from under a running service
+# is not a tidy-up.
+- name: Remove the retired vendor APT repositories (Ubuntu)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/jfrog-cli.list
+    - /etc/apt/sources.list.d/jfrog-cli.sources
+    - /etc/apt/sources.list.d/onlyoffice.list
+    - /etc/apt/sources.list.d/onlyoffice.sources
+    - /etc/apt/sources.list.d/freelens.list
+    - /etc/apt/sources.list.d/freelens.sources
+    - /usr/share/keyrings/jfrog-cli.asc
+  register: developer_retired_repos_removed
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# apt keeps serving the removed repo from its cached lists until it is told.
+- name: Refresh the APT cache after removing the retired repositories
+  ansible.builtin.apt:
+    update_cache: true
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - developer_retired_repos_removed is changed
+
+- name: Remove the retired vendor YUM repositories (Fedora)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/yum.repos.d/jfrog-cli.repo
+    - /etc/yum.repos.d/onlyoffice.repo
+  when: ansible_facts['distribution'] == 'Fedora'
 
 # gnu-tools is retired, so its PATH shim now prepends directories for packages
 # we no longer install. blockinfile removes it cleanly via the same marker it

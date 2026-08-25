@@ -101,6 +101,9 @@
         state: latest
         update_cache: true
 
+  # No rescue: this block holds the ONLY Ubuntu install of git, git-lfs and
+  # git-filter-repo, so warning past it would report a successful run on a host
+  # that has no git at all.
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 # ============================================================================
@@ -144,6 +147,14 @@
         name: gh
         state: present
 
+  rescue:
+    - name: Record that the GitHub CLI did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['GitHub CLI: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
   become: true
   when: ansible_facts['distribution'] == 'Fedora'
 
@@ -182,6 +193,14 @@
         name: gh
         state: present
         update_cache: true
+
+  rescue:
+    - name: Record that the GitHub CLI did not install (Ubuntu)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['GitHub CLI: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
 
   become: true
   when: ansible_facts['distribution'] == 'Ubuntu'

@@ -50,6 +50,14 @@
         enabled: true
         state: started
 
+  rescue:
+    - name: Record that automatic security updates were not configured (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Automatic security updates: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
   when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
@@ -103,6 +111,14 @@
           APT::Periodic::Unattended-Upgrade "1";
           APT::Periodic::AutocleanInterval "7";
         mode: '0644'
+
+  rescue:
+    - name: Record that automatic security updates were not configured (Ubuntu)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Automatic security updates: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 
