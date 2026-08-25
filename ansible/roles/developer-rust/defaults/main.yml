@@ -52,3 +52,36 @@ rust_cache_prune_plist: "{{ user_home }}/Library/LaunchAgents/{{ rust_cache_prun
 # whichever process compiles first, which decides the server's cgroup and
 # resource limits for its whole life.
 rust_sccache_service_manage: true
+
+# ---------------------------------------------------------------------------
+# Build governor
+# ---------------------------------------------------------------------------
+# Concurrent cargo/rustc across several projects can OOM a host outright --
+# observed taking down a 30G build box. Opt-OUT: disabling it removes the
+# shim, the slice and the config.
+rust_governor_enabled: true
+
+# One rust build at a time per user; later invocations wait for the lock.
+rust_governor_serialize: true
+
+# Percentages of the HOST's physical RAM (systemd resolves them all against
+# RAM, the swap cap included), so the same numbers ship everywhere. High
+# throttles and reclaims; Max kills the build -- the build dies, never the
+# host.
+rust_governor_memory_high_pct: 50
+rust_governor_memory_max_pct: 70
+rust_governor_swap_max_pct: 25
+
+# Weight is contention-only: the desktop always wins under load, and an idle
+# machine still gives builds full speed. 100 is the systemd default weight.
+rust_governor_cpu_weight: 30
+
+# Cores held back from builds on any host with 4 or more; smaller hosts keep
+# every core. Also caps CARGO_BUILD_JOBS, because the cgroup quota is
+# invisible to rustc.
+rust_governor_cpu_reserve_cores: 2
+
+# macOS has no cgroups; builds run under this taskpolicy QoS clamp instead.
+# `utility` sits below the desktop without background's disk-IO throttle and
+# E-core pinning.
+rust_governor_macos_qos: utility

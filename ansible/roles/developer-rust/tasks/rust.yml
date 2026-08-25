@@ -449,12 +449,14 @@
 # Linux only: the unit shape is systemd's. The same lifecycle problem exists on
 # macOS and wants a launchd agent, which is not written yet.
 
+# rust-governor is here too: the unit's Slice= line is governor policy, so a
+# governor apply must re-render this unit or the slice never captures sccache.
 - name: Own the sccache server lifecycle
   ansible.builtin.include_tasks:
     file: sccache_service.yml
     apply:
-      tags: ['developer-rust', 'rust', 'rust-cache']
+      tags: ['developer-rust', 'rust', 'rust-cache', 'rust-governor']
   when:
     - rust_sccache_service_manage | default(true)
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
-  tags: ['developer-rust', 'rust', 'rust-cache']
+  tags: ['developer-rust', 'rust', 'rust-cache', 'rust-governor']

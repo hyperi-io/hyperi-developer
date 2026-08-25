@@ -8,6 +8,11 @@ Documentation=https://github.com/mozilla/sccache
 # its whole life -- every later build on the box then runs in an editor's or a
 # terminal's context, decided by a startup race.
 Type=simple
+{% if rust_governor_enabled | default(true) %}
+# Compiles execute inside this server, not inside cargo, so the server must
+# live in the governed slice or the rust-build budget misses most of the work.
+Slice=rust-build.slice
+{% endif %}
 Environment=SCCACHE_START_SERVER=1
 Environment=SCCACHE_NO_DAEMON=1
 # The server exits after 600s idle by default, which systemd would read as the
