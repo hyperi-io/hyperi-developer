@@ -3,6 +3,12 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [2.24.12](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.11...v2.24.12) (2026-08-25)
+
+### Bug Fixes
+
+* drop the local semantic-release apparatus the pipeline never uses ([#51](https://github.com/hyperi-io/hyperi-developer/issues/51)) ([3ed85c9](https://github.com/hyperi-io/hyperi-developer/commit/3ed85c97a2c7eb76a9f57f3f4fe7c4f9363434d2)), closes [#37](https://github.com/hyperi-io/hyperi-developer/issues/37)
+
 ## [2.24.11](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.10...v2.24.11) (2026-08-25)
 
 ### Bug Fixes
