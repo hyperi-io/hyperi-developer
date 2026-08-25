@@ -126,6 +126,32 @@
     # This scenario is Ubuntu only -- see molecule.yml -- and the assertion would
     # need a full converge anyway, since a removals-only run never installs the
     # package that is supposed to win.
+    # The repo is the half that keeps serving BUSL packages if it survives.
+    - name: Stat the HashiCorp repository artefacts (Ubuntu)
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/apt/sources.list.d/hashicorp.sources
+        - /etc/apt/sources.list.d/hashicorp.list
+        - /usr/share/keyrings/hashicorp-archive-keyring.asc
+        - /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      register: verify_hashicorp
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Assert the HashiCorp repository was unhooked
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          {{ item.item }} survived remediation. The HashiCorp repo goes on
+          serving BUSL packages and updates for as long as it is configured,
+          so leaving it is worse than leaving the binaries.
+        success_msg: "{{ item.item }} removed"
+      loop: "{{ verify_hashicorp.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('skipped') }}"
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
     - name: List the installed flatpaks (Ubuntu)
       ansible.builtin.command: flatpak list --app --columns=application
       register: verify_flatpaks

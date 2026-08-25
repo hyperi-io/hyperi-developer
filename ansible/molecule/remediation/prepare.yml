@@ -142,6 +142,49 @@
     # The Fedora binaries superseded by dnf (yq, kustomize) are NOT planted.
     # This scenario is Ubuntu only, because remediation targets hosts that have
     # drifted in the field and there are no deployed Fedora clients.
+    # The HashiCorp repo is the half that matters: left behind it keeps serving
+    # BUSL packages and updates. Removing it is a remediation, so only a
+    # `--tags removals` run does it -- which is what this scenario converges.
+    - name: Plant the HashiCorp apt repository (Ubuntu)
+      ansible.builtin.copy:
+        content: |
+          Types: deb
+          URIs: https://apt.releases.hashicorp.com
+          Suites: noble
+          Components: main
+          Trusted: yes
+        dest: /etc/apt/sources.list.d/hashicorp.sources
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # An older revision used apt_repository, which wrote .list, so a host
+    # provisioned before that migration carries both.
+    # A parseable line, because apt refuses EVERY operation when any source list
+    # is malformed -- including the removal that is supposed to clear it.
+    # `trusted=yes` keeps the fixture off the network and off the keyring.
+    - name: Plant the legacy HashiCorp .list (Ubuntu)
+      ansible.builtin.copy:
+        content: "deb [trusted=yes] https://apt.releases.hashicorp.com noble main\n"
+        dest: /etc/apt/sources.list.d/hashicorp.list
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Plant the HashiCorp keyrings (Ubuntu)
+      ansible.builtin.copy:
+        content: "fixture\n"
+        dest: "{{ item }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - /usr/share/keyrings/hashicorp-archive-keyring.asc
+        - /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
     - name: Install the DBeaver flatpak superseded by the vendor apt repo (Ubuntu)
       community.general.flatpak:
         name: io.dbeaver.DBeaverCommunity
