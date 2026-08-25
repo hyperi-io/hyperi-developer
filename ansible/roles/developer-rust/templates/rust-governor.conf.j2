@@ -1,0 +1,5 @@
+# Deployed by hyperi-developer (developer-rust role). Edits are overwritten.
+# Read by hyperi-rust-govern at the start of every governed invocation.
+HYPERI_RUST_GOVERN_SERIALIZE={{ '1' if rust_governor_serialize else '0' }}
+HYPERI_RUST_GOVERN_CPU_RESERVE={{ rust_governor_cpu_reserve_cores }}
+HYPERI_RUST_GOVERN_MACOS_QOS={{ rust_governor_macos_qos }}

@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# Governs Rust builds so they cannot take the machine down: one build at a
+# time per user, the whole process tree inside the rust-build.slice budget,
+# and priority below the desktop.
+#
+# Installed as ~/.local/bin/cargo, which sits ahead of ~/.cargo/bin on the
+# SOE PATH, so cargo and everything it spawns is captured. sccache-hosted
+# compiles are captured separately: hyperi-sccache.service carries
+# Slice=rust-build.slice.
+#
+#   HYPERI_RUST_GOVERNOR=off cargo build     # bypass one invocation
+#   hyperi-rust-govern <command> [args...]   # govern any other command
+#
+# cargo run holds the build lock for the program's whole lifetime, because
+# cargo stays resident wrapping the binary. Use the bypass for long-running
+# `cargo run` services.
+#
+# Written for bash 3.2: stock macOS runs this.
+set -u
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/rust-governor.conf"
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+SERIALIZE="${HYPERI_RUST_GOVERN_SERIALIZE:-1}"
+RESERVE="${HYPERI_RUST_GOVERN_CPU_RESERVE:-2}"
+QOS="${HYPERI_RUST_GOVERN_MACOS_QOS:-utility}"
+
+TOOL="$(basename "$0")"
+if [ "$TOOL" = "hyperi-rust-govern" ]; then
+    if [ "$#" -eq 0 ]; then
+        echo "usage: hyperi-rust-govern <command> [args...]" >&2
+        exit 64
+    fi
+    TOOL="$1"
+    shift
+fi
+
+# $CARGO_HOME/bin first: rustup's proxies live there, and PATH cannot be
+# trusted while this shim is on it. -ef skips the shim itself by inode, so
+# the search cannot loop back through the symlink.
+resolve_real() {
+    candidate="${CARGO_HOME:-$HOME/.cargo}/bin/$TOOL"
+    if [ -x "$candidate" ] && ! [ "$candidate" -ef "$0" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    old_ifs="$IFS"
+    IFS=:
+    for dir in $PATH; do
+        IFS="$old_ifs"
+        [ -n "$dir" ] || continue
+        candidate="$dir/$TOOL"
+        [ -x "$candidate" ] || continue
+        [ "$candidate" -ef "$0" ] && continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+    IFS="$old_ifs"
+    return 1
+}
+
+REAL="$(resolve_real)"
+if [ -z "$REAL" ]; then
+    echo "hyperi-rust-govern: no real '$TOOL' found ($CONF governs a tool that is not installed)" >&2
+    exit 127
+fi
+
+# Already inside a governed scope, or explicitly bypassed: straight through.
+if [ "${HYPERI_RUST_GOVERNOR:-on}" = "off" ] || [ -n "${HYPERI_RUST_GOVERNED:-}" ]; then
+    exec "$REAL" "$@"
+fi
+
+if command -v nproc >/dev/null 2>&1; then
+    cores="$(nproc)"
+else
+    cores="$(sysctl -n hw.ncpu 2>/dev/null || echo 2)"
+fi
+case "$cores" in
+    ''|*[!0-9]*) cores=2 ;;
+esac
+case "$RESERVE" in
+    ''|*[!0-9]*) RESERVE=2 ;;
+esac
+
+# The cgroup quota is invisible to rustc, which sizes its parallelism off the
+# visible core count and thrashes inside the cap -- so the job count is
+# lowered to match. A box under 4 cores keeps them all.
+jobs="$cores"
+if [ "$cores" -ge 4 ]; then
+    jobs=$((cores - RESERVE))
+fi
+[ "$jobs" -lt 1 ] && jobs=1
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$jobs}"
+export HYPERI_RUST_GOVERNED=1
+
+LOCK="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/hyperi-rust-govern-$(id -u).lock"
+uname_s="$(uname -s)"
+
+notify_wait() {
+    echo "hyperi-rust-govern: another rust build holds the lock -- waiting (HYPERI_RUST_GOVERNOR=off to bypass)" >&2
+}
+
+# Linux: flock on fd 9. The fd survives exec, so the lock lives exactly as
+# long as the build and releases on any exit, crash included.
+if [ "$SERIALIZE" = "1" ] && command -v flock >/dev/null 2>&1; then
+    exec 9>"$LOCK"
+    if ! flock -n 9; then
+        notify_wait
+        flock 9
+    fi
+elif [ "$SERIALIZE" = "1" ]; then
+    # macOS ships no flock(1). A pid-stamped mkdir lock is atomic everywhere;
+    # a holder that died without cleaning up is detected and cleared.
+    LOCK_D="$LOCK.d"
+    notified=0
+    while ! mkdir "$LOCK_D" 2>/dev/null; do
+        holder="$(cat "$LOCK_D/pid" 2>/dev/null || true)"
+        if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+            rm -rf "$LOCK_D"
+            continue
+        fi
+        if [ "$notified" -eq 0 ]; then
+            notify_wait
+            notified=1
+        fi
+        sleep 2
+    done
+    printf '%s\n' "$$" >"$LOCK_D/pid"
+    # Single quotes: expanded when the trap fires, not here.
+    trap 'rm -rf "$LOCK_D"' EXIT INT TERM
+fi
+
+# Linux with a live user manager: the scope joins rust-build.slice, whose
+# memory/CPU limits are deployed by the developer-rust role. The exec keeps
+# the flock fd, the TTY, signals and the exit code.
+if [ "$uname_s" = "Linux" ] && command -v systemd-run >/dev/null 2>&1 \
+    && [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]; then
+    exec systemd-run --user --scope --quiet --collect \
+        --slice=rust-build.slice \
+        --property=CPUQuota="$((jobs * 100))%" \
+        -- "$REAL" "$@"
+fi
+
+# macOS: QoS clamp puts every thread below the desktop's priority. No memory
+# cap here -- taskpolicy's jetsam limit is per-process and cannot bound the
+# tree -- so the job cap above is the memory lever.
+if [ "$uname_s" = "Darwin" ] && command -v taskpolicy >/dev/null 2>&1; then
+    taskpolicy -c "$QOS" "$REAL" "$@"
+    exit "$?"
+fi
+
+# No systemd user manager (container, degraded session): priority only.
+nice -n 19 "$REAL" "$@"
+exit "$?"

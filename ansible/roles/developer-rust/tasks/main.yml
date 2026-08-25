@@ -4,9 +4,21 @@
 # rust-cache tags only the include itself, never `apply`: a tag under `apply`
 # lands on every task in the file, which would make the cap tag pull the whole
 # toolchain. The cache include inside rust.yml carries the tag on its own.
+# rust-cache and rust-governor are entry tags only: they open rust.yml so the
+# matching includes inside can run, and apply: does not carry them, so neither
+# pulls the whole toolchain.
 - name: Install Rust and cargo tools
   ansible.builtin.include_tasks:
     file: rust.yml
     apply:
       tags: ['developer-rust', 'rust']
-  tags: ['developer-rust', 'rust', 'rust-cache']
+  tags: ['developer-rust', 'rust', 'rust-cache', 'rust-governor']
+
+# Its own tag so the governor can be applied or re-applied without a full
+# toolchain converge, the same bargain rust-cache makes.
+- name: Govern rust build resources
+  ansible.builtin.include_tasks:
+    file: governor.yml
+    apply:
+      tags: ['developer-rust', 'rust-governor']
+  tags: ['developer-rust', 'rust-governor']

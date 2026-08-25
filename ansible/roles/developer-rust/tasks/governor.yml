@@ -1,0 +1,170 @@
+---
+# The rust build governor: one build at a time per user, the whole tree in
+# the rust-build.slice budget, priority below the desktop. Opt-OUT --
+# `rust_governor_enabled: false` removes everything it deployed.
+#
+# The shim shadows ~/.cargo/bin/cargo from ~/.local/bin, which the SOE PATH
+# puts first. sccache is captured separately: compiles execute inside the
+# sccache SERVER, so hyperi-sccache.service carries Slice=rust-build.slice
+# (see hyperi-sccache.service.j2), or the budget would miss most of the work.
+
+- name: Deploy the rust build governor
+  when: rust_governor_enabled | bool
+  block:
+    - name: Install hyperi-rust-govern
+      ansible.builtin.copy:
+        src: hyperi-rust-govern
+        dest: /usr/local/bin/hyperi-rust-govern
+        owner: root
+        mode: '0755'
+      become: true
+
+    - name: Create the hyperi config directory
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/hyperi"
+        state: directory
+        owner: "{{ actual_user }}"
+        mode: '0755'
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user }}"
+
+    - name: Deploy the governor configuration
+      ansible.builtin.template:
+        src: rust-governor.conf.j2
+        dest: "{{ user_home }}/.config/hyperi/rust-governor.conf"
+        owner: "{{ actual_user }}"
+        mode: '0644'
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user }}"
+
+    - name: Create the user-local bin directory
+      ansible.builtin.file:
+        path: "{{ user_home }}/.local/bin"
+        state: directory
+        owner: "{{ actual_user }}"
+        mode: '0755'
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user }}"
+
+    # force: a plain file at this path can only be a stale copy of an older
+    # shim; rustup itself never writes outside ~/.cargo/bin. No owner: the
+    # file module follows the link and would chown the root-owned target.
+    - name: Shim cargo through the governor
+      ansible.builtin.file:
+        src: /usr/local/bin/hyperi-rust-govern
+        dest: "{{ user_home }}/.local/bin/cargo"
+        state: link
+        force: true
+        follow: false
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user }}"
+
+    - name: Create the user systemd directory
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/systemd/user"
+        state: directory
+        owner: "{{ actual_user }}"
+        mode: '0755'
+      become: true
+      become_user: "{{ actual_user }}"
+      when: ansible_facts['system'] == 'Linux'
+
+    - name: Install the rust-build slice
+      ansible.builtin.template:
+        src: rust-build.slice.j2
+        dest: "{{ user_home }}/.config/systemd/user/rust-build.slice"
+        owner: "{{ actual_user }}"
+        mode: '0644'
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_rust_governor_slice
+      when: ansible_facts['system'] == 'Linux'
+
+    - name: Reload the user manager so the slice limits are live
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+      become: true
+      become_user: "{{ actual_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] | default(1000) }}"
+      when:
+        - ansible_facts['system'] == 'Linux'
+        - not ansible_check_mode
+        - developer_rust_governor_slice is changed
+      failed_when: false
+
+  rescue:
+    - name: Record that the rust governor did not deploy
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Rust governor: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
+# ============================================================================
+# Opt-out tombstones -- a host that turns the governor off gets it removed,
+# not merely stopped.
+# ============================================================================
+
+- name: Remove the rust build governor (opt-out)
+  when: not (rust_governor_enabled | bool)
+  block:
+    - name: Look at what sits at the cargo shim path
+      ansible.builtin.stat:
+        path: "{{ user_home }}/.local/bin/cargo"
+      register: developer_rust_governor_shim
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user }}"
+
+    # Only the governor's own symlink is removed; anything else at that path
+    # is the user's and stays.
+    - name: Remove the cargo shim
+      ansible.builtin.file:
+        path: "{{ user_home }}/.local/bin/cargo"
+        state: absent
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user }}"
+      when:
+        - developer_rust_governor_shim.stat.islnk | default(false)
+        - developer_rust_governor_shim.stat.lnk_source | default('') == '/usr/local/bin/hyperi-rust-govern'
+
+    - name: Remove the governor script and configuration
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /usr/local/bin/hyperi-rust-govern
+        - "{{ user_home }}/.config/hyperi/rust-governor.conf"
+      become: true
+
+    - name: Remove the rust-build slice
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/systemd/user/rust-build.slice"
+        state: absent
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_rust_governor_slice_removed
+      when: ansible_facts['system'] == 'Linux'
+
+    - name: Reload the user manager after removing the slice
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+      become: true
+      become_user: "{{ actual_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] | default(1000) }}"
+      when:
+        - ansible_facts['system'] == 'Linux'
+        - not ansible_check_mode
+        - developer_rust_governor_slice_removed is changed
+      failed_when: false
+
+  rescue:
+    - name: Record that the rust governor removal did not complete
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Rust governor removal: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}

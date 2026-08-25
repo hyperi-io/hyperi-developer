@@ -1,0 +1,16 @@
+# Deployed by hyperi-developer (developer-rust role). Edits are overwritten.
+[Unit]
+Description=Governed Rust builds (hyperi-developer)
+
+[Slice]
+# Percentages resolve against this host's own RAM and swap, so one unit fits
+# every machine. Both capture prongs land here: cargo trees via the
+# hyperi-rust-govern scope, sccache-hosted compiles via Slice= on
+# hyperi-sccache.service.
+MemoryHigh={{ rust_governor_memory_high_pct }}%
+MemoryMax={{ rust_governor_memory_max_pct }}%
+MemorySwapMax={{ rust_governor_swap_max_pct }}%
+# Yields to the desktop under contention; no effect while the machine is idle.
+# The cores-minus-reserve CPU quota is not here: hyperi-rust-govern sets it on
+# each scope from the live core count, so a resized VM needs no re-converge.
+CPUWeight={{ rust_governor_cpu_weight }}
