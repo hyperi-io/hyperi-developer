@@ -19,15 +19,26 @@
 # every workstation.
 
 # ============================================================================
-# OPENTOFU REPOSITORY (Ubuntu only)
+# OPENTOFU REPOSITORY (Ubuntu and Fedora)
 # ============================================================================
-# Fedora packages opentofu natively (verified: 1.11.5 in the f44 release repo,
-# f43 updates), so it needs no vendor repo. Ubuntu does not package it at all
-# (verified against a real 26.04 container: no candidate in main or universe),
-# so we add OpenTofu's own repo -- still auto-updating, one rung down.
+# OpenTofu's own repo on both, so the version tracks upstream rather than a
+# distro freeze. Ubuntu does not package tofu at all; Fedora does, but its
+# package sits in the frozen release repo a full minor behind (1.11.5 against
+# upstream 1.12.6), which is the wrong side of "almost current" for the tool
+# that plans and applies infrastructure.
 #
-# The suite is literally "any" and the packages are arch-generic, so unlike the
-# HashiCorp repo this needs no LTS-codename mapping and no arch handling.
+# The apt suite is literally "any" and the packages are arch-generic, so unlike
+# the HashiCorp repo this needs no LTS-codename mapping and no arch handling.
+#
+# The package is `tofu` on both. Fedora's own package is `opentofu`, and the two
+# conflict over /usr/bin/tofu, so the distro one is removed below.
+#
+# NOTE the gpgkey URLs. OpenTofu's RPM instructions print
+# `.../tofu/gpgkeys` (plural), which 404s and fails the install outright --
+# the working URL is `gpgkey`, singular, as the apt side already uses. Their
+# snippet also pins `sslcacert=/etc/pki/tls/certs/ca-bundle.crt`, which breaks
+# the repo wherever that path is not populated AND still exits 0, so it is
+# omitted here in favour of the system default.
 
 - name: Configure OpenTofu repository (Ubuntu)
   block:
@@ -69,6 +80,28 @@
         state: present
 
   when: ansible_facts['distribution'] == 'Ubuntu'
+
+- name: Configure OpenTofu repository (Fedora)
+  ansible.builtin.yum_repository:
+    name: opentofu
+    description: OpenTofu
+    baseurl: "https://packages.opentofu.org/opentofu/tofu/rpm_any/rpm_any/$basearch"
+    enabled: true
+    gpgcheck: true
+    repo_gpgcheck: false
+    gpgkey:
+      - https://get.opentofu.org/opentofu.gpg
+      - https://packages.opentofu.org/opentofu/tofu/gpgkey
+  when: ansible_facts['distribution'] == 'Fedora'
+
+# Fedora's own `opentofu` package owns the same /usr/bin/tofu, so dnf will not
+# install the vendor `tofu` beside it -- it reports "already installed" and
+# exits 0, leaving the older build in place.
+- name: Remove the distro OpenTofu package superseded by the vendor repo (Fedora)
+  ansible.builtin.dnf:
+    name: opentofu
+    state: absent
+  when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================================
 # AWS CLI V2 (Linux - official snap, classic confinement)
@@ -260,17 +293,17 @@
 # ============================================================================
 # Packaging differs per platform, so each takes the best rung available:
 #
-#            tofu                      bao
-#   Fedora   dnf (native)              dnf (native)
-#   Ubuntu   OpenTofu repo (above)     openbao snap (see below)
-#   macOS    brew core                 brew core
+#            tofu                          bao
+#   Fedora   OpenTofu repo (above)         dnf (native)
+#   Ubuntu   OpenTofu repo (above)         OpenBao repo (see below)
+#   macOS    brew core                     brew core
 #
-# Verified 2026-07-17 against real containers, not from documentation:
-#   Fedora 44 stable has opentofu 1.11.5 AND openbao 2.5.5. (Fedora's mdapi
-#   reports openbao only in updates-testing because it returns the NEWEST
-#   build; a real `dnf --disablerepo=updates-testing list` shows 2.5.1 in
-#   release and 2.5.5 in updates. Trust dnf, not the API.)
-#   Ubuntu 26.04 has NEITHER in main or universe.
+# tofu comes from the vendor repo on both distros so the version tracks
+# upstream: brew and both repos carry 1.12.6, where Fedora's own package is
+# frozen at 1.11.5.
+#
+# bao stays on Fedora's dnf, which trails upstream by a patch rather than a
+# minor.
 
 - name: Install OpenTofu (Ubuntu)
   ansible.builtin.apt:
@@ -279,11 +312,15 @@
     update_cache: true
   when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Install OpenTofu and OpenBao (Fedora)
+- name: Install OpenTofu (Fedora)
   ansible.builtin.dnf:
-    name:
-      - opentofu
-      - openbao
+    name: tofu
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install OpenBao (Fedora)
+  ansible.builtin.dnf:
+    name: openbao
     state: present
   when: ansible_facts['distribution'] == 'Fedora'
 

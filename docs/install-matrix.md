@@ -272,7 +272,7 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 | dive (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
 | aws-cli v2 | all | Fedora dnf (`awscli2`) / Ubuntu official snap / brew | version |
 | aws-vault (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
-| opentofu | all | vendor-repo (packages.opentofu.org) / brew | version |
+| opentofu (`tofu`) | all | vendor-repo (packages.opentofu.org), apt AND dnf / brew | version |
 | openbao | all | vendor-repo (pkgs.openbao.org) / Fedora dnf / brew | version |
 | azure-cli, google-cloud-cli | all | vendor-repo / cask | version |
 | clickhouse-client, rpk, valkey-cli, vector (the `data` group) | Linux; macOS partial | vendor-repo / distro | version |

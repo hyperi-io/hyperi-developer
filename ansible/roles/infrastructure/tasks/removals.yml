@@ -10,8 +10,12 @@
 # BUSL packages and updates forever.
 #
 # Removing terraform WILL break tooling that still shells out to it -- notably
-# hyperi-infra, which invokes `terraform` directly. That is deliberate and
-# tracked; the alternative was shipping a BUSL binary indefinitely.
+# hyperi-infra, which invokes `terraform` directly. That is why this runs on
+# `--tags removals` alone: installing the IaC tools is not a request to delete
+# somebody's Terraform.
+#
+# apt refuses every operation while any source list is malformed, so a host with
+# a broken hashicorp.list cannot run the removal that would clear it.
 
 - name: Remove Terraform and Vault (Ubuntu)
   ansible.builtin.apt:
