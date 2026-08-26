@@ -47,13 +47,15 @@
     - hybrid-sleep.target
 
 # GNOME's own idle timer sits on top of logind, so logind alone does not settle
-# it. Per-user, so it needs the invoking user's dconf, not root's.
+# it. Per-user, so it needs the desktop user's dconf rather than root's or the
+# connecting account's.
 - name: Apply the GNOME power settings
   community.general.dconf:
     key: "/org/gnome/settings-daemon/plugins/power/{{ item.key }}"
     value: "'{{ item.value }}'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   loop: "{{ power_profile_gnome | dict2items }}"
   loop_control:
     label: "{{ item.key }}={{ item.value }}"

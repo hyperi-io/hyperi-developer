@@ -10,7 +10,7 @@
     state: present
   when:
     - ansible_facts['distribution'] == 'Fedora'
-    - ansible_virtualization_type == 'VMware'
+    - ansible_facts['virtualization_type'] == 'VMware'
 
 - name: Install VMware tools (Ubuntu)
   ansible.builtin.apt:
@@ -20,7 +20,7 @@
     state: present
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
-    - ansible_virtualization_type == 'VMware'
+    - ansible_facts['virtualization_type'] == 'VMware'
 
 - name: Enable VMware tools service
   ansible.builtin.systemd:
@@ -29,7 +29,7 @@
     state: started
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - ansible_virtualization_type == 'VMware'
+    - ansible_facts['virtualization_type'] == 'VMware'
 
 # QEMU/KVM
 - name: Install QEMU/KVM guest agent (Fedora)
@@ -40,7 +40,7 @@
     state: present
   when:
     - ansible_facts['distribution'] == 'Fedora'
-    - ansible_virtualization_type in ['kvm', 'qemu']
+    - ansible_facts['virtualization_type'] in ['kvm', 'qemu']
 
 - name: Install QEMU/KVM guest agent (Ubuntu)
   ansible.builtin.apt:
@@ -50,7 +50,7 @@
     state: present
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
-    - ansible_virtualization_type in ['kvm', 'qemu']
+    - ansible_facts['virtualization_type'] in ['kvm', 'qemu']
 
 - name: Enable QEMU guest agent services
   ansible.builtin.systemd:
@@ -63,7 +63,7 @@
   failed_when: false
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - ansible_virtualization_type in ['kvm', 'qemu']
+    - ansible_facts['virtualization_type'] in ['kvm', 'qemu']
 
 # Hyper-V
 - name: Install Hyper-V integration services (Fedora)
@@ -74,7 +74,7 @@
     state: present
   when:
     - ansible_facts['distribution'] == 'Fedora'
-    - ansible_virtualization_type == 'microsoft'
+    - ansible_facts['virtualization_type'] == 'microsoft'
 
 - name: Install Hyper-V integration services (Ubuntu)
   ansible.builtin.apt:
@@ -84,7 +84,7 @@
     state: present
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
-    - ansible_virtualization_type == 'microsoft'
+    - ansible_facts['virtualization_type'] == 'microsoft'
 
 # VirtualBox
 - name: Install VirtualBox guest additions dependencies
@@ -98,4 +98,4 @@
     state: present
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - ansible_virtualization_type == 'oracle'
+    - ansible_facts['virtualization_type'] == 'oracle'

@@ -15,7 +15,8 @@
   # pnpm_env is set by the core role -- it carries PNPM_HOME and puts pnpm's
   # global bin on PATH, without which pnpm refuses `install -g` entirely.
   environment: "{{ pnpm_env }}"
-  become: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
   register: developer_node_pnpm_lint
   # pnpm prints the same summary either way; the only honest signal that it did
   # anything is the added count, which reads "added 0," on a repeat run.

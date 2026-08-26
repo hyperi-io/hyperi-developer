@@ -60,7 +60,7 @@
 
     - name: Start colima at login
       ansible.builtin.copy:
-        dest: "{{ ansible_env.HOME }}/Library/LaunchAgents/io.hyperi.colima.plist"
+        dest: "{{ ansible_facts['env'].HOME }}/Library/LaunchAgents/io.hyperi.colima.plist"
         mode: '0644'
         content: |
           <?xml version="1.0" encoding="UTF-8"?>
@@ -85,9 +85,9 @@
               <key>KeepAlive</key>
               <false/>
               <key>StandardOutPath</key>
-              <string>{{ ansible_env.HOME }}/.cache/hyperi-ai/colima-launchagent.log</string>
+              <string>{{ ansible_facts['env'].HOME }}/.cache/hyperi-ai/colima-launchagent.log</string>
               <key>StandardErrorPath</key>
-              <string>{{ ansible_env.HOME }}/.cache/hyperi-ai/colima-launchagent.log</string>
+              <string>{{ ansible_facts['env'].HOME }}/.cache/hyperi-ai/colima-launchagent.log</string>
           </dict>
           </plist>
       become: false
@@ -103,12 +103,12 @@
     - name: Work out the VM sizing this Mac should give colima
       # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
       ansible.builtin.set_fact:
-        soe_colima_cpu: "{{ [ansible_processor_vcpus | int - 2, 2] | max }}"
-        soe_colima_mem_gb: "{{ [ansible_memtotal_mb | int // 2048, 4] | max }}"
+        soe_colima_cpu: "{{ [ansible_facts['processor_vcpus'] | int - 2, 2] | max }}"
+        soe_colima_mem_gb: "{{ [ansible_facts['memtotal_mb'] | int // 2048, 4] | max }}"
 
     - name: Read colima's persisted VM sizing
       ansible.builtin.slurp:
-        src: "{{ ansible_env.HOME }}/.colima/default/colima.yaml"
+        src: "{{ ansible_facts['env'].HOME }}/.colima/default/colima.yaml"
       register: soe_colima_cfg
       failed_when: false
 
@@ -128,8 +128,8 @@
     - name: Load the colima launch agent
       ansible.builtin.command:
         cmd: >-
-          launchctl bootstrap gui/{{ ansible_user_uid }}
-          {{ ansible_env.HOME }}/Library/LaunchAgents/io.hyperi.colima.plist
+          launchctl bootstrap gui/{{ ansible_facts['user_uid'] }}
+          {{ ansible_facts['env'].HOME }}/Library/LaunchAgents/io.hyperi.colima.plist
       become: false
       register: soe_colima_bootstrap
       # Runs every time, not just when the plist changed: 37 is "already
@@ -147,7 +147,7 @@
     # $HOME -- so this is user state, not machine state.
     - name: Point DOCKER_HOST at colima's socket
       ansible.builtin.blockinfile:
-        path: "{{ ansible_env.HOME }}/.zshenv"
+        path: "{{ ansible_facts['env'].HOME }}/.zshenv"
         create: true
         mode: '0644'
         marker: "# {mark} colima docker socket (hyperi-developer)"
@@ -172,6 +172,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/apple/container/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: soe_container_release
       check_mode: false
 

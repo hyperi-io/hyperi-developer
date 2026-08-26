@@ -1,5 +1,10 @@
 # VS Code Window Sizing Fix for Wayland/4K Displays
 
+> **Not the same bug as [VSCode Wayland Fullscreen](../../docs/vscode-wayland.md).**
+> This one is a stale window-geometry cache and the fix below works. That one is
+> fullscreen geometry lost on alt-tab, open upstream in GNOME/Mutter, with no
+> fix available.
+
 ## Problem
 
 VS Code on Linux with Wayland may display windows at incorrect sizes (e.g., 1920x1080) even on 4K displays. This occurs because:

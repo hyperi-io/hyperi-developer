@@ -117,7 +117,7 @@ EXAMPLES:
   Reproducible (CI-exact) install:
     ./install.sh --contributor --pinned
 
-  Install the RDP server (GNOME Remote Desktop) for inbound access:
+  Install the RDP server (GNOME Remote Login) for inbound access:
     ./install.sh --tags rdp-server
 
   Dry-run to see what would change:
@@ -126,7 +126,8 @@ EXAMPLES:
 NOTES:
   - winlike (Windows-style GNOME taskbar) is the default UI mode
   - If both winlike and maclike are specified, winlike wins
-  - RDP configures GNOME Remote Desktop with a per-host random password (shown once)
+  - RDP configures GNOME Remote Login (NOT Desktop Sharing) with a per-host
+    random password, shown once, and never overwrites credentials already set
   - Use --tags-exclude to skip specific tags within a chosen group
   - Use --list-apps to see every per-app sub-tag for granular installs
 EOF
@@ -221,7 +222,7 @@ Groups / client bundles (own tag; soe pulls them by default):
     rdp-client        Remmina (Linux) / Thincast (macOS)
 
 Targeted deployment:
-    rdp-server        GNOME Remote Desktop (RDP server on port 3389)
+    rdp-server        GNOME Remote Login (RDP server on port 3389)
     vm                VM guest optimisations (QEMU agent etc.)
     power-profile     Sleep/idle/lid policy. Profiles: always-on (default),
                       vm. Select with -e power_profile=<name>

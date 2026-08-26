@@ -22,7 +22,7 @@
     #     MOLECULE_TARGET_DESKTOP_USER=hyperi molecule verify -s existing-host
     verify_user: >-
       {{ lookup('env', 'MOLECULE_TARGET_DESKTOP_USER')
-         | default(hyperi_target_user | default(ansible_user_id, true), true) }}
+         | default(hyperi_target_user | default(ansible_facts['user_id'], true), true) }}
 
   tasks:
     # ------------------------------------------------------------------

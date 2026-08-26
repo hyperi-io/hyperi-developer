@@ -293,7 +293,8 @@
     key: "/org/gnome/shell/disable-user-extensions"
     value: "false"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -304,7 +305,8 @@
     key: "/org/gnome/shell/extensions/astra-monitor/processor-header-show"
     value: "true"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -315,7 +317,8 @@
     key: "/org/gnome/shell/extensions/astra-monitor/memory-header-show"
     value: "true"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -326,7 +329,8 @@
     key: "/org/gnome/shell/extensions/astra-monitor/storage-header-show"
     value: "false"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -337,7 +341,8 @@
     key: "/org/gnome/shell/extensions/astra-monitor/network-header-show"
     value: "false"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -348,7 +353,8 @@
     key: "/org/gnome/shell/extensions/astra-monitor/gpu-header-show"
     value: "false"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -359,7 +365,8 @@
     key: "/org/gnome/shell/extensions/astra-monitor/sensors-header-show"
     value: "false"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -370,7 +377,8 @@
     key: "/org/gnome/desktop/wm/preferences/button-layout"
     value: "':minimize,maximize,close'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -381,7 +389,8 @@
     key: "/org/gnome/desktop/interface/color-scheme"
     value: "'prefer-dark'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -482,7 +491,8 @@
     key: "/org/gnome/desktop/interface/font-name"
     value: "'Adwaita Sans 11'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -493,7 +503,8 @@
     key: "/org/gnome/desktop/interface/document-font-name"
     value: "'Adwaita Sans 11'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -504,7 +515,8 @@
     key: "/org/gnome/desktop/interface/monospace-font-name"
     value: "'Adwaita Mono 11'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -515,7 +527,8 @@
     key: "/org/gnome/desktop/wm/preferences/titlebar-font"
     value: "'Adwaita Sans Bold 11'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
@@ -654,21 +667,24 @@
         key: "/org/gnome/desktop/background/picture-uri"
         value: "'file:///usr/local/share/backgrounds/desktop-background.svg'"
         state: present
-      become: false
+      become: true
+      become_user: "{{ actual_user }}"
 
     - name: Set background as default (dark mode)
       community.general.dconf:
         key: "/org/gnome/desktop/background/picture-uri-dark"
         value: "'file:///usr/local/share/backgrounds/desktop-background.svg'"
         state: present
-      become: false
+      become: true
+      become_user: "{{ actual_user }}"
 
     - name: Set background scaling mode
       community.general.dconf:
         key: "/org/gnome/desktop/background/picture-options"
         value: "'zoom'"
         state: present
-      become: false
+      become: true
+      become_user: "{{ actual_user }}"
 
   rescue:
     - name: Record that the wallpaper was not deployed

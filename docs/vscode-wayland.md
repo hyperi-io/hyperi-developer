@@ -3,6 +3,12 @@
 **Research Date:** 2026-01-06
 **Status:** UPSTREAM BUG - Cannot be fixed by hyperi-developer installer
 
+> **Not the same bug as [VS Code Window Sizing on Wayland/4K](../tools/vscode/VSCODE-WAYLAND.md).**
+> That one is a stale window-geometry cache, and the installer fixes it. This
+> one is fullscreen geometry lost on alt-tab, it is open upstream in
+> GNOME/Mutter, and nothing here fixes it. The names are close; the causes are
+> not.
+
 ## Overview
 
 VSCode (and other Electron apps) exhibit fullscreen window geometry issues on GNOME Wayland. Windows become small, displaced, or render content at the wrong size after alt-tab or focus switching.
@@ -251,90 +257,24 @@ The core bug (mutter #378) remains unfixed. GNOME 49/50 improvements focus on pe
 
 ---
 
-## WBS: Fix It Ourselves
+## If we ever fix this ourselves
 
-Since upstream has not prioritized this bug, here's a work breakdown structure to implement a fix ourselves.
+Nobody is working on this, and the sequencing belongs in an issue rather than
+here. What is worth keeping is where to start looking.
 
-### Phase 1: Research & Analysis
-
-| ID | Task | Dependencies |
-| -- | ---- | ------------ |
-| 1.1 | Deep-dive Mutter source: `src/wayland/meta-wayland-xdg-shell.c` | - |
-| 1.2 | Trace xdg_toplevel.configure event flow during fullscreen/alt-tab | 1.1 |
-| 1.3 | Identify where geometry state is lost (window.c, meta-window.c) | 1.2 |
-| 1.4 | Review [MR !1811](https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/1811) approach | 1.1 |
-| 1.5 | Document findings and potential fix locations | 1.3, 1.4 |
-
-### Phase 2: Prototype Fix
-
-| ID | Task | Dependencies |
-| -- | ---- | ------------ |
-| 2.1 | Set up Mutter build environment (Fedora 42 toolbox) | - |
-| 2.2 | Create test harness to reproduce bug reliably | 2.1 |
-| 2.3 | Implement geometry state caching before fullscreen transition | 1.5, 2.2 |
-| 2.4 | Implement geometry restoration on focus-return after alt-tab | 2.3 |
-| 2.5 | Handle edge case: app launches directly into fullscreen | 2.4 |
-
-### Phase 3: Testing & Validation
-
-| ID | Task | Dependencies |
-| -- | ---- | ------------ |
-| 3.1 | Test with VSCode (Electron 39.x) | 2.5 |
-| 3.2 | Test with WezTerm (Rust/wlroots) | 2.5 |
-| 3.3 | Test with mpv (C/libmpv) | 2.5 |
-| 3.4 | Test with SDL2 game (different toolkit) | 2.5 |
-| 3.5 | Regression test: normal window operations, multi-monitor | 3.1-3.4 |
-| 3.6 | Performance profiling (ensure no frame drops) | 3.5 |
-
-### Phase 4: Upstream Contribution
-
-| ID | Task | Dependencies |
-| -- | ---- | ------------ |
-| 4.1 | Clean up code to GNOME coding standards | 3.6 |
-| 4.2 | Write comprehensive commit message with test cases | 4.1 |
-| 4.3 | Submit MR to GNOME GitLab | 4.2 |
-| 4.4 | Address reviewer feedback (multiple rounds expected) | 4.3 |
-| 4.5 | Backport to stable branches if accepted | 4.4 |
-
-### Phase 5: Local Workaround (Parallel Track)
-
-If upstream is slow, deploy local fix:
-
-| ID | Task | Dependencies |
-| -- | ---- | ------------ |
-| 5.1 | Package patched Mutter as COPR/PPA | 3.6 |
-| 5.2 | Add to hyperi-developer installer as optional repo | 5.1 |
-| 5.3 | Create auto-update mechanism for patch releases | 5.2 |
-| 5.4 | Document removal process when upstream merges | 5.3 |
-
-### Alternative: GNOME Shell Extension Approach
-
-Lower-effort workaround that doesn't require patching Mutter:
-
-| ID | Task | Dependencies |
-| -- | ---- | ------------ |
-| A.1 | Research gnome-shell extension API for window management | - |
-| A.2 | Prototype extension that monitors fullscreen state changes | A.1 |
-| A.3 | Implement geometry save/restore on focus events | A.2 |
-| A.4 | Test with affected applications | A.3 |
-| A.5 | Package and publish to extensions.gnome.org | A.4 |
-
-### Approach Comparison
+Two routes, and the extension is the cheaper one:
 
 | Approach | Risk | Maintainability |
 | -------- | ---- | --------------- |
-| Mutter patch (upstream) | Medium | Best (upstream maintains) |
-| Mutter patch (local COPR) | Low | Poor (must maintain fork) |
-| GNOME Shell extension | Medium | Good (extension API stable) |
+| Mutter patch, upstreamed | Medium | Best -- upstream then maintains it |
+| Mutter patch, local COPR/PPA | Low | Poor -- a network-facing fork to feed |
+| GNOME Shell extension | Medium | Good -- the extension API is stable |
 
-### Recommended Approach
+A shell extension that saves and restores geometry across focus events needs no
+Mutter build and no fork, so it is the one to prototype first. Chase the
+upstream fix regardless: even a rejected MR documents the bug.
 
-1. **Start with Phase 1** - understand the bug deeply
-2. **Parallel track A.1-A.3** - extension as quick win
-3. **If extension works**, deploy it while pursuing upstream fix
-4. **Submit upstream MR** regardless - even if rejected, documents the issue
-
-### Key Files to Study
+The relevant sources:
 
 ```text
 mutter/src/wayland/meta-wayland-xdg-shell.c    # xdg-toplevel handling
@@ -344,13 +284,10 @@ gnome-shell/js/ui/windowManager.js              # Shell window management
 gnome-shell/js/ui/altTab.js                     # Alt-Tab implementation
 ```
 
-### Success Criteria
-
-- [ ] VSCode fullscreen survives 10 consecutive alt-tab cycles
-- [ ] WezTerm fullscreen survives 10 consecutive alt-tab cycles
-- [ ] mpv fullscreen survives 10 consecutive alt-tab cycles
-- [ ] No regression in normal window operations
-- [ ] No measurable performance impact
+Done means fullscreen survives ten consecutive alt-tab cycles in VSCode,
+WezTerm and mpv, with no regression in normal window handling and no measurable
+frame cost. [MR !1811](https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/1811)
+is the closest prior attempt.
 
 ## References
 

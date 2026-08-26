@@ -88,7 +88,7 @@
   ansible.builtin.debug:
     msg: |
       GPU vendor: {{ rdp_gpu_vendor | default('unknown') }}
-      Class: {{ 'VM (virtio)' if ansible_virtualization_role == 'guest' else 'physical' }}
+      Class: {{ 'VM (virtio)' if ansible_facts['virtualization_role'] == 'guest' else 'physical' }}
       /dev/dri: {{ 'PRESENT' if dri_device.stat.exists | default(false) else 'ABSENT (software encode)' }}
       Hardware encode expected: {{ rdp_hw_encode_expected | default(false) }}
       GPU access: gnome-remote-desktop in render/video groups (no world-open rule)

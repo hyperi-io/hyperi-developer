@@ -16,7 +16,8 @@
     key: "/org/gnome/system/locale/region"
     value: "'{{ desktop_region }}'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   when:
     - has_gnome | default(false)
     - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
@@ -26,7 +27,8 @@
     key: "/org/gnome/desktop/interface/clock-format"
     value: "'24h'"
     state: present
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   when:
     - has_gnome | default(false)
     - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']

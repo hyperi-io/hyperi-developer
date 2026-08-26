@@ -15,7 +15,7 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-    - ansible_virtualization_role == 'guest'
+    - ansible_facts['virtualization_role'] == 'guest'
 
 - name: Remove RDP MTU sysctls on physical machines
   ansible.builtin.file:
@@ -24,4 +24,4 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-    - ansible_virtualization_role != 'guest'
+    - ansible_facts['virtualization_role'] != 'guest'

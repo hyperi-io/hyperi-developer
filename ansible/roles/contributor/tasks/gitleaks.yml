@@ -64,6 +64,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/gitleaks/gitleaks/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: contributor_gitleaks_latest
       check_mode: false
       when: not (hyperi_pinned | default(false) and 'gitleaks' in (hyperi_versions | default({})))

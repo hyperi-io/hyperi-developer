@@ -10,12 +10,17 @@
 #
 # Wrapped warn-and-continue, like the rest of soe.
 
+# The stack belongs to the desktop user, who on a fleet machine is not the
+# account the run connected in as. macOS keeps the connecting user because
+# Homebrew refuses to run as root and never splits the two.
 - name: Deploy the local services stack (ClickHouse + Redpanda)
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
   block:
     - name: Work out which daemon socket to talk to
       ansible.builtin.set_fact:
         soe_local_docker_env:
-          DOCKER_HOST: "unix://{{ ansible_facts['env'].HOME }}/.colima/default/docker.sock"
+          DOCKER_HOST: "unix://{{ user_home }}/.colima/default/docker.sock"
           PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
       when: ansible_facts['distribution'] == 'MacOSX'
 
@@ -29,35 +34,30 @@
         path: "{{ soe_local_services_dir }}/clickhouse"
         state: directory
         mode: '0755'
-      become: false
 
     - name: Install the ClickHouse custom-settings config
       ansible.builtin.template:
         src: local-clickhouse-custom-settings.xml.j2
         dest: "{{ soe_local_services_dir }}/clickhouse/custom_settings.xml"
         mode: '0644'
-      become: false
 
     - name: Install the ClickHouse access config
       ansible.builtin.template:
         src: local-clickhouse-access.xml.j2
         dest: "{{ soe_local_services_dir }}/clickhouse/access.xml"
         mode: '0644'
-      become: false
 
     - name: Install the local services compose file
       ansible.builtin.template:
         src: local-services-compose.yaml.j2
         dest: "{{ soe_local_services_dir }}/compose.yaml"
         mode: '0644'
-      become: false
 
     - name: Create the user bin directory
       ansible.builtin.file:
-        path: "{{ ansible_facts['env'].HOME }}/.local/bin"
+        path: "{{ user_home }}/.local/bin"
         state: directory
         mode: '0755'
-      become: false
 
     # ~/.local/bin, not /usr/local/bin: the stack it drives is per-user, and a
     # dev convenience should not need root to install. The SOE shell config
@@ -65,9 +65,8 @@
     - name: Install the local-services command
       ansible.builtin.template:
         src: local-services.j2
-        dest: "{{ ansible_facts['env'].HOME }}/.local/bin/local-services"
+        dest: "{{ user_home }}/.local/bin/local-services"
         mode: '0755'
-      become: false
 
     # Pulled at provision time so the first `up` is seconds rather than a
     # multi-hundred-MB wait. Not started: that is the developer's call.
@@ -76,7 +75,6 @@
         cmd: docker compose pull
         chdir: "{{ soe_local_services_dir }}"
       environment: "{{ soe_local_docker_env }}"
-      become: false
       changed_when: false
       when: not ansible_check_mode
 

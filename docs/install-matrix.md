@@ -68,6 +68,7 @@ flowchart TD
     contributor --> developer
     developer --> astral["astral suite<br/>uv + ruff + ty"]
     soegui["soe-gui"] --> astral
+    soegui --> rdpclient["rdp-client"]
     dpy["developer-python"] --> astral
     dts["developer-typescript"] --> dnode["developer-node"]
     dlang["developer-languages"] --> drust["developer-rust"]
@@ -98,9 +99,9 @@ flowchart TD
 | infrastructure | `infrastructure` | - | opt-in |
 | contributor | `contributor` | developer | opt-in |
 | soe | `soe` | contributor | opt-in |
-| soe-gui | `soe-gui` | astral | opt-in |
+| soe-gui | `soe-gui` | astral, rdp-client | opt-in |
 | rdp-server | `rdp-server` | - | opt-in |
-| rdp-client | `rdp-client` | - | opt-in / soe default |
+| rdp-client | `rdp-client` | - | opt-in; pulled by default via soe-gui |
 | vpn-clients | `vpn-clients` | - | opt-in / soe default |
 | astral (uv + ruff + ty) | `astral` | - | base component; also dep of python/soe-gui |
 | bash-modern | `bash-modern` | - | opt-in (macOS) |
@@ -347,11 +348,52 @@ hyperi-ci.
 | Role | Tag | What it does |
 |---|---|---|
 | `power-profile` | `power-profile` | Sleep, idle and lid policy. `always-on` (default) never sleeps on mains power, lid shut included, and leaves battery behaviour stock; `vm` never sleeps at all, for an unattended RDP guest. Select with `-e power_profile=<name>`. Profiles are data files under `roles/power-profile/vars/profiles/` |
-| `rdp-server` | `rdp-server` | GNOME Remote Desktop on port 3389. Includes `handover-watchdog`, which restarts the daemon after a failed handover leaves it accepting connections and servicing none, and `window-fit`, a GNOME Shell extension that refits windows into the work area so a reconnect at a smaller resolution cannot strand one off-screen |
+| `rdp-server` | `rdp-server` | GNOME **Remote Login** on port 3389 -- the system-wide feature driven by `grdctl --system`, NOT the per-user Desktop Sharing on the other Settings tab. Never overwrites credentials GNOME already holds. Includes `handover-watchdog`, which restarts the daemon after a failed handover leaves it accepting connections and servicing none, and `window-fit`, a GNOME Shell extension that refits windows into the work area so a reconnect at a smaller resolution cannot strand one off-screen |
 | `vm` / `optimizer` | `vm` | VM guest optimisations (QEMU/SPICE agents) |
 
 Deliberately outside `soe`: the right power answer differs per machine, and
 imposing `always-on` on a laptop that lives in a bag cooks it.
+
+## Who the install targets
+
+Two different users matter on any machine reached over SSH, and conflating them
+is the most expensive mistake available here.
+
+- **The connecting user** -- whoever Ansible authenticated as. On hyperi-infra's
+  fleet inventory that is the service account `ubuntu`.
+- **The desktop user** -- whoever actually sits in front of the machine.
+  `hyperi_target_user` names them; `actual_user` and `user_home` derive from it,
+  and every user-scoped task keys off those.
+
+They are the same person on a laptop, which is why the default (the invoking
+user) is right there and wrong on a fleet machine:
+
+```bash
+ansible-playbook ... -e hyperi_target_user=hyperi
+```
+
+**Getting it wrong reports success.** A task that writes to a home directory as
+the connecting user writes to the WRONG home and exits 0; the tools land where
+nobody looks. `ansible.builtin.file` is worse -- it cannot read across into the
+other home and reports *"Insufficient permissions ... Treating as absent"*, a
+green tombstone over a file that is still there.
+
+So `become: false` is a defect on anything user-scoped, because it means the
+CONNECTING user. The correct forms are:
+
+| Situation | Form |
+|---|---|
+| Linux-only user-scoped task | `become: true` + `become_user: "{{ actual_user }}"` |
+| Cross-platform user-scoped task | `become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"` + `become_user: "{{ actual_user }}"` |
+| macOS-only, or scoped to the invoker by definition | `become: false` |
+
+The macOS split exists because Homebrew refuses to run as root, and macOS never
+separates the two users anyway. `become_user` is IGNORED while `become` is
+false, so `become: false` paired with `become_user` is always wrong.
+
+The same trap sits in the molecule verify, which takes the desktop user from
+`MOLECULE_TARGET_DESKTOP_USER` -- asserting against the service account's empty
+home passes every user-scoped check on a host that was never fixed.
 
 ## Two install modes
 
@@ -383,6 +425,28 @@ A tool hyperi-ci pins that is absent here is fine and reported as a note: an
 absent entry falls back to latest, which is the documented behaviour. The
 reverse is not, because an entry with no counterpart pins a version CI never
 runs.
+
+### GitHub rate limits on an unattended build
+
+Latest-mode resolves versions through `api.github.com`, which allows **60
+requests an hour per IP** anonymously. A run selecting `infrastructure` plus a
+couple of languages spends a good fraction of that by itself, and every machine
+sharing an egress address draws on the same 60 -- so a fleet rollout or an image
+build ends up competing with itself. The run that fails is rarely the run that
+spent the quota, and the failure surfaces as a 403 with the response headers
+dumped rather than anything saying "rate limited".
+
+Set `GITHUB_TOKEN` (or `GH_TOKEN`) in the environment of whoever runs the
+playbook and every lookup sends it, lifting the ceiling to 5000/hour. Any
+GitHub account's token works and nothing is stored in the repo:
+
+```bash
+GITHUB_TOKEN=$(gh auth token) ansible-playbook ...
+```
+
+Without one the header is empty and every call stays anonymous, so a laptop
+install needs no token and behaves exactly as before. `--pinned` sidesteps the
+API for any tool carrying a pin, since a pinned task skips the lookup entirely.
 
 **Packaging ladder** (pick the highest that works): distro repo (auto-updates) >
 official vendor apt/dnf repo > official snap/flatpak > manual binary (last

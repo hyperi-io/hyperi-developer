@@ -12,7 +12,11 @@ soe_arcane_port: 3552
 
 # Per-user, not system-wide: colima's VM and Docker socket belong to one user,
 # so the macOS case is forced and Linux matches it to keep one code path.
-soe_arcane_dir: "{{ ansible_facts['env'].HOME }}/.config/hyperi/arcane"
+#
+# user_home, not env.HOME: on a fleet machine reached as a service account the
+# environment names that account's home, and the stack lands where the desktop
+# user will never see it.
+soe_arcane_dir: "{{ user_home }}/.config/hyperi/arcane"
 
 # Arcane's own per-container updater, which skips Arcane itself -- hyperi-update
 # pulls and recreates the stack to cover that gap.
@@ -39,12 +43,17 @@ soe_arcane_timezone: UTC
 #
 # Arcane seeds `arcane` / `arcane-admin` with a forced password change on first
 # login. The role performs that change itself straight after the first deploy,
-# which clears the flag, so nobody meets the dialog. Minimum 8 characters.
+# which clears the flag, so nobody meets the dialog.
 #
-# Left at upstream's own default: this is a loopback-only UI and a password
-# the developer already knows beats one they have to go and look up. Override
-# it in group_vars on any machine where that trade does not hold.
-soe_arcane_admin_password: arcane-admin
+# Upstream's own seeded value cannot be reused here: the API enforces at least
+# 12 characters with an uppercase letter, a lowercase letter, a number and a
+# symbol, and rejects anything weaker with a 400. This is the seeded name in a
+# form that policy accepts.
+#
+# A known default rather than a generated secret: this is a loopback-only UI,
+# and a password the developer already knows beats one they have to go and look
+# up. Override it in group_vars on any machine where that trade does not hold.
+soe_arcane_admin_password: Arcane-Admin1!
 
 # ============================================================================
 # Local services -- persistent ClickHouse + Redpanda for ad-hoc work, OPT-IN.
@@ -61,8 +70,9 @@ soe_arcane_admin_password: arcane-admin
 soe_local_services_enabled: false
 
 # Per-user for the same reason Arcane is: colima's VM and socket belong to one
-# user, so the macOS case is forced and Linux matches it.
-soe_local_services_dir: "{{ ansible_facts['env'].HOME }}/.config/hyperi/local-services"
+# user, so the macOS case is forced and Linux matches it. user_home for the
+# same reason soe_arcane_dir uses it.
+soe_local_services_dir: "{{ user_home }}/.config/hyperi/local-services"
 
 soe_local_clickhouse_name: local-clickhouse
 soe_local_redpanda_name: local-redpanda

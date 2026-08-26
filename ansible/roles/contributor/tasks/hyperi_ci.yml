@@ -104,9 +104,14 @@
 # of THIS repo (see CONTRIBUTING), not something hyperi-ci calls.
 #
 # Not packaged anywhere, so cargo it is -- the bottom rung, and the only rung.
+# --pinned takes the exact crates.io release from hyperi_versions -- latest otherwise.
 - name: Install alint (repository-structure linter, NOT ansible-lint)
   ansible.builtin.command:
-    cmd: cargo install alint
+    cmd: >-
+      cargo install alint
+      {{ ('--version ' ~ (hyperi_versions['alint'] | regex_replace('^v', '')))
+      if (hyperi_pinned | default(false) and 'alint' in (hyperi_versions | default({})))
+      else '' }}
     creates: "{{ user_home }}/.cargo/bin/alint"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -165,6 +170,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/google/osv-scanner/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: contributor_osv_latest
       check_mode: false
       when: not (hyperi_pinned | default(false) and 'osv-scanner' in (hyperi_versions | default({})))

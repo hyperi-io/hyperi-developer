@@ -17,6 +17,23 @@
 # pinned mode (they carry no CI-parity pin to mirror).
 hyperi_pinned: false
 
+# GitHub's anonymous release API allows 60 requests an hour PER IP, and a run
+# selecting infrastructure plus a couple of languages spends a good fraction of
+# that by itself. Every machine sharing an egress address draws on the same 60,
+# so a fleet or image build competes with itself and the run that fails is
+# rarely the run that spent the quota.
+#
+# Set GITHUB_TOKEN or GH_TOKEN in the environment of whoever runs the playbook
+# and the ceiling becomes 5000/hour. Any GitHub account's token works; nothing
+# is stored in the repo. Absent one this is an empty dict and every lookup
+# stays anonymous, so a single-laptop install needs no token and is unchanged.
+hyperi_github_token: >-
+  {{ lookup('env', 'GITHUB_TOKEN') | default(lookup('env', 'GH_TOKEN'), true) }}
+
+hyperi_github_headers: >-
+  {{ {'Authorization': 'Bearer ' ~ hyperi_github_token}
+     if hyperi_github_token else {} }}
+
 hyperi_versions:
   alint: v0.14.1
   gitleaks: v8.30.1
@@ -70,10 +87,13 @@ hyperi_core_versions:
   # pinned-artefact rung: exact version plus a SHA256 we hold, per arch. This
   # is the hardening the `hyperi_versions` note above calls planned; for these
   # two tools it is done.
-  go: "1.26.5"
+  # Floor is 1.26.6, which fixed 10 CVEs -- among them a remote DoS against any
+  # Go TLS server (CVE-2026-56862) and two sumdb flaws (CVE-2026-56864/56865)
+  # letting a hostile GOPROXY smuggle unauthenticated modules into the cache.
+  go: "1.26.7"
   go_sha256:
-    amd64: "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
-    arm64: "fe4789e92b1f33358680864bbe8704289e7bb5fc207d80623c308935bd696d49"
+    amd64: "ffb5f8de10c62550dfddab66b36b57030721e0a44a3218e9e1181d7b59f121ca"
+    arm64: "5a4ec883379d51ee9ce1040d5e87f8d35e20387574dd8c947feb01eabc3c1b37"
 
   # rustup-init only BOOTSTRAPS; the toolchain then tracks stable via `rustup
   # update`, so this pin ages slowly and does not gate the Rust version.

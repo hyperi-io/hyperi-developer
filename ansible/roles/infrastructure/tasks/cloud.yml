@@ -201,6 +201,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/99designs/aws-vault/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: aws_vault_release
       check_mode: false
 
@@ -277,9 +278,12 @@
         state: present
       when: ansible_facts['distribution'] == 'Fedora'
 
+    # helm resolves its plugin directory from the running process's own HOME,
+    # so this has to be the desktop user rather than the connecting account.
     - name: Install Helm Dashboard plugin
       ansible.builtin.command: helm plugin install https://github.com/komodorio/helm-dashboard.git
-      become: false
+      become: true
+      become_user: "{{ actual_user }}"
       failed_when: false
       changed_when: false
 
@@ -514,6 +518,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/terraform-docs/terraform-docs/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: terraform_docs_latest
       check_mode: false
 

@@ -55,6 +55,7 @@
   ansible.builtin.uri:
     url: https://api.github.com/repos/mkasberg/ghostty-ubuntu/releases/latest
     return_content: true
+    headers: "{{ hyperi_github_headers }}"
   register: ghostty_latest
   when: ansible_facts['distribution'] == 'Ubuntu'
   check_mode: false

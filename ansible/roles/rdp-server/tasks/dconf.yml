@@ -54,7 +54,7 @@
 
 - name: Display dconf status
   ansible.builtin.debug:
-    msg: "GNOME Remote Desktop configured via grdctl (system service mode) - animations disabled via system dconf profile"
+    msg: "GNOME Remote Login configured via grdctl --system - animations disabled via system dconf profile"
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome

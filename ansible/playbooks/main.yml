@@ -416,7 +416,7 @@
         content: |
           {{ {
             'sha': hyperi_developer_applied_sha.stdout | default('unknown', true),
-            'timestamp': ansible_date_time.iso8601,
+            'timestamp': ansible_facts['date_time'].iso8601,
             'tags': ansible_run_tags,
             'target_user': actual_user,
             'warnings': deploy_warnings | default([]) | length,

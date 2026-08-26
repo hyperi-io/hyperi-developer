@@ -264,6 +264,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/redpanda-data/redpanda/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: rpk_latest
       check_mode: false
 

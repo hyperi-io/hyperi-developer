@@ -111,7 +111,8 @@
   ansible.builtin.command:
     cmd: go install golang.org/x/tools/gopls@latest
   environment: "{{ go_bin_env }}"
-  become: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
   changed_when: true
   failed_when: false
 
@@ -146,6 +147,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/golangci/golangci-lint/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: golangci_latest
       check_mode: false
       when: not (hyperi_pinned | default(false) and 'golangci-lint' in (hyperi_versions | default({})))
@@ -217,11 +219,17 @@
 
   when: ansible_facts['distribution'] == 'Fedora'
 
+# --pinned takes the exact module version from hyperi_versions -- latest otherwise.
 - name: Install gosec (Ubuntu — go install)
   ansible.builtin.command:
-    cmd: go install github.com/securego/gosec/v2/cmd/gosec@latest
+    cmd: >-
+      go install github.com/securego/gosec/v2/cmd/gosec@{{
+      hyperi_versions['gosec']
+      if (hyperi_pinned | default(false) and 'gosec' in (hyperi_versions | default({})))
+      else 'latest' }}
   environment: "{{ go_bin_env }}"
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   changed_when: true
   failed_when: false
   when: ansible_facts['distribution'] == 'Ubuntu'
@@ -235,11 +243,17 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# --pinned takes the exact module version from hyperi_versions -- latest otherwise.
 - name: Install govulncheck (Linux — go install)
   ansible.builtin.command:
-    cmd: go install golang.org/x/vuln/cmd/govulncheck@latest
+    cmd: >-
+      go install golang.org/x/vuln/cmd/govulncheck@{{
+      hyperi_versions['govulncheck']
+      if (hyperi_pinned | default(false) and 'govulncheck' in (hyperi_versions | default({})))
+      else 'latest' }}
   environment: "{{ go_bin_env }}"
-  become: false
+  become: true
+  become_user: "{{ actual_user }}"
   changed_when: true
   failed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

@@ -54,6 +54,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/astral-sh/uv/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: uv_latest_release
       check_mode: false
 

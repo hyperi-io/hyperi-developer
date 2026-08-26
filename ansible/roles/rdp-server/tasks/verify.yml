@@ -68,14 +68,14 @@
 - name: Assert RDP networking sysctls match host class (guest only)
   ansible.builtin.assert:
     that:
-      - (ansible_virtualization_role == 'guest') == (verify_rdp_tcp_conf.stat.exists | default(false))
-      - (ansible_virtualization_role == 'guest') == (verify_rdp_mtu_conf.stat.exists | default(false))
+      - (ansible_facts['virtualization_role'] == 'guest') == (verify_rdp_tcp_conf.stat.exists | default(false))
+      - (ansible_facts['virtualization_role'] == 'guest') == (verify_rdp_mtu_conf.stat.exists | default(false))
     fail_msg: >-
       RDP networking sysctls present/absent does not match host class
-      ({{ 'VM guest' if ansible_virtualization_role == 'guest' else 'physical' }}).
+      ({{ 'VM guest' if ansible_facts['virtualization_role'] == 'guest' else 'physical' }}).
     success_msg: >-
       RDP networking sysctls correctly
-      {{ 'present (VM guest)' if ansible_virtualization_role == 'guest' else 'absent (physical)' }}
+      {{ 'present (VM guest)' if ansible_facts['virtualization_role'] == 'guest' else 'absent (physical)' }}
 
 # GRD priority drop-in: only on the software-encode/none path.
 - name: Stat GRD priority override
@@ -103,7 +103,7 @@
       - RDP backend (grdctl): {{ 'ENABLED' if 'Status: enabled' in verify_grd_status.stdout else 'NOT ENABLED' }}
       - Port 3389 listening: {{ 'YES' if verify_rdp_port.stdout | default('') | trim | length > 0 else 'not yet (may need reboot)' }}
       - TLS Cert: {{ verify_rdp_cert.stat.mode }}  Key: {{ verify_rdp_key.stat.mode }}
-      - Host class: {{ 'VM guest' if ansible_virtualization_role == 'guest' else 'physical' }}
+      - Host class: {{ 'VM guest' if ansible_facts['virtualization_role'] == 'guest' else 'physical' }}
       - GPU vendor: {{ rdp_gpu_vendor | default('unknown') }} (hw-encode expected: {{ rdp_hw_encode_expected | default(false) }})
       - VA-API H.264 encode: {{ 'AVAILABLE' if verify_vaapi_h264.rc == 0 else 'not available (software/CPU)' }}
       - RDP net sysctls: {{ 'present (VM)' if verify_rdp_tcp_conf.stat.exists else 'absent (physical)' }}

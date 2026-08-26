@@ -166,14 +166,14 @@
 - name: Display RDP configuration status
   ansible.builtin.debug:
     msg: |
-      GNOME Remote Desktop configured:
+      GNOME Remote Login configured (NOT Desktop Sharing):
       - Remote Login (RDP): ENABLED on port 3389
       - Username: {{ rdp_username }}
       - Password: {{ 'supplied via rdp_password' if rdp_password is defined
                      else 'generated for this host -- see ' ~ rdp_credentials_file }}
 
       RDP Access:
-      - Connect to: {{ ansible_hostname }}:3389 (or {{ ansible_default_ipv4.address | default('IP') }}:3389)
+      - Connect to: {{ ansible_facts['hostname'] }}:3389 (or {{ ansible_facts['default_ipv4'].address | default('IP') }}:3389)
       - Change password: sudo grdctl --system rdp set-credentials <user> <pass>
         (and update {{ rdp_credentials_file }}, or the next run will set it back)
   when:
