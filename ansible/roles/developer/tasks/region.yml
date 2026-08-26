@@ -36,6 +36,16 @@
 # ============================================================================
 # Add region block to system-wide dconf defaults so new users inherit it
 
+# gnome.yml creates this too, but the region tag can run without it.
+- name: Create dconf local.d directory
+  ansible.builtin.file:
+    path: /etc/dconf/db/local.d
+    state: directory
+    mode: '0755'
+  when:
+    - has_gnome | default(false)
+    - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
+
 - name: Deploy system-wide region dconf defaults
   ansible.builtin.copy:
     content: |
