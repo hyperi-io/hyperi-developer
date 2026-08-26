@@ -41,12 +41,10 @@ soe_arcane_timezone: UTC
 # login. The role performs that change itself straight after the first deploy,
 # which clears the flag, so nobody meets the dialog. Minimum 8 characters.
 #
-# The HyperI defaults, applied over upstream's seeded arcane/arcane-admin in
-# the same API call that clears the forced first-login change. Loopback-only
-# UI, so a memorable credential beats one nobody can recall. Override in
-# group_vars on any machine where that trade does not hold.
-soe_arcane_admin_username: hyperi
-soe_arcane_admin_password: hyperi
+# Left at upstream's own default: this is a loopback-only UI and a password
+# the developer already knows beats one they have to go and look up. Override
+# it in group_vars on any machine where that trade does not hold.
+soe_arcane_admin_password: arcane-admin
 
 # ============================================================================
 # Local services -- persistent ClickHouse + Redpanda for ad-hoc work, OPT-IN.

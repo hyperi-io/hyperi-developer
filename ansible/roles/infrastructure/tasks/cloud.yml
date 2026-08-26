@@ -69,6 +69,10 @@
         path: /etc/apt/sources.list.d/opentofu.list
         state: absent
 
+    # signed_by names the PACKAGE HOST key: packages.opentofu.org signs
+    # InRelease with it (NO_PUBKEY 70DF59811A8B9109 when absent), and deb822
+    # Signed-By takes a single path. The project key stays fetched beside it
+    # for verifying release artefacts by hand.
     - name: Add OpenTofu repository
       ansible.builtin.deb822_repository:
         name: opentofu
@@ -76,7 +80,7 @@
         uris: "https://packages.opentofu.org/opentofu/tofu/any/"
         suites: any
         components: main
-        signed_by: /etc/apt/keyrings/opentofu.gpg
+        signed_by: /etc/apt/keyrings/opentofu-repo.asc
         state: present
 
   when: ansible_facts['distribution'] == 'Ubuntu'
