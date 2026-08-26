@@ -135,6 +135,12 @@ account:
 ./install.sh --users hyperi,ubuntu
 ```
 
+**If no account qualifies, nothing is applied and the run stops** with the
+reason. That happens on a machine holding only `root`, system accounts and the
+image's own -- a fresh cloud image, typically. It does not guess: writing
+dotfiles into `root` or the provisioning account is the outcome the criteria
+exist to prevent, so name the account you meant with `--users`.
+
 Each user gets their own pass. The system-wide work is idempotent, so it
 happens once in effect and later passes no-op; one user's settings never
 overwrite another's.

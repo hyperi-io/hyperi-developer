@@ -621,9 +621,14 @@ if [[ -z "$TARGET_USERS" ]]; then
     fi
 fi
 
-# A machine with no qualifying account still has whoever is running this.
+# No qualifying account means no user-level settings, full stop. Falling back to
+# whoever invoked this would write dotfiles into root or the image's own
+# provisioning account, which is the outcome the criteria exist to prevent.
 if [[ -z "${TARGET_USERS// /}" ]]; then
-    TARGET_USERS="${SUDO_USER:-$(id -un)}"
+    print_error "No account qualifies for the user-level settings"
+    print_info "Skipped: root, system accounts, and the cloud image's own account"
+    print_info "Name one explicitly if that is not what you want: --users <name>"
+    exit 1
 fi
 
 print_info "User-level settings will be applied for: $TARGET_USERS"

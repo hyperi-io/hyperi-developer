@@ -394,6 +394,12 @@ Ubuntu image and `cloud-user` on a Red Hat one. An override dropped in
 `cloud.cfg.d` is not consulted -- use `--users` on a machine that does that.
 `--users` is also how you deliberately include the cloud account.
 
+**No qualifying account means nothing is applied and the run stops**, naming the
+reason. A fresh cloud image holding only `root`, system accounts and its own is
+exactly that case. There is no fallback to the invoking user on purpose --
+falling back would write dotfiles into `root` or the provisioning account, which
+is what the criteria exist to prevent.
+
 Driving Ansible directly (Packer, hyperi-infra) means writing the loop
 yourself:
 
