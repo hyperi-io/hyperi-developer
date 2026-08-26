@@ -94,7 +94,10 @@
       - fd
       - sd                    # sane sed replacement
       - git-delta             # git diff pager (brew aliases `delta` to this)
-      - moreutils             # sponge, ts, vipe, chronic
+      # moreutils is NOT here: its own `parallel` binary conflicts with the
+      # GNU parallel formula below and brew refuses to install both. GNU
+      # parallel is the SOE tool, so sponge/ts/vipe are forgone on macOS.
+      # Debian splits them apart, so Linux keeps both.
       - lazygit               # git TUI
       - dive                  # docker image layer explorer (brew-core has it;
                               # Linux takes a GitHub binary, see k8s.yml)
