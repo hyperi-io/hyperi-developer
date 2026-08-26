@@ -1,0 +1,6 @@
+---
+# Homebrew lives outside the base PATH on both Apple silicon and Intel, and a
+# role must not depend on a sibling having loaded its own copy of this first.
+
+homebrew_env:
+  PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"

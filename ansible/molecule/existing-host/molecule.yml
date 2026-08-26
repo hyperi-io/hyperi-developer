@@ -56,6 +56,9 @@ provisioner:
     # `hosts` is the name molecule itself clears before relinking.
     links:
       hosts: inventory.yml
+      # The version SSoT. Without it any task reading hyperi_core_versions
+      # (the rustup pin, node_major) is undefined under this scenario.
+      group_vars: ${MOLECULE_PROJECT_DIRECTORY}/inventories/localhost/group_vars
 
 scenario:
   name: existing-host

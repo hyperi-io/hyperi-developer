@@ -109,6 +109,17 @@
   # it as a missing command.
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
+# brew's rust formula conflicts with rustup and brew refuses the pair, so a
+# Mac already on rustup keeps it -- rustup's toolchains carry cargo and
+# rustfmt, the same arrangement as the Linux path.
+- name: Check for rustup (macOS)
+  ansible.builtin.command:
+    cmd: zsh -lc 'command -v rustup'
+  register: developer_rust_macos_rustup
+  changed_when: false
+  failed_when: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
 - name: Install Rust via Homebrew (macOS)
   community.general.homebrew:
     name:
@@ -117,7 +128,9 @@
     state: present
   become: false
   environment: "{{ homebrew_env }}"
-  when: ansible_facts['distribution'] == 'MacOSX'
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - developer_rust_macos_rustup.rc | default(1) != 0
 
 # ============================================================
 # Cargo bin directory setup
@@ -251,10 +264,12 @@
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   tags: ['rust-cache']
 
+# /opt/homebrew/opt/rustup/bin leads: brew's rustup never links its shims
+# into /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac.
 - name: Set cargo environment (macOS)
   ansible.builtin.set_fact:
     cargo_env:
-      PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
+      PATH: "/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
       CARGO_HOME: "{{ user_home }}/.cargo"
   when: ansible_facts['distribution'] == 'MacOSX'
   tags: ['rust-cache']

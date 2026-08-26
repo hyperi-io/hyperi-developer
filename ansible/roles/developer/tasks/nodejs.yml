@@ -523,6 +523,8 @@
   changed_when: false
   failed_when: false
 
+# not ansible_check_mode: the install above is only previewed there, so this
+# would fail every check run on a host that does not have node yet.
 - name: Fail if the distro node shadowed the one we installed
   ansible.builtin.fail:
     msg: >-
@@ -531,5 +533,6 @@
       package is probably shadowing the NodeSource one -- check that no other
       repo provides `nodejs` at a higher priority.
   when:
+    - not ansible_check_mode
     - developer_node_version.rc | default(1) == 0
     - not developer_node_version.stdout.startswith('v' ~ node_major ~ '.')

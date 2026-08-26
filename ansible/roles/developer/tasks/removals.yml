@@ -26,6 +26,12 @@
 # Once no host in the field is old enough to carry an artefact, delete its
 # tombstone. Track that by the version stamp, not by memory.
 
+# Own load: a tags-scoped run can reach this file before init's include_vars,
+# and homebrew_cask_env undefined aborts every macOS tombstone below.
+- name: Load macOS variables
+  ansible.builtin.include_vars: macos.yml
+  when: ansible_facts['distribution'] == 'MacOSX'
+
 # ============================================================================
 # SHADOWING — a stale user-level copy that wins on PATH over the system one.
 # The worst class: the host LOOKS fine (the command runs, plausible version)
