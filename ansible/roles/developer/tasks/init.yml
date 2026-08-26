@@ -22,9 +22,15 @@
     - ansible_facts['distribution'] == 'Ubuntu'
     - ansible_facts['distribution_version'] is version(min_ubuntu_version, '<')
 
+# Identical to the pre_task in playbooks/main.yml, which an untagged run has
+# already executed: a derivation that drops hyperi_target_user re-points every
+# user-scoped task in the play at the connecting account.
 - name: Detect actual user (for sudo operations)
   ansible.builtin.set_fact:
-    actual_user: "{{ ansible_facts['env'].SUDO_USER | default(ansible_facts['user_id'], true) }}"
+    actual_user: >-
+      {{ hyperi_target_user
+         | default(ansible_facts['env'].SUDO_USER
+                   | default(ansible_facts['user_id'], true), true) }}
 
 - name: Set actual user home directory (Linux)
   ansible.builtin.set_fact:

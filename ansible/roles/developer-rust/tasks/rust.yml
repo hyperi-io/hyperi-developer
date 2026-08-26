@@ -292,9 +292,16 @@
 # without it a tool is built against dependency versions its author never
 # tested and a semver-compatible upstream release can break one box and not
 # the next. These compile from source, so a cold box pays for it once.
+#
+# --pinned resolves per-item from hyperi_versions keyed by item.crate -- only
+# cargo-deny carries a pin today, so every other entry falls through to latest.
 - name: Install the cargo tool set
   ansible.builtin.command:
-    cmd: "cargo install {{ item.crate }} --locked"
+    cmd: >-
+      cargo install {{ item.crate }} --locked
+      {{ ('--version ' ~ (hyperi_versions[item.crate] | regex_replace('^v', '')))
+      if (hyperi_pinned | default(false) and item.crate in (hyperi_versions | default({})))
+      else '' }}
     creates: "{{ user_home }}/.cargo/bin/{{ item.bin }}"
   loop:
     - {crate: bacon, bin: bacon}
@@ -350,9 +357,14 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
+# --pinned takes the exact crates.io release from hyperi_versions -- latest otherwise.
 - name: Install cargo-chef (Docker layer caching)
   ansible.builtin.command:
-    cmd: cargo install cargo-chef --locked
+    cmd: >-
+      cargo install cargo-chef --locked
+      {{ ('--version ' ~ (hyperi_versions['cargo-chef'] | regex_replace('^v', '')))
+      if (hyperi_pinned | default(false) and 'cargo-chef' in (hyperi_versions | default({})))
+      else '' }}
     creates: "{{ user_home }}/.cargo/bin/cargo-chef"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
@@ -362,9 +374,16 @@
 # cargo-audit scans deps against the RustSec advisory DB, cargo-hack runs the
 # feature-matrix build. Same cargo channel + `cargo install-update -a` refresh
 # path as the tools above.
+#
+# --pinned takes cargo-audit's exact release from hyperi_versions -- cargo-hack
+# carries no pin, so it always tracks latest.
 - name: Install cargo-audit (RustSec advisory audit)
   ansible.builtin.command:
-    cmd: cargo install cargo-audit --locked
+    cmd: >-
+      cargo install cargo-audit --locked
+      {{ ('--version ' ~ (hyperi_versions['cargo-audit'] | regex_replace('^v', '')))
+      if (hyperi_pinned | default(false) and 'cargo-audit' in (hyperi_versions | default({})))
+      else '' }}
     creates: "{{ user_home }}/.cargo/bin/cargo-audit"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"

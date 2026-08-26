@@ -132,6 +132,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/tomnomnom/gron/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: developer_gron_latest
       check_mode: false
 
@@ -218,6 +219,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/chmln/sd/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: sd_release
 
     # sd is the one that punishes a naive arch swap. Its arm64 build is
@@ -265,6 +267,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/jesseduffield/lazygit/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: lazygit_release
       check_mode: false
 

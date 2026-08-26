@@ -110,14 +110,16 @@
         key: "/org/gnome/desktop/privacy/report-technical-problems"
         value: "false"
         state: present
-      become: false
+      become: true
+      become_user: "{{ actual_user }}"
 
     - name: Disable GNOME software usage stats
       community.general.dconf:
         key: "/org/gnome/desktop/privacy/send-software-usage-stats"
         value: "false"
         state: present
-      become: false
+      become: true
+      become_user: "{{ actual_user }}"
 
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

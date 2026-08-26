@@ -1,20 +1,39 @@
-# GNOME Remote Desktop (RDP) Optimizer
+# GNOME Remote Login (RDP) server
 
-Optimizes GNOME Remote Desktop for use over RDP connections, including automatic window resizing and performance tuning.
+Configures and tunes inbound RDP on port 3389, including automatic window
+resizing and performance work for software-encoded sessions.
+
+## Remote Login is not Desktop Sharing
+
+The `gnome-remote-desktop` package provides two separate features, and GNOME
+Settings puts them on separate tabs. **This role configures Remote Login only**
+and never touches Desktop Sharing.
+
+| | Remote Login | Desktop Sharing |
+|---|---|---|
+| Scope | System-wide, serves the GDM greeter | One user's already-running session |
+| systemd unit | `gnome-remote-desktop.service` (system) | the same unit, per-user |
+| Managed with | `grdctl --system` | `grdctl` (no `--system`) |
+| Credentials in | `/var/lib/gnome-remote-desktop/.../credentials.ini` | that user's keyring |
+| Settings tab | System > Remote Login | System > Desktop Sharing |
+
+Confusing the two costs hours: the credentials you set on one are invisible to
+the other, and the tab that looks configured is not the one serving port 3389.
+`grdctl --system status` is the authority for what this role manages.
 
 ## What It Does
 
-1. **Disables Desktop Sharing** - Conflicts with Remote Login
-2. **Enables Remote Login (RDP)** - For remote desktop connections
-3. **Configures Auto-Resize** - Desktop automatically resizes to match RDP client window (which is also what strands windows off-screen on reconnect -- see [Window placement across resolution changes](#window-placement-across-resolution-changes))
+1. **Enables Remote Login (RDP)** on port 3389, via `grdctl --system`
+2. **Sets credentials** -- but only when Remote Login holds none (see below)
+3. **Configures Auto-Resize** - Desktop resizes to match the RDP client window (which is also what strands windows off-screen on reconnect -- see [Window placement across resolution changes](#window-placement-across-resolution-changes))
 4. **Performance Tuning** - TCP optimizations for RDP traffic
-5. **Certificates** - Auto-generates system certificates for secure connections
+5. **Certificates** - Auto-generates a self-signed TLS certificate
 
 ## Platform Support
 
 - **Fedora 42+** with GNOME Desktop
 - **Ubuntu 24.04+** with GNOME Desktop
-- **Not applicable** to macOS (uses different remote desktop methods)
+- **Not applicable** to macOS (uses different remote access methods)
 
 ## Usage
 
@@ -27,56 +46,48 @@ cd ansible
 ansible-playbook -i inventories/localhost/inventory.yml playbooks/main.yml --tags rdp-server
 ```
 
-## Important: RDP Password Configuration
+## RDP credentials
 
-**You MUST manually configure the RDP password after installation.**
+The role handles these. There is nothing to set by hand.
 
-The RDP password is **separate from your user account password** for security reasons. It's stored encrypted and only used for remote desktop authentication.
+The RDP credential is **separate from your user account password**: compromising
+one does not give up the other, and the RDP one is what you type into a client.
 
-### Step-by-Step Password Configuration
+Three sources, in precedence order:
 
-1. **Open GNOME Settings**
+1. `rdp_password` supplied by the operator -- used as-is, never written to disk
+2. a password this role generated on an earlier run -- reused from
+   `/etc/hyperi/rdp-credentials` (root-only, `0600`)
+3. neither, **and** Remote Login currently holds no credentials -- generate 24
+   alphanumerics, record them, and print them once
 
-2. **Go to Sharing**
+**Existing credentials always win.** If `grdctl --system status` reports a
+username set, the role leaves both the username and the password alone. A host
+provisioned before this role existed already holds working credentials nobody
+recorded, and overwriting them locks out whoever is using them.
 
-3. **Click on Desktop Sharing or Remote Login**
+To rotate deliberately: delete `/etc/hyperi/rdp-credentials` and re-run, or set
+them yourself with
 
-You will see one of these screens:
+```bash
+sudo grdctl --system rdp set-credentials <user> <pass>
+```
 
-#### Desktop Sharing Screen (Disable This)
-![Desktop Sharing - Should be OFF](docs/desktop-sharing-off.png)
-
-**Action:** Ensure "Desktop Sharing" toggle is **OFF** (conflicts with Remote Login)
-
-#### Remote Login Screen (Configure This)
-![Remote Login - Enable and Set Password](docs/remote-login-on.png)
-
-**Action:**
-- Ensure "Remote Login" toggle is **ON**
-- Click "Set Password" button
-- Create an RDP-specific password (different from your user password)
-- Remember this password - you'll use it when connecting from RDP clients
-
-### Why Two Different Passwords?
-
-- **User Password:** For local login and sudo operations
-- **RDP Password:** For remote desktop connections only
-- Separation provides better security (compromise of one doesn't affect the other)
-- RDP password is stored encrypted in GNOME Keyring
+Username defaults to `rdp_username` (`hyperi`), which is **not** your Linux
+login name unless you make it so.
 
 ## Technical Details
 
 ### What Gets Configured
 
 **Service Configuration:**
-- `gnome-remote-desktop.service` - Enabled and started
-- Desktop Sharing - Explicitly disabled (conflicts)
-- Remote Login (RDP) - Explicitly enabled
+- `gnome-remote-desktop.service` (the SYSTEM unit) - enabled and started
+- Remote Login (RDP) - explicitly enabled via `grdctl --system rdp enable`
 
 **Certificates:**
-- System certificates auto-generated in `/etc/gnome-remote-desktop/`
-- Proper permissions (gnome-remote-desktop user ownership)
-- Configured via `grdctl` for Remote Login mode
+- Self-signed TLS pair auto-generated in `/var/lib/gnome-remote-desktop/`
+  (`rdp-tls.crt` `0644`, `rdp-tls.key` `0600`)
+- Registered with `grdctl --system rdp set-tls-cert` / `set-tls-key`
 
 **TCP Optimizations:**
 - Window scaling enabled
@@ -103,17 +114,19 @@ remmina
 ```
 
 Login with:
-- Username: Your Linux username
-- Password: The RDP password you configured (NOT your user password)
+- Username: `rdp_username` (`hyperi` by default), NOT your Linux login name
+- Password: the RDP password (NOT your user account password) -- see
+  `/etc/hyperi/rdp-credentials` if the role generated it
 
 ## Troubleshooting
 
 ### "Connection failed" or "Authentication failed"
 
-1. Verify Remote Login is enabled (not Desktop Sharing)
-2. Verify you set the RDP password in Settings → Sharing → Remote Login
-3. Use the RDP password, not your user account password
-4. Check firewall: `sudo firewall-cmd --list-all` (port 3389 should be open)
+1. `sudo grdctl --system status` -- `Status: enabled` and a `Username: (hidden)`
+   line mean Remote Login is configured. Checking the Desktop Sharing tab
+   instead is the classic wrong turn here
+2. Use the RDP username and password, not your user account credentials
+3. Check firewall: `sudo firewall-cmd --list-all` (port 3389 should be open)
 
 ### "Desktop doesn't resize"
 
@@ -124,8 +137,8 @@ Login with:
 ### "Certificates error"
 
 - Certificates auto-generated during installation
-- Check: `sudo ls -la /etc/gnome-remote-desktop/`
-- Should see: rdp-tls.crt, rdp-tls.key with proper ownership
+- Check: `sudo ls -la /var/lib/gnome-remote-desktop/`
+- Should see: rdp-tls.crt, rdp-tls.key owned by the gnome-remote-desktop user
 
 ## Known limitations
 

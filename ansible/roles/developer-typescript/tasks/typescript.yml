@@ -10,7 +10,8 @@
   # unless PNPM_HOME is set and its bin directory is on PATH. pnpm_env comes
   # from the core role, which installs pnpm in the first place.
   environment: "{{ pnpm_env }}"
-  become: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
   register: pnpm_install_ts
   # See developer-node: pnpm's summary looks the same on a repeat run, so key
   # off the added count rather than reporting changed unconditionally.

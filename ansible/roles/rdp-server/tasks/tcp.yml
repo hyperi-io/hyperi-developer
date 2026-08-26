@@ -23,7 +23,7 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-    - ansible_virtualization_role == 'guest'
+    - ansible_facts['virtualization_role'] == 'guest'
 
 # Physical machines: remove the drop-in if a previous run (or older role) left it.
 - name: Remove RDP TCP sysctls on physical machines
@@ -33,4 +33,4 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-    - ansible_virtualization_role != 'guest'
+    - ansible_facts['virtualization_role'] != 'guest'

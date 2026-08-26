@@ -7,11 +7,17 @@
 #
 # Install with: ansible-galaxy collection install -r requirements.yml
 
+# Floors, not pins: latest is this project's default everywhere, so these record
+# the oldest release known to carry the modules the roles call and leave the
+# upper end open. Raise a floor only after testing against it.
 collections:
-  # snap, flatpak, homebrew, homebrew_cask and npm -- the install modules this
-  # project is built on.
+  # snap, flatpak, homebrew, homebrew_cask, npm and dconf -- the install modules
+  # this project is built on.
   - name: community.general
+    version: ">=13.0.0"
 
   # Required by the molecule docker driver, not by any role.
   - name: community.docker
+    version: ">=5.0.0"
   - name: ansible.posix
+    version: ">=2.0.0"

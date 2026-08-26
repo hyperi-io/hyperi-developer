@@ -217,8 +217,11 @@
 # CONFIGURE GIT LFS (all platforms, user-level)
 # ============================================================================
 
+# Writes the filter clauses into the running user's own ~/.gitconfig, so it has
+# to run as the desktop user rather than whoever the play connected as.
 - name: Install Git LFS hooks
   ansible.builtin.command: git lfs install
-  become: false
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
   changed_when: false
   failed_when: false

@@ -9,7 +9,7 @@
     force: false
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - ansible_virtualization_role == 'guest'
+    - ansible_facts['virtualization_role'] == 'guest'
 
 - name: Set GRUB timeout to 1 second
   ansible.builtin.lineinfile:
@@ -19,7 +19,7 @@
     state: present
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - ansible_virtualization_role == 'guest'
+    - ansible_facts['virtualization_role'] == 'guest'
 
 - name: Add VM-optimized kernel parameters
   ansible.builtin.lineinfile:
@@ -29,13 +29,13 @@
     state: present
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - ansible_virtualization_role == 'guest'
+    - ansible_facts['virtualization_role'] == 'guest'
 
 - name: Update GRUB configuration (Fedora BIOS)
   ansible.builtin.command: grub2-mkconfig -o /boot/grub2/grub.cfg
   when:
     - ansible_facts['distribution'] == 'Fedora'
-    - ansible_virtualization_role == 'guest'
+    - ansible_facts['virtualization_role'] == 'guest'
     - ansible_facts.firmware | default('bios') == 'bios'
   failed_when: false
   changed_when: false
@@ -44,7 +44,7 @@
   ansible.builtin.command: grub2-mkconfig -o /boot/efi/EFI/fedora/grub.cfg
   when:
     - ansible_facts['distribution'] == 'Fedora'
-    - ansible_virtualization_role == 'guest'
+    - ansible_facts['virtualization_role'] == 'guest'
     - ansible_facts.firmware | default('bios') == 'uefi'
   failed_when: false
   changed_when: false
@@ -53,6 +53,6 @@
   ansible.builtin.command: update-grub
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
-    - ansible_virtualization_role == 'guest'
+    - ansible_facts['virtualization_role'] == 'guest'
   failed_when: false
   changed_when: false

@@ -196,6 +196,49 @@
   failed_when: false
   when: "'desktop-linux' in (developer_docker_ctx_list.stdout_lines | default([]))"
 
+# The uninstall also leaves `credsStore: desktop` in the user's config.json, and
+# every pull then dies with "docker-credential-desktop: executable file not
+# found" before it reaches the registry. Docker Desktop is retired here by
+# decision, so that helper is stale on any host carrying it.
+#
+# Wrapped: removals.yml is not itself inside a rescue, so a config.json someone
+# hand-edited into invalid JSON would otherwise abort the whole run.
+- name: Retire the Docker Desktop credential helper
+  block:
+    - name: Read the docker CLI config
+      ansible.builtin.slurp:
+        src: "{{ user_home }}/.docker/config.json"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user }}"
+      register: developer_docker_cli_cfg
+      failed_when: false
+
+    # Rewritten key by key rather than replaced: `auths` holds the registry
+    # credentials the developer logged in with.
+    - name: Drop the retired Docker Desktop credential helper
+      ansible.builtin.copy:
+        content: >-
+          {{ (developer_docker_cli_cfg.content | b64decode | from_json)
+             | dict2items | rejectattr('key', 'equalto', 'credsStore') | items2dict
+             | to_nice_json }}
+        dest: "{{ user_home }}/.docker/config.json"
+        mode: '0600'
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user }}"
+      when:
+        - developer_docker_cli_cfg.content is defined
+        - (developer_docker_cli_cfg.content | b64decode | from_json).credsStore | default('') == 'desktop'
+
+  rescue:
+    - name: Record that the docker credential helper was not retired
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # cross-role accumulator the play summarises at the end
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['docker credsStore: ' ~ (ansible_failed_task.name | default('retire'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('failed'))] }}
+
 # OnlyOffice - retired; LibreOffice is the org office suite now. Remove the
 # native package and the Flatpak fallback from hosts that carried it.
 - name: Remove OnlyOffice desktop editors (Fedora)

@@ -8,7 +8,12 @@
 # Wrapped warn-and-continue, like the rest of soe: an optional UI failing to
 # come up must not sink the run that also configures auto-updates and disks.
 
+# The stack belongs to the desktop user, who on a fleet machine is not the
+# account the run connected in as. macOS keeps the connecting user because
+# Homebrew refuses to run as root and never splits the two.
 - name: Deploy Arcane (container management UI)
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
   block:
     # Absent from hyperi_versions, so this is `latest` unless someone pins it.
     # Adding a pin there is only correct once hyperi-ci carries the same one.
@@ -25,7 +30,7 @@
     - name: Work out which daemon socket to talk to
       ansible.builtin.set_fact:
         soe_arcane_docker_env:
-          DOCKER_HOST: "unix://{{ ansible_facts['env'].HOME }}/.colima/default/docker.sock"
+          DOCKER_HOST: "unix://{{ user_home }}/.colima/default/docker.sock"
           PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
       when: ansible_facts['distribution'] == 'MacOSX'
 
@@ -41,13 +46,11 @@
         path: "{{ soe_arcane_dir }}"
         state: directory
         mode: '0700'
-      become: false
 
     - name: Read the environment file this host already has
       ansible.builtin.slurp:
         src: "{{ soe_arcane_dir }}/arcane.env"
       register: soe_arcane_env_raw
-      become: false
       failed_when: false
       no_log: true
 
@@ -105,7 +108,6 @@
         src: arcane.env.j2
         dest: "{{ soe_arcane_dir }}/arcane.env"
         mode: '0600'
-      become: false
       no_log: true
 
     - name: Install the Arcane compose file
@@ -113,7 +115,6 @@
         src: arcane-compose.yaml.j2
         dest: "{{ soe_arcane_dir }}/compose.yaml"
         mode: '0600'
-      become: false
 
     # Skipped under --check along with the rest of the runtime steps: the stack
     # directory the templates above would have created does not exist there.
@@ -122,7 +123,6 @@
         cmd: docker compose pull
         chdir: "{{ soe_arcane_dir }}"
       environment: "{{ soe_arcane_docker_env }}"
-      become: false
       register: soe_arcane_pull
       # compose reports "Pulled" whether or not a layer moved, so a new image is
       # only visible as the recreate below.
@@ -134,7 +134,6 @@
         cmd: docker compose up -d
         chdir: "{{ soe_arcane_dir }}"
       environment: "{{ soe_arcane_docker_env }}"
-      become: false
       register: soe_arcane_up
       changed_when: >-
         soe_arcane_up.stderr is search('Started|Recreated|Created')

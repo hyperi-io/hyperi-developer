@@ -49,6 +49,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/rhysd/actionlint/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: contributor_actionlint_release
       check_mode: false
 

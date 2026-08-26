@@ -10,8 +10,8 @@
 
 - name: Detect virtualization platform
   ansible.builtin.set_fact:
-    vm_type: "{{ ansible_virtualization_type }}"
-    vm_role: "{{ ansible_virtualization_role }}"
+    vm_type: "{{ ansible_facts['virtualization_type'] }}"
+    vm_role: "{{ ansible_facts['virtualization_role'] }}"
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Display VM detection

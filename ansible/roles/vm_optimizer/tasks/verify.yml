@@ -3,11 +3,11 @@
 
 - name: Verify virtualization detection
   ansible.builtin.debug:
-    msg: "Virtualization: {{ ansible_virtualization_type }} (role: {{ ansible_virtualization_role }})"
+    msg: "Virtualization: {{ ansible_facts['virtualization_type'] }} (role: {{ ansible_facts['virtualization_role'] }})"
 
 - name: Skip verification if not a VM
   ansible.builtin.meta: end_play
-  when: ansible_virtualization_role != 'guest'
+  when: ansible_facts['virtualization_role'] != 'guest'
 
 # Check VM-specific services enabled (will be active after reboot)
 - name: Verify QEMU guest agent enabled (KVM)
@@ -16,7 +16,7 @@
   register: verify_qemu
   failed_when: verify_qemu.status.UnitFileState not in ['enabled', 'static']
   when:
-    - ansible_virtualization_type in ['kvm', 'qemu']
+    - ansible_facts['virtualization_type'] in ['kvm', 'qemu']
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Verify VMware tools enabled (VMware)
@@ -25,7 +25,7 @@
   register: verify_vmtools
   failed_when: verify_vmtools.status.UnitFileState != 'enabled'
   when:
-    - ansible_virtualization_type == 'VMware'
+    - ansible_facts['virtualization_type'] == 'VMware'
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # Check journal size limit
@@ -51,9 +51,9 @@
   ansible.builtin.debug:
     msg: |
       ✅ VM Optimizer Configured (reboot required):
-      - VM Type: {{ ansible_virtualization_type }}
+      - VM Type: {{ ansible_facts['virtualization_type'] }}
       - Sysctl config: /etc/sysctl.d/98-vm-optimizer.conf ✅
       - Journal config: /etc/systemd/journald.conf.d/vm-optimizer.conf ✅
-      - Guest tools: {{ 'qemu-guest-agent enabled' if ansible_virtualization_type in ['kvm', 'qemu'] else 'vmtoolsd enabled' if ansible_virtualization_type == 'VMware' else 'N/A' }}
+      - Guest tools: {{ 'qemu-guest-agent enabled' if ansible_facts['virtualization_type'] in ['kvm', 'qemu'] else 'vmtoolsd enabled' if ansible_facts['virtualization_type'] == 'VMware' else 'N/A' }}
       - Journal current size: {{ verify_journal.stdout }}
       - Status: Settings will apply after reboot

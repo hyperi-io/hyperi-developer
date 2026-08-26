@@ -139,6 +139,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/derailed/k9s/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: k9s_latest
       check_mode: false
       when: ansible_facts['distribution'] == 'Ubuntu'
@@ -166,6 +167,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/kubernetes-sigs/kind/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: kind_latest
       check_mode: false
 
@@ -180,6 +182,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/argoproj/argo-cd/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: argocd_latest
       check_mode: false
 
@@ -194,6 +197,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/wagoodman/dive/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: dive_latest
       check_mode: false
 
@@ -238,6 +242,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/kubernetes-sigs/kustomize/releases
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: kustomize_releases
       check_mode: false
       when: ansible_facts['distribution'] == 'Ubuntu'
@@ -268,6 +273,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/yannh/kubeconform/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: kubeconform_latest
       check_mode: false
       when: not (hyperi_pinned | default(false) and 'kubeconform' in (hyperi_versions | default({})))
@@ -295,6 +301,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/stackrox/kube-linter/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: kube_linter_latest
       check_mode: false
       when: not (hyperi_pinned | default(false) and 'kube-linter' in (hyperi_versions | default({})))

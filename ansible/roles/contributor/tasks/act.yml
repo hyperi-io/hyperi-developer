@@ -39,6 +39,7 @@
       ansible.builtin.uri:
         url: https://api.github.com/repos/nektos/act/releases/latest
         return_content: true
+        headers: "{{ hyperi_github_headers }}"
       register: act_release
       check_mode: false
 

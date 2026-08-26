@@ -41,7 +41,7 @@ rdp_cert_country: "AU"
 rdp_cert_state: "NSW"
 rdp_cert_locality: "Sydney"
 rdp_cert_subject: >-
-  /C={{ rdp_cert_country }}/ST={{ rdp_cert_state }}/L={{ rdp_cert_locality }}/O={{ rdp_cert_org }}/CN={{ ansible_hostname }}
+  /C={{ rdp_cert_country }}/ST={{ rdp_cert_state }}/L={{ rdp_cert_locality }}/O={{ rdp_cert_org }}/CN={{ ansible_facts['hostname'] }}
 
 # Recover the RDP daemon after a failed handover. Force-stopping another
 # session from the RDP login screen leaves the daemon accepting TCP on 3389 and
