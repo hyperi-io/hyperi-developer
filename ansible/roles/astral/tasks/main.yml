@@ -19,6 +19,13 @@
 #            (user-owned in ~/.local/bin); ruff and ty install as uv tools
 #            (also user-owned). hyperi-update refreshes all three.
 
+# Own copy: meta-dependencies can run this role before any sibling has loaded
+# theirs, and homebrew_env undefined aborts every macOS task below.
+- name: Load macOS variables
+  ansible.builtin.include_vars: macos.yml
+  when: ansible_facts['distribution'] == 'MacOSX'
+  tags: ['astral', 'uv', 'ruff', 'ty']
+
 # ============================================================================
 # uv - must be first: ruff/ty on Ubuntu install THROUGH uv
 # ============================================================================

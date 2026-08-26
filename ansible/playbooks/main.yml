@@ -387,12 +387,13 @@
       when: not ansible_check_mode
       tags: ['always']
 
+    # No group: root's primary group is `root` on Linux and `wheel` on macOS,
+    # and naming either breaks the other platform.
     - name: Ensure the applied-state directory exists
       ansible.builtin.file:
         path: /var/lib/hyperi-developer
         state: directory
         owner: root
-        group: root
         mode: '0755'
       become: true
       when: not ansible_check_mode
@@ -411,7 +412,6 @@
       ansible.builtin.copy:
         dest: /var/lib/hyperi-developer/applied.json
         owner: root
-        group: root
         mode: '0644'
         content: |
           {{ {

@@ -59,6 +59,23 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       become_user: "{{ actual_user }}"
 
+    # End of .zprofile, because the prepends it must beat (brew shellenv, a
+    # brew rustup caveat line) live earlier in the same file, and zsh reads
+    # .zprofile after .zshenv. Login shells only, which is where builds start.
+    - name: Put the shim ahead of every cargo on the PATH (macOS)
+      ansible.builtin.blockinfile:
+        path: "{{ user_home }}/.zprofile"
+        marker: "# {mark} HYPERI: rust governor shim on PATH"
+        create: true
+        mode: '0644'
+        block: |
+          case ":$PATH:" in
+              *":$HOME/.local/bin:"*) ;;
+              *) export PATH="$HOME/.local/bin:$PATH" ;;
+          esac
+      become: false
+      when: ansible_facts['distribution'] == 'MacOSX'
+
     - name: Create the user systemd directory
       ansible.builtin.file:
         path: "{{ user_home }}/.config/systemd/user"
@@ -137,6 +154,15 @@
         - /usr/local/bin/hyperi-rust-govern
         - "{{ user_home }}/.config/hyperi/rust-governor.conf"
       become: true
+
+    - name: Remove the shim PATH block (macOS)
+      ansible.builtin.blockinfile:
+        path: "{{ user_home }}/.zprofile"
+        marker: "# {mark} HYPERI: rust governor shim on PATH"
+        state: absent
+      become: false
+      failed_when: false
+      when: ansible_facts['distribution'] == 'MacOSX'
 
     - name: Remove the rust-build slice
       ansible.builtin.file:
