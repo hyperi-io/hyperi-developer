@@ -365,12 +365,53 @@ is the most expensive mistake available here.
   `hyperi_target_user` names them; `actual_user` and `user_home` derive from it,
   and every user-scoped task keys off those.
 
-They are the same person on a laptop, which is why the default (the invoking
-user) is right there and wrong on a fleet machine:
+They are the same person on a laptop, which is why the default is right there
+and wrong on a fleet machine.
+
+### One run, one user -- and how the loop works
+
+**The playbook applies user-level settings for exactly ONE user per run.**
+There is no loop inside the roles, and that is deliberate: roughly 350
+user-scoped references across 49 files means a per-task loop or a
+`user-scope` tag would eventually miss one silently, which is the failure mode
+this whole area already has a history of.
+
+`install.sh` loops instead, once per user:
+
+| Selection | Behaviour |
+|---|---|
+| default | every real login account, discovered from `/etc/passwd` |
+| `--users a,b` | exactly those, in that order |
+
+Discovery skips three kinds of account: `root`; system accounts (uid below 1000,
+the systemd range above 60000, shells of `nologin`/`false`/`sync`); and **the
+cloud image's own account**, which exists to provision the machine rather than
+to work in.
+
+That last one is read from `system_info.default_user.name` in
+`/etc/cloud/cloud.cfg` rather than matched by name, because it is `ubuntu` on an
+Ubuntu image and `cloud-user` on a Red Hat one. An override dropped in
+`cloud.cfg.d` is not consulted -- use `--users` on a machine that does that.
+`--users` is also how you deliberately include the cloud account.
+
+**No qualifying account means nothing is applied and the run stops**, naming the
+reason. A fresh cloud image holding only `root`, system accounts and its own is
+exactly that case. There is no fallback to the invoking user on purpose --
+falling back would write dotfiles into `root` or the provisioning account, which
+is what the criteria exist to prevent.
+
+Driving Ansible directly (Packer, hyperi-infra) means writing the loop
+yourself:
 
 ```bash
-ansible-playbook ... -e hyperi_target_user=hyperi
+for u in ubuntu hyperi; do
+    ansible-playbook ... -e hyperi_target_user="$u"
+done
 ```
+
+The system-wide tasks are idempotent, so the second and later passes no-op on
+everything except that user's own files, and no user's settings overwrite
+another's.
 
 **Getting it wrong reports success.** A task that writes to a home directory as
 the connecting user writes to the WRONG home and exits 0; the tools land where
