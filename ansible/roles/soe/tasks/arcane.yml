@@ -196,6 +196,7 @@
           X-Api-Key: "{{ soe_arcane_admin_api_key }}"
         body_format: json
         body:
+          username: "{{ soe_arcane_admin_username }}"
           password: "{{ soe_arcane_admin_password }}"
         status_code: [200]
       register: soe_arcane_pwset

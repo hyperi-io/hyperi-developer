@@ -264,10 +264,12 @@
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   tags: ['rust-cache']
 
+# /opt/homebrew/opt/rustup/bin leads: brew's rustup never links its shims
+# into /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac.
 - name: Set cargo environment (macOS)
   ansible.builtin.set_fact:
     cargo_env:
-      PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
+      PATH: "/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
       CARGO_HOME: "{{ user_home }}/.cargo"
   when: ansible_facts['distribution'] == 'MacOSX'
   tags: ['rust-cache']
