@@ -108,23 +108,49 @@ GNOME already holds** -- it mints a password only when Remote Login has none, so
 re-running it cannot lock out whoever is already connecting. To rotate
 deliberately, delete `/etc/hyperi/rdp-credentials` and re-run.
 
-### Which user gets the user-level settings
+### Which users get the user-level settings
 
 Most of what this installs is system-wide, but some of it is per-user: shell
 config, `~/.cargo`, `~/.local/bin`, dconf/GNOME settings, the Arcane and
-local-services stacks. Those follow **`hyperi_target_user`**.
+local-services stacks.
 
-It defaults to whoever is running the install, which is the right answer on a
-laptop. It is the wrong answer on a fleet machine reached over SSH as a service
-account, because that account's home is not the desktop:
+`./install.sh` applies those for **every account a person actually works in**.
+Three kinds are skipped:
+
+- `root`
+- system accounts -- uid below 1000, the systemd range above 60000, and
+  anything shelled to `nologin`/`false`/`sync`
+- **the cloud image's own account** -- `ubuntu` on an Ubuntu cloud image,
+  `cloud-user` on a Red Hat one. It exists to provision the machine, not to
+  work in, so it gets the system-wide setup and none of the dotfiles
+
+That last one is read from `system_info.default_user.name` in
+`/etc/cloud/cloud.cfg`, which is where cloud-init declares it, rather than
+matching on the name.
+
+Name any set yourself when that is not what you want -- including the cloud
+account:
 
 ```bash
-# Fleet machine: connect as the service account, install for the desktop user
-ansible-playbook ... -e hyperi_target_user=hyperi
+./install.sh --users hyperi,ubuntu
 ```
 
-Get this wrong and the run still reports success -- the settings simply land in
-the service account's home where nobody sees them.
+Each user gets their own pass. The system-wide work is idempotent, so it
+happens once in effect and later passes no-op; one user's settings never
+overwrite another's.
+
+Driving Ansible directly instead of `install.sh`? It takes one user per run, so
+loop it:
+
+```bash
+for u in ubuntu hyperi; do
+    ansible-playbook ... -e hyperi_target_user="$u"
+done
+```
+
+That matters most on a fleet machine reached over SSH as a service account,
+because that account's home is not the desktop. Get it wrong and the run still
+reports success -- the settings simply land where nobody sees them.
 
 ## What Gets Installed
 

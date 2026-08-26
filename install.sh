@@ -120,6 +120,9 @@ EXAMPLES:
   Install the RDP server (GNOME Remote Login) for inbound access:
     ./install.sh --tags rdp-server
 
+  Apply the user-level settings for named users instead of the detected ones:
+    ./install.sh --users hyperi,ubuntu
+
   Dry-run to see what would change:
     ./install.sh --check
 
@@ -130,6 +133,11 @@ NOTES:
     random password, shown once, and never overwrites credentials already set
   - Use --tags-exclude to skip specific tags within a chosen group
   - Use --list-apps to see every per-app sub-tag for granular installs
+  - User-level settings (shell config, ~/.cargo, ~/.local, dconf, the container
+    stacks) are applied for every account a person works in. Skipped by default:
+    root, the system ranges, and the cloud image's own account (ubuntu,
+    cloud-user). Name any set yourself with --users, that account included.
+    System-wide work happens once either way.
 EOF
     exit 0
 }
@@ -263,12 +271,37 @@ append_extra_var() {
     fi
 }
 
+# cloud-init DECLARES the account it created, and the name differs per image
+# family (ubuntu, cloud-user, ec2-user), so read it rather than guessing. An
+# override dropped in cloud.cfg.d is not consulted -- name the users with
+# --users on a machine that does that.
+cloud_image_user() {
+    [[ -r /etc/cloud/cloud.cfg ]] || return 0
+    awk '/^[[:space:]]*default_user:/ { in_block = 1; next }
+         in_block && /^[[:space:]]*name:/ {
+             sub(/^[[:space:]]*name:[[:space:]]*/, ""); print; exit
+         }' /etc/cloud/cloud.cfg
+}
+
+# Every account a person actually works in: root, the system ranges and the
+# image's own provisioning account are all out. uid 60000 is the ceiling because
+# systemd allocates its own users above it.
+discover_target_users() {
+    local cloud_user
+    cloud_user="$(cloud_image_user)"
+    getent passwd | awk -F: -v cloud="$cloud_user" '
+        $3 >= 1000 && $3 < 60000 &&
+        $1 != "root" && $1 != cloud &&
+        $7 !~ /(nologin|\/false|\/sync)$/ { print $1 }' | sort | tr '\n' ' '
+}
+
 # Parse arguments
 ANSIBLE_CHECK=""
 ANSIBLE_TAGS=""
 ANSIBLE_SKIP_TAGS=""
 ANSIBLE_EXTRA_VARS=""
 GIT_BRANCH="main"
+TARGET_USERS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -370,6 +403,10 @@ while [[ $# -gt 0 ]]; do
             # hyperi-ci) instead of /releases/latest. Latest stays the default.
             append_extra_var "hyperi_pinned=true"
             shift
+            ;;
+        --users)
+            TARGET_USERS="$(printf '%s' "$2" | tr ',' ' ')"
+            shift 2
             ;;
         --list-apps)
             list_apps
@@ -573,20 +610,45 @@ print_info "Command: $ANSIBLE_BIN playbooks/main.yml -i inventories/localhost/in
 
 cd ansible || exit 1
 
+# Settle who gets the user-level settings -- shell config, ~/.cargo, ~/.local,
+# dconf, the container stacks. macOS never separates the desktop user from the
+# installing user, so there is nothing to discover there.
+if [[ -z "$TARGET_USERS" ]]; then
+    if [[ "$OS_FAMILY" == "macos" ]]; then
+        TARGET_USERS="$(id -un)"
+    else
+        TARGET_USERS="$(discover_target_users)"
+    fi
+fi
+
+# A machine with no qualifying account still has whoever is running this.
+if [[ -z "${TARGET_USERS// /}" ]]; then
+    TARGET_USERS="${SUDO_USER:-$(id -un)}"
+fi
+
+print_info "User-level settings will be applied for: $TARGET_USERS"
+
+# One pass per user rather than a loop inside the roles: the system-wide tasks
+# are idempotent and no-op on later passes, and nothing user-scoped can be
+# silently missed the way a forgotten loop or tag would miss it.
 # The EXIT trap set above removes the temp venv on any outcome. Run the
 # playbook inside the `if` condition so set -e does not abort before we can
 # report a friendly failure (and the trap still fires on exit).
-# shellcheck disable=SC2086
-if ! "$ANSIBLE_BIN" \
-    playbooks/main.yml \
-    -i inventories/localhost/inventory.yml \
-    $ANSIBLE_CHECK \
-    $ANSIBLE_TAGS \
-    $ANSIBLE_SKIP_TAGS_ARG \
-    $ANSIBLE_EXTRA_VARS; then
-    print_error "Ansible playbook failed"
-    exit 1
-fi
+for target_user in $TARGET_USERS; do
+    print_info "Applying for $target_user ..."
+    # shellcheck disable=SC2086
+    if ! "$ANSIBLE_BIN" \
+        playbooks/main.yml \
+        -i inventories/localhost/inventory.yml \
+        $ANSIBLE_CHECK \
+        $ANSIBLE_TAGS \
+        $ANSIBLE_SKIP_TAGS_ARG \
+        $ANSIBLE_EXTRA_VARS \
+        -e "hyperi_target_user=$target_user"; then
+        print_error "Ansible playbook failed for $target_user"
+        exit 1
+    fi
+done
 
 print_success "Hyperi Developer Environment installation complete!"
 print_info ""
