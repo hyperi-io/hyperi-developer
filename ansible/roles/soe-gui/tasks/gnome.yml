@@ -324,13 +324,34 @@
     - has_gnome | default(false)
     - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
 
-- name: Configure Astra Monitor - hide storage
+# Storage shows a usage bar, matching the memory indicator. Every key is set
+# explicitly because Astra's storage section defaults to throughput instead --
+# the header graph is an IO graph and the usage percentage ships off.
+#
+# storage-main is deliberately absent: left alone the extension resolves the
+# root device itself, which is an nvme id on a laptop and a vda one on a VM.
+#
+# Devices are ignored by CLASS so the rule holds on bare metal and VMs alike;
+# a workstation with snaps carries 25 loop devices.
+- name: Configure Astra Monitor - storage usage indicators
   community.general.dconf:
-    key: "/org/gnome/shell/extensions/astra-monitor/storage-header-show"
-    value: "false"
+    key: "/org/gnome/shell/extensions/astra-monitor/{{ item.key }}"
+    value: "{{ item.value }}"
     state: present
   become: true
   become_user: "{{ actual_user }}"
+  loop:
+    - { key: storage-header-show, value: 'true' }
+    - { key: storage-header-bars, value: 'true' }
+    - { key: storage-header-percentage, value: 'false' }
+    - { key: storage-header-value, value: 'false' }
+    - { key: storage-header-free, value: 'false' }
+    - { key: storage-header-io, value: 'false' }
+    - { key: storage-header-io-bars, value: 'false' }
+    - { key: storage-header-graph, value: 'false' }
+    - { key: storage-ignored-regex, value: "'^(loop|ram|zram|sr|fd)[0-9]'" }
+  loop_control:
+    label: "{{ item.key }}"
   tags: ['winlike', 'maclike', 'never']
   when:
     - has_gnome | default(false)
