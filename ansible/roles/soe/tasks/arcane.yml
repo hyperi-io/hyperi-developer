@@ -176,34 +176,41 @@
       no_log: true
       when: not ansible_check_mode
 
+    # Selected by the global-admin flag rather than by name, so a host whose
+    # admin has since been renamed is still found.
     - name: Work out whether Arcane still wants a password change
       # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
       ansible.builtin.set_fact:
         soe_arcane_admin: >-
           {{ (soe_arcane_users.json.data | default([])
-              | selectattr('username', 'equalto', 'arcane')
+              | selectattr('isGlobalAdmin', 'defined')
+              | selectattr('isGlobalAdmin')
               | list | first) | default({}) }}
       when: not ansible_check_mode
 
-    # No currentPassword needed on the admin path, so this works whatever the
-    # password happens to be now.
-    - name: Set the Arcane admin password
+    # Must precede the change below: the policy is read at validation time, and
+    # the default `strong` rejects Arcane's own seeded password.
+    - name: Relax the Arcane password policy
       ansible.builtin.uri:
-        url: "http://127.0.0.1:{{ soe_arcane_port }}/api/users/{{ soe_arcane_admin.id }}"
+        url: "http://127.0.0.1:{{ soe_arcane_port }}/api/environments/0/settings"
         method: PUT
         headers:
           X-Api-Key: "{{ soe_arcane_admin_api_key }}"
         body_format: json
         body:
-          password: "{{ soe_arcane_admin_password }}"
+          authPasswordPolicy: "{{ soe_arcane_password_policy }}"
         status_code: [200]
-      register: soe_arcane_pwset
-      changed_when: soe_arcane_pwset.status == 200
-      no_log: true
+      register: soe_arcane_policy
+      changed_when: soe_arcane_policy.status == 200
       when:
         - not ansible_check_mode
         - soe_arcane_admin.requiresPasswordChange | default(false)
 
+    # Changing the seeded password to itself: the flag clears, and the login
+    # stays the one upstream documents. `arcane-admin` is upstream's seed, not a
+    # value this role chooses -- it is only ever submitted while the
+    # forced-change flag is still up, which is before anyone could have changed
+    # it.
     - name: Retire the forced password change
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ soe_arcane_port }}/api/auth/password"
@@ -212,12 +219,11 @@
           X-Api-Key: "{{ soe_arcane_admin_api_key }}"
         body_format: json
         body:
-          currentPassword: "{{ soe_arcane_admin_password }}"
-          newPassword: "{{ soe_arcane_admin_password }}"
+          currentPassword: arcane-admin
+          newPassword: arcane-admin
         status_code: [200]
       register: soe_arcane_pwchange
       changed_when: soe_arcane_pwchange.status == 200
-      no_log: true
       when:
         - not ansible_check_mode
         - soe_arcane_admin.requiresPasswordChange | default(false)

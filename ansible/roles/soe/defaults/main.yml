@@ -39,21 +39,15 @@ soe_arcane_auto_update_exclude:
 # abbreviation.
 soe_arcane_timezone: UTC
 
-# Admin password, set once while the seeded credential is still known.
+# The login is whatever Arcane seeds -- this role sets neither the username nor
+# the password, so upstream's documented default is what you sign in with.
 #
-# Arcane seeds `arcane` / `arcane-admin` with a forced password change on first
-# login. The role performs that change itself straight after the first deploy,
-# which clears the flag, so nobody meets the dialog.
-#
-# Upstream's own seeded value cannot be reused here: the API enforces at least
-# 12 characters with an uppercase letter, a lowercase letter, a number and a
-# symbol, and rejects anything weaker with a 400. This is the seeded name in a
-# form that policy accepts.
-#
-# A known default rather than a generated secret: this is a loopback-only UI,
-# and a password the developer already knows beats one they have to go and look
-# up. Override it in group_vars on any machine where that trade does not hold.
-soe_arcane_admin_password: Arcane-Admin1!
+# Upstream's default policy is `strong`: 12 characters with an uppercase letter,
+# a number and a symbol, which its OWN seeded password fails. Retiring the
+# forced first-login prompt means re-submitting that seeded password, so the
+# policy has to accept it. Eight characters remains the floor whatever this
+# says -- the request schema rejects anything shorter before the policy is read.
+soe_arcane_password_policy: basic
 
 # ============================================================================
 # Local services -- persistent ClickHouse + Redpanda for ad-hoc work, OPT-IN.
