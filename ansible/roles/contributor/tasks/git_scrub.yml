@@ -1,0 +1,110 @@
+---
+# git-scrub - rewrites a git repository's whole history to strip AI coding-agent
+# residue (artefact files, `Co-Authored-By` trailers, agent-credited identities)
+# and redact secret/PII shapes out of blobs.
+#
+# In `contributor` rather than `soe` because it is what clears a gitleaks
+# failure: gitleaks scans FULL history, so a secret removed from HEAD still
+# fails `hyperi-ci check`. soe inherits it through meta/dependencies.
+#
+# GitHub release tarball on every platform (Tier 3 -- hyperi-update pulls the
+# latest on each run). It is the only rung: not on crates.io, no git-scrub path
+# on downloads.hyperi.io, and the release's git-scrub.rb is not in the hyperi-io
+# tap. Move macOS to community.general.homebrew once that formula is tapped.
+#
+# The asset unpacks into a directory named after itself, so the extracted binary
+# path carries the version. The tag has a leading `v`; the filename does not.
+
+- name: Install git-scrub (re-fetched GitHub release, Tier 3)
+  block:
+    # --pinned takes the CI-exact tag from group_vars, latest otherwise, so a
+    # pinned install never depends on the GitHub API.
+    #
+    # hyperi-ci carries no git-scrub pin, so --pinned falls through to latest.
+    # Adding an entry here without the matching hyperi-ci pin turns the build
+    # red via check_version_pins.py.
+    - name: Get latest git-scrub version from GitHub API
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/hyperi-io/git-scrub/releases/latest
+        return_content: true
+        headers: "{{ hyperi_github_headers }}"
+      register: contributor_git_scrub_release
+      check_mode: false
+      when: not (hyperi_pinned | default(false) and 'git-scrub' in (hyperi_versions | default({})))
+
+    - name: Resolve the git-scrub tag (pinned or latest)
+      ansible.builtin.set_fact:
+        contributor_git_scrub_ref: >-
+          {{ hyperi_versions['git-scrub']
+             if (hyperi_pinned | default(false) and 'git-scrub' in (hyperi_versions | default({})))
+             else contributor_git_scrub_release.json.tag_name }}
+
+    # hyperi_arch_deb already spells the architecture the way this release does.
+    - name: Build the git-scrub asset name
+      ansible.builtin.set_fact:
+        contributor_git_scrub_stem: >-
+          git-scrub-{{ contributor_git_scrub_ref | regex_replace('^v', '') }}-{{
+          'darwin' if ansible_facts['distribution'] == 'MacOSX' else 'linux' }}-{{ hyperi_arch_deb }}
+
+    # The tarball is KEPT, and that is what makes the role idempotent: get_url
+    # re-reports ok for an unchanged asset, so the extract and install below
+    # stay skipped on a converged box. Deleting it would re-download every run
+    # and report changed forever.
+    #
+    # The upstream binary cannot be asked instead -- v1.0.2 reports itself as
+    # "git-scrub 1.0.1", so a version comparison would reinstall on every run.
+    - name: Download the git-scrub tarball
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/hyperi-io/git-scrub/releases/download/{{ contributor_git_scrub_ref }}/{{ contributor_git_scrub_stem }}.tar.gz
+        dest: "/tmp/{{ contributor_git_scrub_stem }}.tar.gz"
+        mode: '0644'
+      register: contributor_git_scrub_download
+
+    - name: Check whether git-scrub is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/git-scrub
+      register: contributor_git_scrub_installed
+
+    # Root-owned on Linux, absent on a fresh Apple Silicon box.
+    - name: Ensure /usr/local/bin exists
+      ansible.builtin.file:
+        path: /usr/local/bin
+        state: directory
+        mode: '0755'
+      become: true
+
+    # A new asset OR a missing binary: the second repairs drift on a box where
+    # the tarball is still cached but the binary was removed.
+    - name: Install git-scrub
+      when:
+        - not ansible_check_mode
+        - contributor_git_scrub_download.changed or not contributor_git_scrub_installed.stat.exists
+      block:
+        - name: Extract the git-scrub tarball
+          ansible.builtin.unarchive:
+            src: "/tmp/{{ contributor_git_scrub_stem }}.tar.gz"
+            dest: /tmp
+            remote_src: true
+
+        - name: Install the git-scrub binary
+          ansible.builtin.copy:
+            src: "/tmp/{{ contributor_git_scrub_stem }}/git-scrub"
+            dest: /usr/local/bin/git-scrub
+            mode: '0755'
+            remote_src: true
+          become: true
+
+        - name: Remove the extracted git-scrub directory
+          ansible.builtin.file:
+            path: "/tmp/{{ contributor_git_scrub_stem }}"
+            state: absent
+
+  rescue:
+    - name: Record that git-scrub did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['git-scrub: ' ~ (ansible_failed_result.msg | default('download failed'))] }}

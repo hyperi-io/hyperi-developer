@@ -291,9 +291,12 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 | wrangler (the `cloudflare` group) | all | npm-global / brew | version |
 | flarectl (the `cloudflare` group) | all | `go install` from source / brew | source tag |
 
-Every macOS path resolves to brew or a cask. The language managers that remain
-there carry no formula at all: `alint` and `maid` have none, and semantic-release
-needs its plugin set installed alongside it, which only npm gives.
+Almost every macOS path resolves to brew or a cask. The language managers that
+remain there carry no formula at all: `alint` and `maid` have none, and
+semantic-release needs its plugin set installed alongside it, which only npm
+gives. `git-scrub` is the one release-tarball exception -- its formula exists in
+the release but is not in the hyperi-io tap, so macOS takes the darwin asset
+until it is tapped.
 
 Cloudflare publishes no flarectl binary and no distro packages it, so both
 platforms build it from source. It also lives on cloudflare-go's `v0` branch --
@@ -321,6 +324,7 @@ warning and continues.
 | vulture | all | Ubuntu apt / Fedora uv-tool (Tier 2) / brew | version |
 | typos | all | cargo (Tier 2) / brew | version |
 | maid (mermaid validator, used by `/docs`) | all | npm global (Tier 2) | n/a |
+| git-scrub (git-history scrubber) | all | github-binary (Tier 3: re-fetch) | version |
 
 `hyperi-ci` is a Python tool from PyPI, installed via `uv tool` and refreshed to
 the latest release on every run (upgrade-if-present, not install-once). soe
