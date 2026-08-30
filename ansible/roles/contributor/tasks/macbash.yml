@@ -1,0 +1,83 @@
+---
+# macbash - flags GNU/Linux-only bash constructs that break on macOS (BSD), and
+# fixes many in place.
+#
+# In `contributor` because CONTRIBUTING.md requires it for every shell change in
+# this repo, so an outside contributor needs it to pass review. soe inherits it
+# through meta/dependencies.
+#
+# Linux takes the bare binary from downloads.hyperi.io rather than the .deb/.rpm
+# beside it, because those carry the version in their filename and would need a
+# release lookup that this path avoids entirely.
+#
+# Upstream publishes a .sha256 next to each asset, so this fetch verifies a
+# digest instead of trusting the transport.
+
+- name: Install macbash (macOS)
+  when: ansible_facts['distribution'] == 'MacOSX'
+  block:
+    - name: Tap the hyperi-io formulae (macOS)
+      community.general.homebrew_tap:
+        name: hyperi-io/tap
+        state: present
+      become: false
+      environment: "{{ homebrew_env }}"
+
+    - name: Install macbash via Homebrew (macOS)
+      community.general.homebrew:
+        name: macbash
+        state: present
+      become: false
+      environment: "{{ homebrew_env }}"
+
+  rescue:
+    - name: Record that macbash did not install (macOS)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['macbash: ' ~ (ansible_failed_result.msg | default('brew install failed'))] }}
+
+- name: Install macbash (Linux)
+  when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
+  block:
+    - name: Build the macbash asset name
+      ansible.builtin.set_fact:
+        contributor_macbash_asset: "macbash-linux-{{ hyperi_arch_deb }}"
+
+    - name: Fetch the published macbash checksum
+      ansible.builtin.uri:
+        url: https://downloads.hyperi.io/macbash/latest/{{ contributor_macbash_asset }}.sha256
+        return_content: true
+      register: contributor_macbash_sha_file
+      check_mode: false
+
+    # The file lists the bare binary and the tarball, so anchor on the exact
+    # asset name or the tarball's digest is picked up instead.
+    - name: Resolve the macbash checksum
+      ansible.builtin.set_fact:
+        contributor_macbash_sha: >-
+          {{ (contributor_macbash_sha_file.content.splitlines()
+              | select('match', '^[0-9a-f]+ +' ~ contributor_macbash_asset ~ '$')
+              | first).split() | first }}
+
+    # The digest comparison is what makes this idempotent: the asset name carries
+    # no version, so nothing else would notice a republished binary.
+    - name: Install the macbash binary (Linux)
+      ansible.builtin.get_url:
+        url: https://downloads.hyperi.io/macbash/latest/{{ contributor_macbash_asset }}
+        dest: /usr/local/bin/macbash
+        checksum: "sha256:{{ contributor_macbash_sha }}"
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+
+  rescue:
+    - name: Record that macbash did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- see the note above.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['macbash: ' ~ (ansible_failed_result.msg | default('download failed'))] }}

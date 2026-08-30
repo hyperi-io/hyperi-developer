@@ -64,6 +64,11 @@ rust_governor_enabled: true
 # One rust build at a time per user; later invocations wait for the lock.
 rust_governor_serialize: true
 
+# A daemon started inside a governed build inherits the lock and holds it for
+# its own lifetime, which would otherwise hang every later cargo command. After
+# this many seconds the build proceeds unserialised and says so.
+rust_governor_lock_wait_seconds: 1800
+
 # Percentages of the HOST's physical RAM (systemd resolves them all against
 # RAM, the swap cap included), so the same numbers ship everywhere. High
 # throttles and reclaims; Max kills the build -- the build dies, never the

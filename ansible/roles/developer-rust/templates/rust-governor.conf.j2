@@ -3,3 +3,5 @@
 HYPERI_RUST_GOVERN_SERIALIZE={{ '1' if rust_governor_serialize else '0' }}
 HYPERI_RUST_GOVERN_CPU_RESERVE={{ rust_governor_cpu_reserve_cores }}
 HYPERI_RUST_GOVERN_MACOS_QOS={{ rust_governor_macos_qos }}
+# Seconds to wait for the build lock before giving up and building unserialised.
+HYPERI_RUST_GOVERN_LOCK_WAIT={{ rust_governor_lock_wait_seconds }}

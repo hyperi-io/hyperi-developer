@@ -34,6 +34,12 @@ hyperi_github_headers: >-
   {{ {'Authorization': 'Bearer ' ~ hyperi_github_token}
      if hyperi_github_token else {} }}
 
+# The same token as a process environment, for tasks shelling out to a script
+# that does its own release lookups. An exported token does not survive `become`
+# to a different uid, so a task `environment:` is the only way it reaches them.
+hyperi_github_env: >-
+  {{ {'GITHUB_TOKEN': hyperi_github_token} if hyperi_github_token else {} }}
+
 hyperi_versions:
   alint: v0.14.1
   gitleaks: v8.30.1

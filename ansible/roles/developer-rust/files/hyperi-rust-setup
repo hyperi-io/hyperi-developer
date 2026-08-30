@@ -314,6 +314,20 @@ def _sccache_target() -> str | None:
     }.get(platform.machine())
 
 
+def _github_request(url: str) -> urllib.request.Request:
+    """A GitHub API request carrying a token when the environment holds one.
+
+    api.github.com allows 60 requests an hour per IP anonymously, and a shared
+    egress address exhausts that mid-run. The failure arrives as a 403 with the
+    rate-limit headers rather than as anything named "rate limit".
+    """
+    request = urllib.request.Request(url)
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    return request
+
+
 def _installed_sccache_version() -> str | None:
     """The version of the sccache this script manages, or None if absent."""
     if not SCCACHE_BIN.is_file():
@@ -339,7 +353,7 @@ def install_sccache_linux(dry_run: bool, rep: Reporter) -> None:
 
     url = f"https://api.github.com/repos/{SCCACHE_REPO}/releases/latest"
     try:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with urllib.request.urlopen(_github_request(url), timeout=60) as response:
             latest = json.load(response)["tag_name"]
     except (OSError, ValueError, KeyError) as exc:
         rep.warn(f"sccache: could not read the latest release ({exc}) -- leaving it alone")

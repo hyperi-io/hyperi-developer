@@ -4,9 +4,13 @@
 # opinions. GUI tooling lives in developer-gui; languages in developer-<lang>;
 # IaC in infrastructure; org-specific in soe / soe-gui.
 
+# `apply` as well as the tag: without it the include runs but its tasks keep no
+# tags of their own, so a narrow --tags run skips every fact they set.
 - name: Initialize - Setup common variables
   ansible.builtin.include_tasks:
     file: init.yml
+    apply:
+      tags: ['always']
   tags: ['always']
 
 # Fix AppArmor user namespace restriction (Ubuntu 23.10+)

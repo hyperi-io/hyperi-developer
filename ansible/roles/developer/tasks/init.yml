@@ -42,9 +42,49 @@
     user_home: "{{ '/Users/' + actual_user if actual_user != 'root' else '/var/root' }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# A systemd --user instance lives at /run/user/<uid> of the DESKTOP user, and
+# ansible_facts['user_uid'] is the CONNECTING user's -- a different account on a
+# fleet box. Linux only: macOS has no getent and no systemd --user.
+- name: Look up the target user's uid (Linux)
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ actual_user }}"
+  failed_when: false
+  changed_when: false
+  when: ansible_facts['distribution'] != 'MacOSX'
+
+- name: Set the target user's uid (Linux)
+  # noqa: var-naming[no-role-prefix] -- consumed by developer-rust, so it is
+  # deliberately play-scoped, not role-scoped.
+  ansible.builtin.set_fact:
+    actual_user_uid: >-
+      {{ ansible_facts.getent_passwd[actual_user][1]
+         if (ansible_facts.getent_passwd is defined
+             and actual_user in ansible_facts.getent_passwd)
+         else ansible_facts['user_uid'] }}
+  when: ansible_facts['distribution'] != 'MacOSX'
+
 - name: Display user information
   ansible.builtin.debug:
     msg: "Installing for user: {{ actual_user }} (home: {{ user_home }})"
+
+# Here rather than beside the pnpm install because tag selection can reach a
+# consumer without its producer -- `--tags typescript` picks the TypeScript task
+# and not the Node one. This file carries `tags: ['always']`.
+- name: Set the pnpm environment
+  # noqa: var-naming[no-role-prefix] -- consumed by developer-node and
+  # developer-typescript, so it is deliberately play-scoped, not role-scoped.
+  ansible.builtin.set_fact:
+    pnpm_env:
+      PNPM_HOME: "{{ user_home }}/.local/share/pnpm"
+      # BOTH PNPM_HOME and PNPM_HOME/bin: pnpm reports its global bin directory
+      # as the `bin` subdirectory and checks THAT is on PATH, while its own
+      # binary lives in PNPM_HOME itself.
+      PATH: >-
+        {{ user_home }}/.local/share/pnpm:{{ user_home }}/.local/share/pnpm/bin:{{
+        user_home }}/.npm-global/bin:{{
+        '/opt/homebrew/bin:/usr/local/bin:' if ansible_facts['distribution'] == 'MacOSX' else ''
+        }}{{ ansible_facts['env'].PATH }}
 
 - name: Load macOS-specific variables
   ansible.builtin.include_vars:

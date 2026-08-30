@@ -120,6 +120,20 @@
       tags: ['contributor', 'maid']
   tags: ['contributor', 'maid']
 
+- name: Install git-scrub (git-history scrubber)
+  ansible.builtin.include_tasks:
+    file: git_scrub.yml
+    apply:
+      tags: ['contributor', 'git-scrub']
+  tags: ['contributor', 'git-scrub']
+
+- name: Install macbash (macOS bash portability checker)
+  ansible.builtin.include_tasks:
+    file: macbash.yml
+    apply:
+      tags: ['contributor', 'macbash']
+  tags: ['contributor', 'macbash']
+
 - name: Verify the contributor toolchain
   ansible.builtin.include_tasks:
     file: verify.yml

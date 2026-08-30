@@ -25,6 +25,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/rust-governor.conf"
 SERIALIZE="${HYPERI_RUST_GOVERN_SERIALIZE:-1}"
 RESERVE="${HYPERI_RUST_GOVERN_CPU_RESERVE:-2}"
 QOS="${HYPERI_RUST_GOVERN_MACOS_QOS:-utility}"
+LOCK_WAIT="${HYPERI_RUST_GOVERN_LOCK_WAIT:-1800}"
 
 TOOL="$(basename "$0")"
 if [ "$TOOL" = "hyperi-rust-govern" ]; then
@@ -82,6 +83,9 @@ esac
 case "$RESERVE" in
     ''|*[!0-9]*) RESERVE=2 ;;
 esac
+case "$LOCK_WAIT" in
+    ''|*[!0-9]*) LOCK_WAIT=1800 ;;
+esac
 
 # The cgroup quota is invisible to rustc, which sizes its parallelism off the
 # visible core count and thrashes inside the cap -- so the job count is
@@ -101,34 +105,72 @@ notify_wait() {
     echo "hyperi-rust-govern: another rust build holds the lock -- waiting (HYPERI_RUST_GOVERNOR=off to bypass)" >&2
 }
 
+# The same fd inheritance that makes the lock outlive a crash also hands it to
+# any daemon the build starts, which then holds it for its own lifetime.
+notify_timeout() {
+    if [ -n "${1:-}" ]; then
+        echo "hyperi-rust-govern: lock held by PID(s) $1 for over ${LOCK_WAIT}s -- building unserialised (HYPERI_RUST_GOVERNOR=off to silence)" >&2
+    else
+        echo "hyperi-rust-govern: lock held for over ${LOCK_WAIT}s -- building unserialised (HYPERI_RUST_GOVERNOR=off to silence)" >&2
+    fi
+}
+
 # Linux: flock on fd 9. The fd survives exec, so the lock lives exactly as
 # long as the build and releases on any exit, crash included.
 if [ "$SERIALIZE" = "1" ] && command -v flock >/dev/null 2>&1; then
-    exec 9>"$LOCK"
-    if ! flock -n 9; then
+    # An XDG_RUNTIME_DIR that is set but absent leaves fd 9 unopened, and every
+    # flock below then fails instantly -- which is not the same as contention.
+    # No 2>/dev/null here: on success that redirect would persist and silence
+    # the build's own stderr.
+    if ! exec 9>"$LOCK"; then
+        echo "hyperi-rust-govern: cannot open $LOCK -- building unserialised" >&2
+    elif ! flock -n 9; then
         notify_wait
-        flock 9
+        # Serialisation is an optimisation, so a stuck holder degrades the build
+        # rather than hanging it.
+        if ! flock -w "$LOCK_WAIT" 9; then
+            # fuser space-separates several holders, so squeeze rather than
+            # delete or they concatenate into one meaningless number.
+            lock_holder=""
+            command -v fuser >/dev/null 2>&1 &&
+                lock_holder="$(fuser "$LOCK" 2>/dev/null | tr -s '[:space:]' ' ')"
+            lock_holder="${lock_holder# }"
+            notify_timeout "${lock_holder% }"
+        fi
     fi
 elif [ "$SERIALIZE" = "1" ]; then
     # macOS ships no flock(1). A pid-stamped mkdir lock is atomic everywhere;
     # a holder that died without cleaning up is detected and cleared.
     LOCK_D="$LOCK.d"
     notified=0
-    while ! mkdir "$LOCK_D" 2>/dev/null; do
+    waited=0
+    holder=""
+    locked=0
+    while [ "$waited" -lt "$LOCK_WAIT" ]; do
+        if mkdir "$LOCK_D" 2>/dev/null; then
+            locked=1
+            break
+        fi
         holder="$(cat "$LOCK_D/pid" 2>/dev/null || true)"
+        # A failed clear falls through to the wait, so the loop always advances.
         if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
-            rm -rf "$LOCK_D"
-            continue
+            rm -rf "$LOCK_D" && continue
         fi
         if [ "$notified" -eq 0 ]; then
             notify_wait
             notified=1
         fi
         sleep 2
+        waited=$((waited + 2))
     done
-    printf '%s\n' "$$" >"$LOCK_D/pid"
-    # Single quotes: expanded when the trap fires, not here.
-    trap 'rm -rf "$LOCK_D"' EXIT INT TERM
+    if [ "$locked" -eq 1 ]; then
+        printf '%s\n' "$$" >"$LOCK_D/pid"
+        # Single quotes: expanded when the trap fires, not here.
+        trap 'rm -rf "$LOCK_D"' EXIT INT TERM
+    else
+        # No trap: the directory belongs to whoever still holds it.
+        notify_timeout "$holder"
+    fi
 fi
 
 # Linux with a live user manager: the scope joins rust-build.slice, whose

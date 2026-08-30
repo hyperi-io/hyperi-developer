@@ -41,6 +41,19 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
+# Non-blocking: `hyperi-ci check` drives neither, and both installs already
+# record a warning on failure.
+- name: Check the HyperI developer tools
+  ansible.builtin.command: "{{ item }} --version"
+  environment:
+    PATH: "/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+  loop:
+    - git-scrub
+    - macbash
+  register: verify_hyperi_tools
+  changed_when: false
+  failed_when: false
+
 - name: Display contributor tools verification
   ansible.builtin.debug:
     msg: |
@@ -49,4 +62,7 @@
       - act: {{ verify_act.stdout | default('installed') }}
       {% for r in verify_ci_tools.results %}
       - {{ r.item }}: {{ r.stdout_lines[0] | default('NOT AVAILABLE') if r.rc == 0 else 'NOT AVAILABLE -- hyperi-ci check will skip its pass' }}
+      {% endfor %}
+      {% for r in verify_hyperi_tools.results %}
+      - {{ r.item }}: {{ r.stdout_lines[0] | default('NOT AVAILABLE') if r.rc == 0 else 'NOT AVAILABLE' }}
       {% endfor %}

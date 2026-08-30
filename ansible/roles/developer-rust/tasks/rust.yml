@@ -453,7 +453,9 @@
       {{ '' if rust_cache_central_build_dir else '--no-build-dir' }}
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-  environment: "{{ cargo_env }}"
+  # The script looks up the latest sccache release itself, so it needs the token
+  # too -- it is the one GitHub caller the uri module's headers cannot cover.
+  environment: "{{ cargo_env | combine(hyperi_github_env) }}"
   register: developer_rust_setup
   changed_when: "'CHANGED' in developer_rust_setup.stdout"
   # An optional build accelerator must never abort the run (see S1.T11).
