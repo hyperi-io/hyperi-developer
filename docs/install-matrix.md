@@ -136,9 +136,10 @@ Pinning is by tag today across the board, and digest verification at download is
 still the planned hardening (see Auto-update below, and hyperi-ci #66). A tag can
 be force-moved, so those rows currently rest on HTTPS and the tag alone.
 
-Three fetches do verify a digest today, and they are the ones whose SHA is held
-in the repo or read from a vendor manifest: the Go toolchain, rustup-init, and
-the Claude Code binary.
+Four fetches do verify a digest today, and they are the ones whose SHA is held
+in the repo or read from a published manifest: the Go toolchain, rustup-init,
+the Claude Code binary, and macbash (whose `.sha256` sits beside the asset on
+downloads.hyperi.io, so the fetch also re-pulls a republished binary).
 
 ### developer (base, additive - runs bare)
 
@@ -325,6 +326,7 @@ warning and continues.
 | typos | all | cargo (Tier 2) / brew | version |
 | maid (mermaid validator, used by `/docs`) | all | npm global (Tier 2) | n/a |
 | git-scrub (git-history scrubber) | all | github-binary (Tier 3: re-fetch) | version |
+| macbash (macOS bash portability checker) | all | Linux downloads.hyperi.io binary (Tier 3, digest-verified) / brew tap | SHA256 |
 
 `hyperi-ci` is a Python tool from PyPI, installed via `uv tool` and refreshed to
 the latest release on every run (upgrade-if-present, not install-once). soe

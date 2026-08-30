@@ -127,6 +127,13 @@
       tags: ['contributor', 'git-scrub']
   tags: ['contributor', 'git-scrub']
 
+- name: Install macbash (macOS bash portability checker)
+  ansible.builtin.include_tasks:
+    file: macbash.yml
+    apply:
+      tags: ['contributor', 'macbash']
+  tags: ['contributor', 'macbash']
+
 - name: Verify the contributor toolchain
   ansible.builtin.include_tasks:
     file: verify.yml

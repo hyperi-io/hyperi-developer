@@ -41,13 +41,16 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
-# Non-blocking: nothing in `hyperi-ci check` drives it, and its install already
-# records a warning on failure.
-- name: Check git-scrub
-  ansible.builtin.command: git-scrub --version
+# Non-blocking: `hyperi-ci check` drives neither, and both installs already
+# record a warning on failure.
+- name: Check the HyperI developer tools
+  ansible.builtin.command: "{{ item }} --version"
   environment:
     PATH: "/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
-  register: verify_git_scrub
+  loop:
+    - git-scrub
+    - macbash
+  register: verify_hyperi_tools
   changed_when: false
   failed_when: false
 
@@ -60,4 +63,6 @@
       {% for r in verify_ci_tools.results %}
       - {{ r.item }}: {{ r.stdout_lines[0] | default('NOT AVAILABLE') if r.rc == 0 else 'NOT AVAILABLE -- hyperi-ci check will skip its pass' }}
       {% endfor %}
-      - git-scrub: {{ verify_git_scrub.stdout | default('NOT AVAILABLE') if verify_git_scrub.rc == 0 else 'NOT AVAILABLE' }}
+      {% for r in verify_hyperi_tools.results %}
+      - {{ r.item }}: {{ r.stdout_lines[0] | default('NOT AVAILABLE') if r.rc == 0 else 'NOT AVAILABLE' }}
+      {% endfor %}
