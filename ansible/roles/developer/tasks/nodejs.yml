@@ -416,20 +416,8 @@
     group: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
 
-- name: Set the pnpm environment
-  # noqa: var-naming[no-role-prefix] -- consumed by developer-node and
-  # developer-typescript, so it is deliberately play-scoped, not role-scoped.
-  ansible.builtin.set_fact:
-    pnpm_env:
-      PNPM_HOME: "{{ user_home }}/.local/share/pnpm"
-      # BOTH PNPM_HOME and PNPM_HOME/bin: pnpm reports its global bin directory
-      # as the `bin` subdirectory and checks THAT is on PATH, while its own
-      # binary lives in PNPM_HOME itself.
-      PATH: >-
-        {{ user_home }}/.local/share/pnpm:{{ user_home }}/.local/share/pnpm/bin:{{
-        user_home }}/.npm-global/bin:{{
-        '/opt/homebrew/bin:/usr/local/bin:' if ansible_facts['distribution'] == 'MacOSX' else ''
-        }}{{ ansible_facts['env'].PATH }}
+# pnpm_env is set in the role's init.yml, which runs under `tags: ['always']` so
+# a consumer selected without this file still resolves it.
 
 # PNPM_HOME is an environment variable pnpm itself reads, so it has to be set
 # for non-interactive shells too -- ~/.profile, not ~/.bashrc.

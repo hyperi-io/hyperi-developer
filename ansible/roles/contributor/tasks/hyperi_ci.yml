@@ -116,7 +116,12 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   environment:
-    PATH: "{{ user_home }}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+    # /opt/homebrew/opt/rustup/bin: brew's rustup never links its shims into
+    # /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac. This
+    # task has no distribution gate, so it runs there too.
+    PATH: >-
+      {{ user_home }}/.cargo/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:{{
+      ansible_facts['env'].PATH }}
   register: contributor_alint
   changed_when: "'Installed package' in contributor_alint.stdout | default('')"
   failed_when: false

@@ -44,9 +44,24 @@
   become: true
   become_user: "{{ actual_user }}"
   environment:
-    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] | default(1000) }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
   when: not ansible_check_mode
+  register: developer_rust_sccache_enable
   failed_when: false
+
+- name: Warn if the sccache unit did not enable
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+  # accumulator reported by playbooks/main.yml post_tasks.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['sccache: enabling hyperi-sccache.service failed -- '
+            ~ (developer_rust_sccache_enable.msg | default('no message'))
+            ~ '. Builds still work, without the shared compile cache.'] }}
+  when:
+    - not ansible_check_mode
+    - developer_rust_sccache_enable is failed
+      or developer_rust_sccache_enable.rc | default(0) != 0
 
 # Starting it while an unmanaged server holds the port would fail with
 # "Address in use", and stopping that server first would kill any compile
@@ -59,11 +74,26 @@
   become: true
   become_user: "{{ actual_user }}"
   environment:
-    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts['user_uid'] | default(1000) }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
   when:
     - not ansible_check_mode
     - developer_rust_sccache_running.rc != 0
+  register: developer_rust_sccache_start
   failed_when: false
+
+- name: Warn if the sccache unit did not start
+  # noqa: var-naming[no-role-prefix] -- see the note above.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['sccache: starting hyperi-sccache.service failed -- '
+            ~ (developer_rust_sccache_start.msg | default('no message'))
+            ~ '. It retries at the next login.'] }}
+  when:
+    - not ansible_check_mode
+    - developer_rust_sccache_running.rc != 0
+    - developer_rust_sccache_start is failed
+      or developer_rust_sccache_start.rc | default(0) != 0
 
 - name: Note that the sccache unit takes over at the next login
   ansible.builtin.set_fact:
