@@ -95,3 +95,8 @@ soe_local_memory_limit: 1g
 # Seastar's own allocator reservation, which must stay under the container cap
 # or the broker is OOM-killed while warming up.
 soe_local_redpanda_seastar_memory: 700M
+
+# Where the ls/grep colour block goes. 'system' writes one block to the
+# distro's interactive shell rc so every account gets it; 'user' writes to the
+# invoking user's rc instead and needs no root.
+soe_ls_colour_scope: system
