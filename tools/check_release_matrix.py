@@ -9,7 +9,7 @@ min_fedora_version to 42, two months after 42 went EOL.
 
 Molecule cannot include another YAML file, so `molecule/matrix/molecule.yml`
 must repeat the image list. This makes that repetition checked rather than
-trusted, the same bargain check_version_pins.py makes with hyperi-ci.
+trusted.
 
 The playbook's own OS gate is a third copy, hardcoded in a `when:` because
 pre_tasks run before role defaults are in scope. It is matched by pattern here

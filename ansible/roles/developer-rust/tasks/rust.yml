@@ -1,11 +1,11 @@
 ---
 # Rust toolchain and cargo tools installation
 #
-# rustup comes from upstream (static.rust-lang.org), pinned by version with a
-# SHA256 we hold -- see hyperi_core_versions in group_vars/all.yml. Not a
-# `curl | sh`: the binary is fetched by get_url and its checksum is VERIFIED
-# before it executes, which is the whole difference the install policy is
-# about. And not the distro package either, on either distro:
+# rustup comes from upstream (static.rust-lang.org), resolved to the current
+# rustup-init at install time and checked against the SHA256 published beside
+# it. Not a `curl | sh`: the binary is fetched by get_url and its checksum is
+# verified before it executes, which is the whole difference the install policy
+# is about. And not the distro package either, on either distro:
 #
 #   Ubuntu's rustup is 1.26.0 and ships NO rustup-init -- only /usr/bin/rustup
 #   plus proxies. `rustup default stable` there installs a toolchain but never
@@ -16,9 +16,9 @@
 #   Fedora's rustup is current TODAY, but that is a coincidence of timing, not
 #   a guarantee -- it freezes on its own schedule like every distro package.
 #
-# rustup only bootstraps; the toolchain then tracks stable via `rustup update`
-# (hyperi-update runs it), so the pin above ages slowly and never gates the
-# Rust version a developer actually compiles with.
+# rustup only bootstraps. The toolchain then tracks stable via `rustup update`
+# (hyperi-update runs it), so what a developer compiles with is whatever stable
+# is on the day, edition 2024 included.
 
 # ============================================================
 # Rust Installation (Linux -- one path for both distros)
@@ -60,15 +60,24 @@
     - name: Bootstrap the Rust toolchain
       when: not developer_rustup_bin.stat.exists
       block:
-        # checksum: is the point of this task. A tag or a CDN object can move;
-        # a SHA256 we hold cannot be moved by anyone upstream.
+        # The checksum is fetched from the same publisher, immediately before
+        # the binary, so the download stays verified without holding a version
+        # here. The file reads `<sha256> *./rustup-init`.
+        - name: Look up the current rustup-init checksum
+          ansible.builtin.uri:
+            url: >-
+              https://static.rust-lang.org/rustup/dist/{{ hyperi_arch_gnu }}-unknown-linux-gnu/rustup-init.sha256
+            return_content: true
+          register: developer_rustup_sha
+          check_mode: false
+
         - name: Download rustup-init
           ansible.builtin.get_url:
             url: >-
-              https://static.rust-lang.org/rustup/archive/{{ rustup_version }}/{{ hyperi_arch_gnu }}-unknown-linux-gnu/rustup-init
+              https://static.rust-lang.org/rustup/dist/{{ hyperi_arch_gnu }}-unknown-linux-gnu/rustup-init
             dest: /tmp/rustup-init
             mode: '0755'
-            checksum: "sha256:{{ rustup_sha256 }}"
+            checksum: "sha256:{{ developer_rustup_sha.content.split() | first }}"
 
         # --no-modify-path: this role already manages the ~/.cargo/bin PATH
         # entry in .bashrc below, and letting rustup-init add its own leaves two.
@@ -86,6 +95,44 @@
           ansible.builtin.file:
             path: /tmp/rustup-init
             state: absent
+
+    # rustup-init above only runs on a box that has no rustup, so this is what
+    # moves an existing toolchain forward and makes a re-run land on current
+    # stable. `rustup check` reports without changing anything, and exits
+    # non-zero merely because a rustup self-update is offered.
+    - name: Check whether the Rust toolchain is current
+      ansible.builtin.command:
+        cmd: "{{ user_home }}/.cargo/bin/rustup check"
+      become: true
+      become_user: "{{ actual_user }}"
+      environment:
+        CARGO_HOME: "{{ user_home }}/.cargo"
+        RUSTUP_HOME: "{{ user_home }}/.rustup"
+      register: developer_rustup_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # Matched on the stable line alone -- `rustup - update available` is rustup
+    # offering to replace itself, which `rustup self update` owns, not this.
+    #
+    # A check that did not run is not the same as a toolchain that is current,
+    # so a failed check falls through to attempting the update rather than
+    # silently deciding there was nothing to do.
+    - name: Update the Rust toolchain to current stable
+      ansible.builtin.command:
+        cmd: "{{ user_home }}/.cargo/bin/rustup update stable"
+      become: true
+      become_user: "{{ actual_user }}"
+      environment:
+        CARGO_HOME: "{{ user_home }}/.cargo"
+        RUSTUP_HOME: "{{ user_home }}/.rustup"
+      changed_when: true
+      when: >-
+        developer_rustup_check.rc | default(1) != 0
+        or developer_rustup_check.stdout_lines
+        | select('search', '^stable-.*update available')
+        | list | length > 0
 
     - name: Install Rust components via rustup
       ansible.builtin.command:
@@ -293,15 +340,10 @@
 # tested and a semver-compatible upstream release can break one box and not
 # the next. These compile from source, so a cold box pays for it once.
 #
-# --pinned resolves per-item from hyperi_versions keyed by item.crate -- only
 # cargo-deny carries a pin today, so every other entry falls through to latest.
 - name: Install the cargo tool set
   ansible.builtin.command:
-    cmd: >-
-      cargo install {{ item.crate }} --locked
-      {{ ('--version ' ~ (hyperi_versions[item.crate] | regex_replace('^v', '')))
-      if (hyperi_pinned | default(false) and item.crate in (hyperi_versions | default({})))
-      else '' }}
+    cmd: cargo install {{ item.crate }} --locked
     creates: "{{ user_home }}/.cargo/bin/{{ item.bin }}"
   loop:
     - {crate: bacon, bin: bacon}
@@ -357,14 +399,9 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
-# --pinned takes the exact crates.io release from hyperi_versions -- latest otherwise.
 - name: Install cargo-chef (Docker layer caching)
   ansible.builtin.command:
-    cmd: >-
-      cargo install cargo-chef --locked
-      {{ ('--version ' ~ (hyperi_versions['cargo-chef'] | regex_replace('^v', '')))
-      if (hyperi_pinned | default(false) and 'cargo-chef' in (hyperi_versions | default({})))
-      else '' }}
+    cmd: cargo install cargo-chef --locked
     creates: "{{ user_home }}/.cargo/bin/cargo-chef"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
@@ -374,16 +411,9 @@
 # cargo-audit scans deps against the RustSec advisory DB, cargo-hack runs the
 # feature-matrix build. Same cargo channel + `cargo install-update -a` refresh
 # path as the tools above.
-#
-# --pinned takes cargo-audit's exact release from hyperi_versions -- cargo-hack
-# carries no pin, so it always tracks latest.
 - name: Install cargo-audit (RustSec advisory audit)
   ansible.builtin.command:
-    cmd: >-
-      cargo install cargo-audit --locked
-      {{ ('--version ' ~ (hyperi_versions['cargo-audit'] | regex_replace('^v', '')))
-      if (hyperi_pinned | default(false) and 'cargo-audit' in (hyperi_versions | default({})))
-      else '' }}
+    cmd: cargo install cargo-audit --locked
     creates: "{{ user_home }}/.cargo/bin/cargo-audit"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
@@ -409,6 +439,41 @@
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+
+# The installs above are guarded by `creates:`, so on a box that already has a
+# tool they never look at its version. This is what carries them forward, and
+# it is why re-running the role upgrades rather than only installing.
+#
+# Listed first so a run with nothing outdated costs one registry poll instead of
+# a from-source rebuild sweep. The list prints a `Needs update` column per tool.
+- name: Check which cargo tools are outdated
+  ansible.builtin.command:
+    cmd: cargo install-update --list
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_cargo_outdated
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# --locked matches how the installs above were done and how hyperi-update
+# refreshes them. Without it, install-update rebuilds against freshly resolved
+# dependencies rather than the lockfile the author published.
+- name: Update the cargo-installed tools to latest
+  ansible.builtin.command:
+    cmd: cargo install-update --all --locked
+  environment: "{{ cargo_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  changed_when: true
+  # Same reasoning as the rustup update above: a list that failed to run tells us
+  # nothing, and skipping on it would quietly stop upgrading.
+  when: >-
+    developer_cargo_outdated.rc | default(1) != 0
+    or developer_cargo_outdated.stdout_lines
+    | select('search', '\s+Yes\s*$')
+    | list | length > 0
 
 # ============================================================
 # Build acceleration: sccache + mold

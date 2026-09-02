@@ -1,17 +1,15 @@
 ---
 # Go toolchain -- installs Go + gopls + dlv.
 #
-# Linux: the official tarball from go.dev, pinned by version with a SHA256 we
-# hold (see hyperi_core_versions in group_vars/all.yml). Go publishes no apt or
-# dnf repo, so this is the best rung of the trust ladder available for it.
-# macOS: Homebrew, which tracks upstream.
+# Linux: the official tarball from go.dev, resolved to the current stable
+# release at install time and verified against the SHA256 go.dev publishes with
+# it. Go offers no apt or dnf repo, so this is the best rung of the trust
+# ladder available for it. macOS: Homebrew, which tracks upstream.
 #
 # NOT the distro package. Ubuntu 24.04 ships golang-go 1.22, which upstream
 # stopped supporting long ago -- Go maintains only the last two majors -- so a
 # box provisioned from the distro cannot build against a current toolchain and
-# gets no security fixes for the one it has. The old comment here already
-# admitted the version "lags" and pointed at the official tarball as the
-# fallback; nothing implemented it, so the lag was simply shipped.
+# gets no security fixes for the one it has.
 #
 # Installs to /usr/local/go, the layout go.dev documents and every Go tool
 # expects. delve stays a distro package: it is a debugger, not the toolchain,
@@ -19,9 +17,31 @@
 
 - name: Install the Go toolchain (Linux)
   block:
-    # `go version` prints e.g. "go version go1.26.5 linux/arm64". If the pinned
-    # version is already in place there is nothing to remove or unpack, so the
-    # run stays idempotent instead of re-downloading a ~70MB tarball each time.
+    # go.dev serves the current stable releases newest-first, each with a
+    # SHA256 per file. Taking both from the same response is what keeps the
+    # download verified while the version is resolved at install time.
+    - name: Look up the current Go release
+      ansible.builtin.uri:
+        url: https://go.dev/dl/?mode=json
+        return_content: true
+      register: developer_go_releases
+      check_mode: false
+
+    - name: Select the Go version and its checksum
+      ansible.builtin.set_fact:
+        go_version: "{{ developer_go_release.version | regex_replace('^go', '') }}"
+        go_sha256: >-
+          {{ (developer_go_release.files
+              | selectattr('os', 'equalto', 'linux')
+              | selectattr('arch', 'equalto', hyperi_arch_deb)
+              | selectattr('kind', 'equalto', 'archive')
+              | first).sha256 }}
+      vars:
+        developer_go_release: "{{ developer_go_releases.json | first }}"
+
+    # `go version` prints e.g. "go version go1.26.5 linux/arm64". If the
+    # current version is already in place there is nothing to remove or unpack,
+    # so the run stays idempotent instead of re-downloading a ~70MB tarball.
     - name: Check the installed Go version
       ansible.builtin.command:
         cmd: /usr/local/go/bin/go version
@@ -29,7 +49,7 @@
       changed_when: false
       failed_when: false
 
-    - name: Note whether the pinned Go is already installed
+    - name: Note whether the current Go is already installed
       ansible.builtin.set_fact:
         go_installed_current: >-
           {{ ('go' ~ go_version ~ ' ') in (developer_go_installed.stdout | default('')) }}
@@ -50,6 +70,8 @@
         state: absent
       when: not go_installed_current
 
+    # Check mode does not perform the download above, so the source would be
+    # missing and this would fail the run rather than preview it.
     - name: Unpack Go into /usr/local
       ansible.builtin.unarchive:
         src: "/tmp/go{{ go_version }}.linux-{{ hyperi_arch_deb }}.tar.gz"
@@ -57,7 +79,9 @@
         remote_src: true
         owner: root
         group: root
-      when: not go_installed_current
+      when:
+        - not go_installed_current
+        - not ansible_check_mode
 
     - name: Remove the Go tarball download
       ansible.builtin.file:
@@ -122,16 +146,12 @@
 
 # golangci-lint: GitHub release binary on Linux (Tier 3), brew on macOS.
 #
-# `hyperi_versions` pins it for CI parity, and neither a snap nor a dnf package
-# can honour a version pin -- so under `--pinned` the box ran whatever the
-# channel happened to hold instead of the version CI runs. The release binary is
-# the only Linux channel that takes the pin.
+# The release binary is the current one: Fedora's dnf package trails two minors
+# behind upstream, and the snap cannot install on Fedora at all because nothing
+# here installs snapd. A linter behind the Go toolchain cannot read the newer
+# stdlib, so trailing is a real failure rather than a cosmetic one.
 #
-# It is also the current one: Fedora's dnf package trails two minors behind
-# upstream, and the snap cannot install on Fedora at all because nothing here
-# installs snapd.
-#
-# The asset drops the leading v (v2.12.2 -> golangci-lint-2.12.2-linux-amd64)
+# The asset drops the leading v (v2.13.1 -> golangci-lint-2.13.1-linux-amd64)
 # and nests the binary one directory deep.
 - name: Install golangci-lint (macOS)
   community.general.homebrew:
@@ -150,14 +170,10 @@
         headers: "{{ hyperi_github_headers }}"
       register: golangci_latest
       check_mode: false
-      when: not (hyperi_pinned | default(false) and 'golangci-lint' in (hyperi_versions | default({})))
 
-    - name: Resolve the golangci-lint tag (pinned or latest)
+    - name: Resolve the golangci-lint tag
       ansible.builtin.set_fact:
-        golangci_ref: >-
-          {{ hyperi_versions['golangci-lint']
-             if (hyperi_pinned | default(false) and 'golangci-lint' in (hyperi_versions | default({})))
-             else golangci_latest.json.tag_name }}
+        golangci_ref: "{{ golangci_latest.json.tag_name }}"
 
     - name: Download and extract golangci-lint
       ansible.builtin.unarchive:
@@ -219,14 +235,9 @@
 
   when: ansible_facts['distribution'] == 'Fedora'
 
-# --pinned takes the exact module version from hyperi_versions -- latest otherwise.
 - name: Install gosec (Ubuntu — go install)
   ansible.builtin.command:
-    cmd: >-
-      go install github.com/securego/gosec/v2/cmd/gosec@{{
-      hyperi_versions['gosec']
-      if (hyperi_pinned | default(false) and 'gosec' in (hyperi_versions | default({})))
-      else 'latest' }}
+    cmd: go install github.com/securego/gosec/v2/cmd/gosec@latest
   environment: "{{ go_bin_env }}"
   become: true
   become_user: "{{ actual_user }}"
@@ -243,14 +254,9 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
-# --pinned takes the exact module version from hyperi_versions -- latest otherwise.
 - name: Install govulncheck (Linux — go install)
   ansible.builtin.command:
-    cmd: >-
-      go install golang.org/x/vuln/cmd/govulncheck@{{
-      hyperi_versions['govulncheck']
-      if (hyperi_pinned | default(false) and 'govulncheck' in (hyperi_versions | default({})))
-      else 'latest' }}
+    cmd: go install golang.org/x/vuln/cmd/govulncheck@latest
   environment: "{{ go_bin_env }}"
   become: true
   become_user: "{{ actual_user }}"

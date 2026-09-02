@@ -17,12 +17,6 @@
 
 - name: Install git-scrub (re-fetched GitHub release, Tier 3)
   block:
-    # --pinned takes the CI-exact tag from group_vars, latest otherwise, so a
-    # pinned install never depends on the GitHub API.
-    #
-    # hyperi-ci carries no git-scrub pin, so --pinned falls through to latest.
-    # Adding an entry here without the matching hyperi-ci pin turns the build
-    # red via check_version_pins.py.
     - name: Get latest git-scrub version from GitHub API
       ansible.builtin.uri:
         url: https://api.github.com/repos/hyperi-io/git-scrub/releases/latest
@@ -30,14 +24,10 @@
         headers: "{{ hyperi_github_headers }}"
       register: contributor_git_scrub_release
       check_mode: false
-      when: not (hyperi_pinned | default(false) and 'git-scrub' in (hyperi_versions | default({})))
 
-    - name: Resolve the git-scrub tag (pinned or latest)
+    - name: Resolve the git-scrub tag
       ansible.builtin.set_fact:
-        contributor_git_scrub_ref: >-
-          {{ hyperi_versions['git-scrub']
-             if (hyperi_pinned | default(false) and 'git-scrub' in (hyperi_versions | default({})))
-             else contributor_git_scrub_release.json.tag_name }}
+        contributor_git_scrub_ref: "{{ contributor_git_scrub_release.json.tag_name }}"
 
     # hyperi_arch_deb already spells the architecture the way this release does.
     - name: Build the git-scrub asset name

@@ -15,15 +15,11 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user }}"
   block:
-    # Absent from hyperi_versions, so this is `latest` unless someone pins it.
     # Adding a pin there is only correct once hyperi-ci carries the same one.
-    - name: Resolve the Arcane image tag (pinned or latest)
+    - name: Resolve the Arcane image tag
       # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
       ansible.builtin.set_fact:
-        soe_arcane_ref: >-
-          {{ hyperi_versions['arcane']
-             if (hyperi_pinned | default(false) and 'arcane' in (hyperi_versions | default({})))
-             else 'latest' }}
+        soe_arcane_ref: "{{ 'latest' }}"
 
     # macOS keeps its socket under $HOME rather than /var/run, and the SOE run
     # does not inherit the .zshenv that fixes that for interactive shells.

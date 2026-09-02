@@ -358,9 +358,6 @@
 # The repo is signed by the `[S]` subkey E617DCD4065C2AFC0B2CF7A7BA8BC08C0F691F94
 # of the project key below -- verify that chain again before changing the URL.
 # Fedora keeps its native dnf package (a higher rung); macOS uses brew.
-#
-# (openbao_version / openbao_deb_arch in defaults/main.yml are now unused on
-# Ubuntu -- kept for the opt-in --pinned path, which is out of scope here.)
 - name: Install OpenBao from the official repository (Ubuntu)
   block:
     - name: Add the OpenBao GPG key

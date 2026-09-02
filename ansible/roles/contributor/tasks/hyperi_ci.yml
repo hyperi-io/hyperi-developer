@@ -25,7 +25,6 @@
 # in place, not skipped when already present. `uv tool install --upgrade`
 # installs it if missing and pulls the latest PyPI release if present, so a
 # staff/contributor box that ran an earlier version does not stay pinned to it.
-# (In --pinned mode this instead installs the version from versions.yml.)
 - name: Install or upgrade hyperi-ci to the latest release
   ansible.builtin.command:
     cmd: uv tool install --upgrade hyperi-ci
@@ -104,14 +103,9 @@
 # of THIS repo (see CONTRIBUTING), not something hyperi-ci calls.
 #
 # Not packaged anywhere, so cargo it is -- the bottom rung, and the only rung.
-# --pinned takes the exact crates.io release from hyperi_versions -- latest otherwise.
 - name: Install alint (repository-structure linter, NOT ansible-lint)
   ansible.builtin.command:
-    cmd: >-
-      cargo install alint
-      {{ ('--version ' ~ (hyperi_versions['alint'] | regex_replace('^v', '')))
-      if (hyperi_pinned | default(false) and 'alint' in (hyperi_versions | default({})))
-      else '' }}
+    cmd: cargo install alint
     creates: "{{ user_home }}/.cargo/bin/alint"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -149,7 +143,7 @@
 # honoured and the confined build can read only $HOME. Repos under /projects are
 # invisible to it, and the resulting scan failure surfaces through hyperi-ci as
 # "issues found (non-blocking)" -- a gate failing open while reading like a
-# result. It also ignores hyperi_versions and refreshes on snapd's schedule.
+# result. It also refreshes on snapd's own schedule.
 - name: Install osv-scanner (macOS)
   community.general.homebrew:
     name: osv-scanner
@@ -168,9 +162,7 @@
 - name: Install osv-scanner (Linux -- re-fetched GitHub release, Tier 3)
   when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
   block:
-    # --pinned takes the CI-exact tag from group_vars; latest otherwise -- and
-    # only then do we hit the GitHub API, so a pinned install does not depend
-    # on it. Same shape as kubeconform in the infrastructure role.
+    # Same shape as kubeconform in the infrastructure role.
     - name: Get latest osv-scanner version
       ansible.builtin.uri:
         url: https://api.github.com/repos/google/osv-scanner/releases/latest
@@ -178,14 +170,10 @@
         headers: "{{ hyperi_github_headers }}"
       register: contributor_osv_latest
       check_mode: false
-      when: not (hyperi_pinned | default(false) and 'osv-scanner' in (hyperi_versions | default({})))
 
-    - name: Resolve the osv-scanner tag (pinned or latest)
+    - name: Resolve the osv-scanner tag
       ansible.builtin.set_fact:
-        contributor_osv_ref: >-
-          {{ hyperi_versions['osv-scanner']
-             if (hyperi_pinned | default(false) and 'osv-scanner' in (hyperi_versions | default({})))
-             else contributor_osv_latest.json.tag_name }}
+        contributor_osv_ref: "{{ contributor_osv_latest.json.tag_name }}"
 
     - name: Download osv-scanner
       ansible.builtin.get_url:

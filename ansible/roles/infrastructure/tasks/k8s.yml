@@ -266,9 +266,7 @@
         - ansible_facts['distribution'] == 'Ubuntu'
         - not ansible_check_mode
 
-    # kubeconform (CI parity: hyperi-ci runs it as a blocking gate). --pinned
-    # takes the CI-exact tag from group_vars; latest otherwise -- and only then
-    # do we hit the GitHub API, so a pinned install does not depend on it.
+    # kubeconform (CI parity: hyperi-ci runs it as a blocking gate).
     - name: Get latest kubeconform version
       ansible.builtin.uri:
         url: https://api.github.com/repos/yannh/kubeconform/releases/latest
@@ -276,14 +274,10 @@
         headers: "{{ hyperi_github_headers }}"
       register: kubeconform_latest
       check_mode: false
-      when: not (hyperi_pinned | default(false) and 'kubeconform' in (hyperi_versions | default({})))
 
-    - name: Resolve the kubeconform tag (pinned or latest)
+    - name: Resolve the kubeconform tag
       ansible.builtin.set_fact:
-        kubeconform_ref: >-
-          {{ hyperi_versions['kubeconform']
-             if (hyperi_pinned | default(false) and 'kubeconform' in (hyperi_versions | default({})))
-             else kubeconform_latest.json.tag_name }}
+        kubeconform_ref: "{{ kubeconform_latest.json.tag_name }}"
 
     - name: Download and extract kubeconform
       ansible.builtin.unarchive:
@@ -296,7 +290,6 @@
 
     # kube-linter (CI parity). Asset naming is uneven: amd64 has no arch suffix
     # (kube-linter-linux.tar.gz), arm64 does (kube-linter-linux_arm64.tar.gz).
-    # --pinned takes the CI-exact tag from group_vars (see kubeconform above).
     - name: Get latest kube-linter version
       ansible.builtin.uri:
         url: https://api.github.com/repos/stackrox/kube-linter/releases/latest
@@ -304,14 +297,10 @@
         headers: "{{ hyperi_github_headers }}"
       register: kube_linter_latest
       check_mode: false
-      when: not (hyperi_pinned | default(false) and 'kube-linter' in (hyperi_versions | default({})))
 
-    - name: Resolve the kube-linter tag (pinned or latest)
+    - name: Resolve the kube-linter tag
       ansible.builtin.set_fact:
-        kube_linter_ref: >-
-          {{ hyperi_versions['kube-linter']
-             if (hyperi_pinned | default(false) and 'kube-linter' in (hyperi_versions | default({})))
-             else kube_linter_latest.json.tag_name }}
+        kube_linter_ref: "{{ kube_linter_latest.json.tag_name }}"
 
     - name: Download and extract kube-linter
       ansible.builtin.unarchive:

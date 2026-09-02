@@ -16,7 +16,6 @@
 #   --tags-include TAGS  Include specific tags to run (comma-separated)
 #   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
 #   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
-#   --pinned             Pin manual binaries to CI-exact versions (default: latest)
 #   --branch BRANCH      Git branch to use (default: main)
 #   Personas: --soe / --contributor / --full-stack / --infra / --languages [list]
 #   --help               Show this help message
@@ -56,9 +55,6 @@ OPTIONS:
   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
   --branch BRANCH      Git branch to use (default: main)
   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
-  --pinned             Reproducible mode: pin the manual-binary tools to the
-                       exact versions in group_vars (mirrors hyperi-ci) instead
-                       of latest. Latest is the default.
   --soe                Shortcut: HyperI staff workstation defaults
                        (generic dev + CI toolchain + HyperI org policy;
                        no IaC, no language toolchains)
@@ -113,9 +109,6 @@ EXAMPLES:
 
   Rust + Go toolchains only:
     ./install.sh --languages rust,go
-
-  Reproducible (CI-exact) install:
-    ./install.sh --contributor --pinned
 
   Install the RDP server (GNOME Remote Login) for inbound access:
     ./install.sh --tags rdp-server
@@ -243,7 +236,7 @@ Composability examples:
     ./install.sh --tags data                     The data-tools group
     ./install.sh --tags vscode,ghostty           VS Code + Ghostty only
     ./install.sh --soe --languages rust,go       SOE + Rust + Go
-    ./install.sh --infra --pinned                SRE box, CI-exact versions
+    ./install.sh --infra                         SRE box
     ./install.sh --tags power-profile            Never sleep on mains power
     ./install.sh --tags power-profile -e power_profile=vm
                                                  Never sleep at all (RDP guest)
@@ -261,8 +254,8 @@ append_tags() {
     fi
 }
 
-# Append one `key=value` Ansible extra var, so --pinned and --region compose
-# instead of clobbering each other.
+# Append one `key=value` Ansible extra var, so several of them compose instead
+# of clobbering each other.
 append_extra_var() {
     if [[ -n "$ANSIBLE_EXTRA_VARS" ]]; then
         ANSIBLE_EXTRA_VARS="$ANSIBLE_EXTRA_VARS -e $1"
@@ -397,13 +390,6 @@ while [[ $# -gt 0 ]]; do
                 shift
             fi
             ;;
-        --pinned)
-            # Opt-in reproducible mode: pin the manual-binary tools to the exact
-            # versions in inventories/localhost/group_vars/all.yml (which mirrors
-            # hyperi-ci) instead of /releases/latest. Latest stays the default.
-            append_extra_var "hyperi_pinned=true"
-            shift
-            ;;
         --users)
             TARGET_USERS="$(printf '%s' "$2" | tr ',' ' ')"
             shift 2
@@ -451,7 +437,7 @@ if [[ -n "${REGION_ARG:-}" ]]; then
     # Add region tag
     append_tags "region"
 
-    # Pass desktop_region as extra var (append so --pinned survives)
+    # Pass desktop_region as an extra var
     append_extra_var "desktop_region=${DESKTOP_REGION}"
     print_info "Region: ${DESKTOP_REGION}"
 fi

@@ -65,7 +65,7 @@ nodesource_deb_gpg_url: "{{ nodesource_deb_base_url }}/gpgkey/nodesource-repo.gp
 nodesource_rpm_gpg_url: "{{ nodesource_rpm_base_url }}/gpgkey/ns-operations-public.key"
 # fnm ships one asset per arch, and its arm64 asset is not named with the
 # Debian token, so it gets its own mapping rather than reusing hyperi_arch_deb.
-fnm_version: "{{ hyperi_core_versions.fnm }}"
+# The release tag is resolved at install time, so no version sits here.
 fnm_asset: "{{ 'fnm-arm64.zip' if hyperi_arch_deb | default('amd64') == 'arm64' else 'fnm-linux.zip' }}"
 
 # GitHub CLI -- GitHub's own signed repo on both distros. No version is pinned:
