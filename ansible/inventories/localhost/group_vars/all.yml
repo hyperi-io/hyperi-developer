@@ -47,7 +47,7 @@ hyperi_versions:
   kubeconform: v0.8.0
   kube-linter: v0.8.3
   osv-scanner: v2.4.0
-  golangci-lint: v2.12.2
+  golangci-lint: v2.13.1
   gosec: v2.28.0
   govulncheck: v1.1.4
   cargo-audit: v0.22.2
