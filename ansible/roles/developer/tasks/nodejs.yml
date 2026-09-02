@@ -138,10 +138,19 @@
 
 - name: Install fnm and the previous Node major (Linux)
   block:
+    - name: Get the latest fnm version
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/Schniz/fnm/releases/latest
+        return_content: true
+        headers: "{{ hyperi_github_headers }}"
+      register: developer_fnm_latest
+      check_mode: false
+
     - name: Download fnm
       ansible.builtin.get_url:
         url: >-
-          https://github.com/Schniz/fnm/releases/download/{{ fnm_version }}/{{ fnm_asset }}
+          https://github.com/Schniz/fnm/releases/download/{{
+          developer_fnm_latest.json.tag_name }}/{{ fnm_asset }}
         dest: /tmp/fnm.zip
         mode: '0644'
 

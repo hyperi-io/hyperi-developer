@@ -1,21 +1,12 @@
 ---
-# --pinned mode SSoT. Default is LATEST: hyperi_pinned is false, so every tool
-# installs the newest release. `install.sh --pinned` sets hyperi_pinned=true (a
-# -e extra var, highest precedence), and each retrofitted manual-binary task
-# then fetches the exact tag below instead of /releases/latest.
+# Every tool resolves its version at install time, so a run in four months
+# installs what is current in four months.
 #
-# hyperi_versions MIRRORS hyperi-ci's config/versions.yaml `tools:` block, so a
-# pinned local box matches CI exactly. `tools/ci/run-tests.sh` compares the two
-# and fails on any disagreement, so this no longer relies on someone
-# remembering; edit a version here and the test says which side is wrong.
+# Manual binaries query `/releases/latest`. Cargo tools install unversioned. Go
+# and rustup fetch the current version with the checksum published beside it.
 #
-# Pinning is by TAG, exactly as hyperi-ci does today -- a fetched release ASSET
-# cannot be force-moved by a tag rewrite, but it is not yet digest-verified.
-# SHA256-at-download is the planned hardening (tracked upstream as hyperi-ci
-# #66); when it lands, add a `sha256:` per tool here and a `checksum:` on the
-# get_url/unarchive. Tools absent from this map fall back to latest even in
-# pinned mode (they carry no CI-parity pin to mirror).
-hyperi_pinned: false
+# What remains below is a selection rather than a version -- a Node LTS line,
+# which NodeSource's signed repo then keeps patched.
 
 # GitHub's anonymous release API allows 60 requests an hour PER IP, and a run
 # selecting infrastructure plus a couple of languages spends a good fraction of
@@ -40,20 +31,6 @@ hyperi_github_headers: >-
 hyperi_github_env: >-
   {{ {'GITHUB_TOKEN': hyperi_github_token} if hyperi_github_token else {} }}
 
-hyperi_versions:
-  alint: v0.14.1
-  gitleaks: v8.30.1
-  hadolint: v2.15.1
-  kubeconform: v0.8.0
-  kube-linter: v0.8.3
-  osv-scanner: v2.4.0
-  golangci-lint: v2.12.2
-  gosec: v2.28.0
-  govulncheck: v1.1.4
-  cargo-audit: v0.22.2
-  cargo-deny: 0.20.2
-  cargo-chef: v0.1.77
-
 # ============================================================================
 # Core component versions -- the ONE place to bump them
 # ============================================================================
@@ -75,11 +52,12 @@ hyperi_versions:
 #                    its own via `apt/dnf upgrade`, so only the MAJOR is pinned
 #                    here -- there is no patch version to chase, and routine OS
 #                    updates carry the tool forward for free.
-#   pinned artefact  go, rustup, fnm. Upstream publishes no repo, so we pin an
-#                    exact version (rung 3) and `hyperi-update` refreshes them.
+#   resolved artefact  go, rustup, fnm. Upstream publishes no repo, so the role
+#                    asks upstream for the current release when it runs and
+#                    verifies the download against the checksum served with it.
 #
-# Bumping a major in a year is editing a number here. Nothing below is repeated
-# in a role.
+# Only the Node majors remain, because a major is a choice rather than a version
+# to chase. Bumping one in a year is editing a number here.
 hyperi_core_versions:
   # Node n and n-1. n is installed system-wide from the NodeSource repo, so
   # root, systemd units, semantic-release and CI all resolve the same node;
@@ -88,30 +66,3 @@ hyperi_core_versions:
   # 26 and 24.
   node_major: 24
   node_major_previous: 22
-
-  # Go publishes tarballs only -- no apt/dnf repo exists -- so this is the
-  # pinned-artefact rung: exact version plus a SHA256 we hold, per arch. This
-  # is the hardening the `hyperi_versions` note above calls planned; for these
-  # two tools it is done.
-  # Floor is 1.26.6, which fixed 10 CVEs -- among them a remote DoS against any
-  # Go TLS server (CVE-2026-56862) and two sumdb flaws (CVE-2026-56864/56865)
-  # letting a hostile GOPROXY smuggle unauthenticated modules into the cache.
-  go: "1.26.7"
-  go_sha256:
-    amd64: "ffb5f8de10c62550dfddab66b36b57030721e0a44a3218e9e1181d7b59f121ca"
-    arm64: "5a4ec883379d51ee9ce1040d5e87f8d35e20387574dd8c947feb01eabc3c1b37"
-
-  # rustup-init only BOOTSTRAPS; the toolchain then tracks stable via `rustup
-  # update`, so this pin ages slowly and does not gate the Rust version.
-  # Upstream on both distros, not the distro package: Ubuntu's rustup is 1.26.0
-  # and ships no rustup-init at all, so it never creates ~/.cargo/bin -- the
-  # layout every later task in the rust role assumes.
-  rustup: "1.29.0"
-  rustup_sha256:
-    x86_64: "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
-    aarch64: "9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792"
-
-  # fnm installs the n-1 Node major per user. Pinned by TAG, on the same
-  # reasoning as hyperi_versions above: a fetched release asset cannot be
-  # force-moved by a tag rewrite.
-  fnm: "v1.39.0"

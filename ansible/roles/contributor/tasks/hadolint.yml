@@ -52,9 +52,7 @@
       ansible.builtin.set_fact:
         contributor_hadolint_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
 
-    # --pinned takes the CI-exact tag from group_vars; latest otherwise -- and
-    # only then do we hit the GitHub API, so a pinned install does not depend
-    # on it. Same shape as gitleaks.yml in this role.
+    # Same shape as gitleaks.yml in this role.
     - name: Get latest hadolint version
       ansible.builtin.uri:
         url: https://api.github.com/repos/hadolint/hadolint/releases/latest
@@ -62,14 +60,10 @@
         headers: "{{ hyperi_github_headers }}"
       register: contributor_hadolint_latest
       check_mode: false
-      when: not (hyperi_pinned | default(false) and 'hadolint' in (hyperi_versions | default({})))
 
-    - name: Resolve the hadolint tag (pinned or latest)
+    - name: Resolve the hadolint tag
       ansible.builtin.set_fact:
-        contributor_hadolint_ref: >-
-          {{ hyperi_versions['hadolint']
-             if (hyperi_pinned | default(false) and 'hadolint' in (hyperi_versions | default({})))
-             else contributor_hadolint_latest.json.tag_name }}
+        contributor_hadolint_ref: "{{ contributor_hadolint_latest.json.tag_name }}"
 
     - name: Download hadolint binary (Ubuntu)
       ansible.builtin.get_url:

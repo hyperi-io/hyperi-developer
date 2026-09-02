@@ -301,14 +301,13 @@ fi
 
 # --- Go toolchain ----------------------------------------------------------
 # Go publishes no apt/dnf repo, so `apt/dnf upgrade` never moves it -- the
-# playbook installs a pinned tarball into /usr/local/go and this section is what
-# carries it forward. The pin in group_vars is the BOOTSTRAP floor, not the
-# running version; same arrangement as rustup, where the pinned rustup-init
+# playbook installs the current tarball into /usr/local/go and this section is
+# what carries it forward. Same arrangement as rustup, where rustup-init
 # bootstraps and `rustup update` tracks stable after that.
 #
 # The checksum is taken from the same go.dev index that gives the URL, so it
 # guards against a corrupt or truncated download rather than against go.dev
-# itself. The install-time pin in group_vars is the one we hold.
+# itself.
 section "Go toolchain"
 if [[ ! -x /usr/local/go/bin/go ]]; then
     skip "Go toolchain not found in /usr/local/go"

@@ -1,12 +1,9 @@
 ---
 # Developer-Go defaults.
 #
-# The version lives in the SSoT -- hyperi_core_versions in
-# inventories/localhost/group_vars/all.yml. This file only selects the checksum
-# for the running architecture, so a Go bump stays a one-line edit there.
-
-go_version: "{{ hyperi_core_versions.go }}"
-go_sha256: "{{ hyperi_core_versions.go_sha256[hyperi_arch_deb | default('amd64')] }}"
+# go_version and go_sha256 are not set here. Both are resolved from
+# go.dev/dl/?mode=json when the role runs, so the install tracks the current
+# stable release and still verifies what it downloads.
 
 # Go is installed to /usr/local/go, so it is NOT on a non-login shell's PATH
 # during the run itself -- /etc/profile.d is only sourced by login shells, and

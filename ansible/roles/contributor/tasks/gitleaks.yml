@@ -4,8 +4,7 @@
 # Fedora dnf (8.30.0 against upstream 8.30.1), Ubuntu release binary, macOS brew.
 #
 # Ubuntu universe carries 8.16.0 and freezes for the life of the release, which
-# is fourteen minors adrift on a secret scanner. It also cannot honour the
-# `hyperi_versions` pin, so a `--pinned` box ran a different scanner from CI.
+# is fourteen minors adrift on a secret scanner.
 #
 # There is no better Linux channel to move to, and it was looked for. Upstream
 # documents only Homebrew, Docker, Go and the release binaries -- they run no
@@ -67,14 +66,10 @@
         headers: "{{ hyperi_github_headers }}"
       register: contributor_gitleaks_latest
       check_mode: false
-      when: not (hyperi_pinned | default(false) and 'gitleaks' in (hyperi_versions | default({})))
 
-    - name: Resolve the Gitleaks tag (pinned or latest)
+    - name: Resolve the Gitleaks tag
       ansible.builtin.set_fact:
-        contributor_gitleaks_ref: >-
-          {{ hyperi_versions['gitleaks']
-             if (hyperi_pinned | default(false) and 'gitleaks' in (hyperi_versions | default({})))
-             else contributor_gitleaks_latest.json.tag_name }}
+        contributor_gitleaks_ref: "{{ contributor_gitleaks_latest.json.tag_name }}"
 
     # gitleaks calls amd64 "x64"; arm64 keeps its own name.
     - name: Map the architecture to the Gitleaks asset token

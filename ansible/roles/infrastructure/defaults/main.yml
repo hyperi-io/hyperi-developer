@@ -1,26 +1,8 @@
 ---
 # Infrastructure role defaults
 
-# OpenBao publishes no APT repository, only GitHub release .debs, so Ubuntu
-# needs an explicit version here. Fedora (dnf) and macOS (brew) ignore this and
-# track their own repos.
-#
-# Pinned rather than `latest` so a run is reproducible and a bad upstream
-# release cannot silently land on every workstation. Bump it deliberately:
-#   gh api repos/openbao/openbao/releases/latest --jq .tag_name
-openbao_version: "2.6.0"
-
-# OpenBao's release assets are named linux_amd64 / linux_arm64. Do not hardcode
-# amd64: arm64 Linux is real here (arm64 VMs, containers on Apple Silicon).
-openbao_deb_arch: "{{ 'arm64' if ansible_facts['architecture'] == 'aarch64' else 'amd64' }}"
-
-# flarectl only exists on cloudflare-go's v0 branch, which carries no semver
-# compatibility promise, so a tag is pinned rather than tracking @latest. It has
-# no hyperi_versions entry because hyperi-ci does not use it, and that map is a
-# mirror of hyperi-ci's pins. Bump it deliberately:
-#   gh api 'repos/cloudflare/cloudflare-go/tags?per_page=100' \
-#     --jq '[.[].name | select(startswith("v0."))] | .[0]'
-infrastructure_flarectl_version: "v0.117.0"
+# OpenBao comes from its signed APT repo on Ubuntu, dnf on Fedora and brew on
+# macOS, so no version is carried here -- each repo keeps the box current.
 
 # Microsoft publishes the Azure CLI repo per Ubuntu codename and has no resolute
 # suite, so a resolute host takes the noble build deliberately.
