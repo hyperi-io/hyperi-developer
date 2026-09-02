@@ -114,3 +114,56 @@
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# ============================================================================
+# ls / grep COLOURISATION (SYSTEM-WIDE, opt-out per user)
+# ============================================================================
+# Uses only what each OS already ships - nothing installed. GNU ls (Linux, or
+# macOS with brew coreutils) reads LS_COLORS; BSD ls (bare macOS) ignores it
+# and reads LSCOLORS instead, so the block picks one at shell start.
+#
+# Colours are ANSI indices, not RGB, so they follow the terminal theme and need
+# no light/dark handling of their own.
+#
+# Goes in the INTERACTIVE shell rc, not /etc/profile.d: aliases are not
+# exported, and Ubuntu ships its profile.d hook commented out in
+# /etc/bash.bashrc, so a terminal's non-login shell never reads it.
+#
+# Fedora already sets this system-wide via coreutils' colorls.sh, so there the
+# block just sets the same thing again. On macOS /etc/zshrc is Apple's file and
+# an OS update can replace it -- re-run the role after a major upgrade.
+#
+# Scope is soe_ls_colour_scope (see defaults/main.yml): 'system' for every
+# account on the box, 'user' for just the invoking one.
+- name: Resolve the ls/grep colour block and its target
+  ansible.builtin.set_fact:
+    soe_ls_colour_block: |
+      # Colour ls/grep using whatever this OS already ships - no packages.
+      # GNU (Linux, or macOS with brew coreutils) reads LS_COLORS and needs
+      # --color. BSD (bare macOS) reads LSCOLORS and needs CLICOLOR.
+      if command -v dircolors >/dev/null 2>&1; then
+          eval "$(dircolors -b)"
+          alias ls='ls --color=auto'
+          alias grep='grep --color=auto'
+      else
+          export CLICOLOR=1
+          export LSCOLORS=ExFxBxDxCxegedabagacad
+      fi
+    soe_ls_colour_path: >-
+      {{
+        (user_home ~ '/.zshrc') if soe_ls_colour_scope == 'user' and soe_mac
+        else (user_home ~ '/.bashrc') if soe_ls_colour_scope == 'user'
+        else '/etc/zshrc' if soe_mac
+        else '/etc/bashrc' if ansible_facts['distribution'] == 'Fedora'
+        else '/etc/bash.bashrc'
+      }}
+  vars:
+    soe_mac: "{{ ansible_facts['distribution'] == 'MacOSX' }}"
+
+- name: Enable ls/grep colour
+  ansible.builtin.blockinfile:
+    path: "{{ soe_ls_colour_path }}"
+    create: true
+    mode: '0644'
+    marker: "# {mark} HYPERI: ls colors"
+    block: "{{ soe_ls_colour_block }}"
+  become: "{{ soe_ls_colour_scope == 'system' }}"
