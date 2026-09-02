@@ -23,6 +23,12 @@ rust_cache_manage: true
 # leaves the per-project layout alone, so this stays safe to leave on.
 rust_cache_central_build_dir: true
 
+# Where the pooled build cache lives. Empty means the platform cache directory
+# (~/.cache, or ~/Library/Caches on macOS). Set it to a path on a box with a
+# dedicated cache volume, e.g. /cache -- both hyperi-rust-setup and the prune
+# are given the same value, so the prune still refuses a pool outside it.
+rust_cache_root: ""
+
 rust_cache_sccache_max: "20G"
 rust_cache_ccache_max: "10G"
 

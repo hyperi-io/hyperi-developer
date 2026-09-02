@@ -13,6 +13,10 @@
         <string>{{ rust_cache_build_dir_max }}</string>
         <string>--max-age-days</string>
         <string>{{ rust_cache_max_age_days }}</string>
+{% if rust_cache_root %}
+        <string>--cache-root</string>
+        <string>{{ rust_cache_root }}</string>
+{% endif %}
         <string>--if-free-below</string>
         <string>{{ rust_cache_prune_free_floor }}</string>
     </array>
