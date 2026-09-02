@@ -132,14 +132,6 @@
     mode: '0644'
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-# Vendored Solarized themes - always refreshed (managed files, not user-edited)
-- name: Deploy Ghostty themes (Linux skel)
-  ansible.builtin.copy:
-    src: ghostty/themes/
-    dest: "{{ ghostty_skel_dir }}/themes/"
-    mode: '0644'
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
 # Deploy to current user as well (Linux)
 - name: Create Ghostty config directory for actual user (Linux)
   ansible.builtin.file:
@@ -170,24 +162,35 @@
     force: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Deploy Ghostty themes for actual user (Linux)
-  ansible.builtin.copy:
-    src: ghostty/themes/
-    dest: "{{ user_home }}/.config/ghostty/themes/"
-    mode: '0644'
-    owner: "{{ actual_user }}"
-    group: "{{ actual_user }}"
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
 # Heal existing configs: the base config ships with force:false to preserve user
-# edits, so older installs keep their (broken) builtin Solarized theme line. This
-# rewrites just that line to the vendored themes without touching anything else.
+# edits, so older installs keep a stale theme line - either the long-dead
+# "Builtin Solarized *" names or the vendored "solarized-light/dark" ones. This
+# rewrites just that line to the bundled themes without touching anything else.
+#
+# The regexp matches the replacement too, so this is idempotent: a config
+# already on the new line is rewritten to the identical string and ansible
+# reports ok, not changed.
 - name: Fix stale Ghostty Solarized theme line in existing user config (Linux)
   ansible.builtin.replace:
     path: "{{ user_home }}/.config/ghostty/config"
-    regexp: '^theme\s*=.*Solarized.*$'
-    replace: 'theme = light:solarized-light,dark:solarized-dark'
+    regexp: '^theme\s*=.*[Ss]olarized.*$'
+    replace: 'theme = light:iTerm2 Solarized Light,dark:iTerm2 Solarized Dark'
   failed_when: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# Remove the vendored theme files left behind by earlier runs of this role.
+# Ghostty now uses its own bundled iTerm2 Solarized pair, so these are dead
+# files - and leaving them means a stale theme silently wins if anyone still
+# has a "solarized-light" line in a config we did not heal.
+- name: Remove retired vendored Ghostty themes (Linux)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ user_home }}/.config/ghostty/themes/solarized-light"
+    - "{{ user_home }}/.config/ghostty/themes/solarized-dark"
+    - "{{ ghostty_skel_dir }}/themes/solarized-light"
+    - "{{ ghostty_skel_dir }}/themes/solarized-dark"
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================
@@ -217,11 +220,19 @@
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Deploy Ghostty themes (macOS)
-  ansible.builtin.copy:
-    src: ghostty/themes/
-    dest: "{{ ghostty_macos_dir }}/themes/"
-    mode: '0644'
+# No theme deployment on macOS. Ghostty resolves a bare theme NAME from
+# ~/.config/ghostty/themes/ and the app bundle only - never from the macOS
+# Application Support dir where its config lives. Themes copied here were
+# therefore never found, which is exactly the bug this change retires.
+#
+# Clean up the files earlier runs left in that dead directory.
+- name: Remove retired vendored Ghostty themes (macOS)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ ghostty_macos_dir }}/themes/solarized-light"
+    - "{{ ghostty_macos_dir }}/themes/solarized-dark"
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
