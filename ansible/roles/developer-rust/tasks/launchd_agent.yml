@@ -1,0 +1,60 @@
+---
+# Load one launchd agent idempotently. Included once per agent from cache.yml,
+# which passes `launchd_agent` as {label, plist, template}.
+#
+# launchd has no reload verb, so a changed plist has to be booted out first.
+
+- name: "Install launch agent {{ launchd_agent.label }}"
+  ansible.builtin.template:
+    src: "{{ launchd_agent.template }}"
+    dest: "{{ launchd_agent.plist }}"
+    mode: '0644'
+  become: false
+  register: developer_rust_agent_plist
+
+# `launchctl print` is the only reliable "is it loaded" probe; `list` greps
+# a label that may match a different agent's prefix.
+- name: "Check the loaded state of launch agent {{ launchd_agent.label }}"
+  ansible.builtin.command:
+    cmd: "launchctl print gui/{{ ansible_facts['user_uid'] }}/{{ launchd_agent.label }}"
+  become: false
+  register: developer_rust_agent_loaded
+  changed_when: false
+  failed_when: false
+
+# bootout first: bootstrap on an already-loaded label is an error, and the
+# plist may have changed underneath it.
+- name: "Unload the previous launch agent {{ launchd_agent.label }}"
+  ansible.builtin.command:
+    cmd: "launchctl bootout gui/{{ ansible_facts['user_uid'] }}/{{ launchd_agent.label }}"
+  become: false
+  changed_when: false
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - developer_rust_agent_loaded.rc == 0
+    - developer_rust_agent_plist.changed
+
+- name: "Load launch agent {{ launchd_agent.label }}"
+  ansible.builtin.command:
+    cmd: >-
+      launchctl bootstrap gui/{{ ansible_facts['user_uid'] }}
+      {{ launchd_agent.plist }}
+  become: false
+  register: developer_rust_agent_bootstrap
+  changed_when: developer_rust_agent_bootstrap.rc == 0
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - developer_rust_agent_loaded.rc != 0 or developer_rust_agent_plist.changed
+
+- name: "Warn about a launch agent that did not load: {{ launchd_agent.label }}"
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['Load the ' ~ launchd_agent.label ~ ' launch agent: '
+            ~ (developer_rust_agent_bootstrap.stderr | default('unknown error'))] }}
+  when:
+    - not ansible_check_mode
+    - developer_rust_agent_bootstrap is defined
+    - developer_rust_agent_bootstrap.rc | default(0) != 0

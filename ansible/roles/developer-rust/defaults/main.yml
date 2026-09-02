@@ -37,12 +37,29 @@ rust_cache_build_dir_max: "auto"
 rust_cache_max_age_days: 14
 
 # Off-hours, so a prune is unlikely to land mid-build.
-rust_cache_prune_schedule_weekday: "Sun"
+#
+# Daily rather than weekly: the ceiling binds only while the tool runs, so the
+# gap between runs is time the pool spends unbounded. Set a weekday for weekly.
+rust_cache_prune_schedule_weekday: ""
 rust_cache_prune_schedule_hour: 3
+
+# Backstop for growth that outruns the daily prune. One statvfs an hour, and a
+# prune only below the floor.
+#
+# A percentage because one size cannot suit a laptop and a build box.
+#
+# The guard prunes to the ordinary ceiling and no further. A pool already inside
+# the ceiling means the space went elsewhere, and the run reports that.
+rust_cache_prune_guard_enabled: true
+rust_cache_prune_free_floor: "20%"
+rust_cache_prune_guard_schedule: "hourly"
+rust_cache_prune_guard_interval_seconds: 3600
 
 # macOS launchd only; systemd takes its unit name from the file.
 rust_cache_prune_label: "io.hyperi.rust-cache-prune"
 rust_cache_prune_plist: "{{ user_home }}/Library/LaunchAgents/{{ rust_cache_prune_label }}.plist"
+rust_cache_prune_guard_label: "io.hyperi.rust-cache-prune-guard"
+rust_cache_prune_guard_plist: "{{ user_home }}/Library/LaunchAgents/{{ rust_cache_prune_guard_label }}.plist"
 
 # Start the sccache server from a systemd user unit rather than leaving it to
 # whichever process compiles first, which decides the server's cgroup and

@@ -6,6 +6,7 @@ Run it yourself:
     hyperi-rust-cache-prune              # report, then ask before deleting
     hyperi-rust-cache-prune --check      # report only, delete nothing
     hyperi-rust-cache-prune --yes        # no prompt (how the timer invokes it)
+    hyperi-rust-cache-prune --if-free-below 20%   # only when the disk is tight
 
 Why this exists
 ---------------
@@ -32,6 +33,25 @@ Least-recently-built, not least-recently-used: a read does not update mtime, so
 a workspace you compile against daily and one you only link against look the
 same. Age is measured from the newest thing cargo wrote, which is the closest
 honest proxy.
+
+When it runs at all
+-------------------
+The ceiling is enforced when the tool runs and at no other moment, so a pool
+that grows faster than the schedule spends the gap unbounded. Shortening the
+schedule alone trades that for a walk of the whole pool every time.
+
+`--if-free-below` is the answer to that. It costs one statvfs, so the tool can
+be scheduled often enough to matter and still do nothing almost every time: if
+the filesystem holding the pool has more free space than the floor, it exits
+before walking anything.
+
+The floor takes a percentage as well as a byte count, because the same number
+cannot be right on a 256G laptop and a 692G build box.
+
+A guarded run that finds the pool already inside its ceiling does not go
+looking for more to delete. It says the pool is not where the space went and
+stops. Reclaiming artefacts that were not the problem would be the wrong
+answer to a disk filled by something else.
 
 What it does NOT touch
 ----------------------
@@ -73,6 +93,7 @@ AUTO_FLOOR = "40G"
 POOL_DEPTH = 2
 
 _SIZE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([KMGT]?)i?B?\s*$", re.IGNORECASE)
+_PERCENT = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*%\s*$")
 _MULTIPLIER = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
 
 
@@ -120,6 +141,49 @@ def parse_size_or_auto(text: str):
     if text.strip().lower() == "auto":
         return "auto"
     return parse_size(text)
+
+
+def parse_size_or_percent(text: str):
+    """A byte count, or a share of the filesystem written as a percentage.
+
+    Returned as a (kind, value) pair rather than a number because a percentage
+    cannot be resolved until the pool path names a filesystem to take it of.
+    """
+    match = _PERCENT.match(text)
+    if match:
+        share = float(match.group(1))
+        if not 0 < share < 100:
+            raise argparse.ArgumentTypeError(
+                f"not a usable percentage: {text!r} -- give something above 0 and below 100"
+            )
+        return ("percent", share)
+    return ("bytes", parse_size(text))
+
+
+def above_free_floor(pool: Path, floor, rep: Reporter) -> bool:
+    """Has the filesystem holding the pool got more free space than the floor?
+
+    One statvfs, called before anything walks the pool, so a guarded run that
+    has nothing to do costs nothing. `free`, not `total - used`: reserved
+    blocks are not ours to spend and counting them would let the guard sit
+    quiet while writes are already failing.
+    """
+    kind, value = floor
+    try:
+        usage = shutil.disk_usage(pool)
+    except OSError as exc:
+        # Unmeasurable is not the same as fine. Skipping the prune here would
+        # turn a broken statvfs into a silently unbounded cache.
+        rep.warn(f"could not measure free space at {pool} ({exc}) -- pruning anyway")
+        return False
+
+    threshold = int(usage.total * value / 100) if kind == "percent" else value
+    where = f"{human(usage.free)} free of {human(usage.total)}"
+    if usage.free > threshold:
+        rep.info(f"{where}, above the {human(threshold)} floor -- nothing to do")
+        return True
+    rep.info(f"{where}, below the {human(threshold)} floor")
+    return False
 
 
 def resolve_max_size(value, pool: Path, rep: Reporter) -> int:
@@ -277,27 +341,38 @@ def find_workspaces(pool: Path) -> list[Workspace]:
     return [Workspace(leaf) for leaf in leaves]
 
 
-def remove(workspace: Workspace, reason: str, dry_run: bool, rep: Reporter) -> None:
+def remove(workspace: Workspace, reason: str, dry_run: bool, rep: Reporter) -> bool:
+    """Drop one workspace. False means the bytes are still on disk.
+
+    The caller has to know, because counting a failed removal against the pool
+    total reports a cache back under its ceiling while it is still over.
+    """
     if dry_run:
         rep.info(f"[check] would drop {workspace.path.name} ({human(workspace.size)}, {reason})")
         rep.freed += workspace.size
-        return
+        return True
     try:
         shutil.rmtree(workspace.path)
     except OSError as exc:
         rep.warn(f"could not remove {workspace.path}: {exc}")
-        return
+        return False
     rep.change(f"dropped {workspace.path.name} ({human(workspace.size)}, {reason})")
     rep.freed += workspace.size
+    return True
 
 
 def prune_pool(
     pool: Path, dry_run: bool, rep: Reporter, *, max_size: int, max_age_days: int
-) -> None:
+) -> int:
+    """Bound the pool, and return what it still occupies.
+
+    Callers want that rather than the freed count, which reads the same whether
+    there was nothing to free or every eviction failed.
+    """
     workspaces = find_workspaces(pool)
     if not workspaces:
         rep.info(f"{pool}: empty, nothing to prune")
-        return
+        return 0
 
     total = sum(item.size for item in workspaces)
     rep.info(
@@ -306,21 +381,21 @@ def prune_pool(
 
     stale = [item for item in workspaces if item.age_days > max_age_days]
     for item in stale:
-        remove(item, f"idle {item.age_days:.0f}d", dry_run, rep)
+        if remove(item, f"idle {item.age_days:.0f}d", dry_run, rep):
+            total -= item.size
 
     remaining = [item for item in workspaces if item not in stale]
-    total -= sum(item.size for item in stale)
 
     if total <= max_size:
         rep.info(f"under the ceiling at {human(total)}")
-        return
+        return total
 
     # Oldest first: the least-recently-built workspace is the cheapest to lose.
     for item in sorted(remaining, key=lambda entry: entry.mtime):
         if total <= max_size:
             break
-        remove(item, f"over ceiling, {human(total)} used", dry_run, rep)
-        total -= item.size
+        if remove(item, f"over ceiling, {human(total)} used", dry_run, rep):
+            total -= item.size
 
     if total > max_size:
         rep.warn(f"still {human(total)} after pruning everything eligible")
@@ -329,6 +404,8 @@ def prune_pool(
 
     if not dry_run:
         drop_empty_shards(pool)
+
+    return total
 
 
 def drop_empty_shards(pool: Path) -> None:
@@ -434,6 +511,16 @@ def main() -> int:
         help=f"drop workspaces not built in this long (default: {DEFAULT_MAX_AGE_DAYS})",
     )
     parser.add_argument(
+        "--if-free-below",
+        type=parse_size_or_percent,
+        default=None,
+        metavar="SIZE|PERCENT",
+        help=(
+            "do nothing unless the filesystem holding the pool has less than this "
+            "free (e.g. 20%% or 80G) -- how the hourly guard invokes it"
+        ),
+    )
+    parser.add_argument(
         "--pool",
         type=Path,
         default=None,
@@ -470,6 +557,12 @@ def main() -> int:
 
     print(f"hyperi-rust-cache-prune: {pool}")
 
+    # Before the walk and before the prompt: a guarded run with room to spare
+    # must cost one statvfs and must never ask the user anything.
+    guarded = args.if_free_below is not None
+    if guarded and above_free_floor(pool, args.if_free_below, rep):
+        return 0
+
     max_size = resolve_max_size(args.max_size, pool, rep)
 
     if not args.check and not args.yes:
@@ -485,13 +578,24 @@ def main() -> int:
             return 0
 
     rep.step("Pooled build artefacts")
-    prune_pool(
+    remaining = prune_pool(
         pool,
         args.check,
         rep,
         max_size=max_size,
         max_age_days=args.max_age_days,
     )
+
+    # A guarded run ending inside the ceiling means the pool is not what filled
+    # the disk. Tested on what the pool still holds, not on what was freed -- a
+    # failed eviction also frees nothing.
+    if guarded and remaining <= max_size:
+        rep.warn(
+            "below the free floor with the pool already inside its ceiling -- "
+            "nothing here to reclaim. Whatever filled the disk is outside what "
+            "this tool bounds, and the caches reported below are the only other "
+            "ones it can see."
+        )
 
     rep.step("Self-capping caches (reported, not pruned)")
     try:
