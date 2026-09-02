@@ -1,10 +1,9 @@
-{% set weekday_num = {'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6}.get(rust_cache_prune_schedule_weekday) %}
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>{{ rust_cache_prune_label }}</string>
+    <string>{{ rust_cache_prune_guard_label }}</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -14,24 +13,19 @@
         <string>{{ rust_cache_build_dir_max }}</string>
         <string>--max-age-days</string>
         <string>{{ rust_cache_max_age_days }}</string>
+        <string>--if-free-below</string>
+        <string>{{ rust_cache_prune_free_floor }}</string>
     </array>
 
-    <!-- launchd runs a missed calendar job once the machine wakes, which is
-         what a laptop closed overnight needs. Omitting Weekday means daily. -->
-    <key>StartCalendarInterval</key>
-    <dict>
-{% if weekday_num is not none %}
-        <key>Weekday</key>
-        <integer>{{ weekday_num }}</integer>
-{% endif %}
-        <key>Hour</key>
-        <integer>{{ rust_cache_prune_schedule_hour | int }}</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <!-- StartInterval rather than a calendar: the guard is not tied to a time
+         of day, and launchd counts this from load so a sleeping laptop does
+         not accrue a backlog. -->
+    <key>StartInterval</key>
+    <integer>{{ rust_cache_prune_guard_interval_seconds | int }}</integer>
 
+    <!-- A disk already short of space at login is worth catching then. -->
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
 
     <!-- Walking a large pool is IO-bound; it must never compete with a build. -->
     <key>ProcessType</key>

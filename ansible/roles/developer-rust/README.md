@@ -70,6 +70,8 @@ silently stops being cached while `sccache` is still installed and configured.
 `hyperi-rust-cache-prune` reports it rather than showing an empty ceiling, and
 `sccache --stop-server` clears it.
 
+## Bounding the build-artefact pool
+
 **Build artefacts have no upstream cap at all.** Cargo does not track them
 (rust-lang/cargo#13136), so nothing reclaims a `target/` ever, and one per repo
 across a tree full of them is what actually fills a disk.
@@ -82,7 +84,7 @@ binaries, so `cargo run`, IDEs and anything globbing for a built artefact are
 unaffected.
 
 `hyperi-rust-cache-prune` then bounds that pool on a schedule -- a systemd timer
-on Linux, a launchd agent on macOS, weekly and at idle IO priority. It drops
+on Linux, a launchd agent on macOS, daily and at idle IO priority. It drops
 workspaces not built for `rust_cache_max_age_days`, then evicts
 least-recently-built ones until the pool is under `rust_cache_build_dir_max`.
 It touches no project `target/`, and reports the self-capping caches without
@@ -94,14 +96,18 @@ derived from it chases itself downward. That puts a 692G build box at 115G and a
 256G laptop at the floor, so one default suits both. Set
 `rust_cache_build_dir_max` to an explicit size to override it.
 
-**The ceiling is a weekly reset, not a live cap.** Nothing enforces it between
-runs, so a busy build box spends most of the week above it -- one added 37G in
-two days and another 37G in a single afternoon. That is the design working, not
-a prune that failed. It only matters if the peak, not the floor, would fill the
-disk; check free space before reaching for a shorter schedule, and change
-`rust_cache_prune_schedule_weekday` if the peak is genuinely too high.
+**The ceiling binds while the tool runs, not between runs.** A pool that grows
+faster than the schedule spends the gap above it, so the prune runs daily and an
+hourly guard backs it up -- one statvfs while the disk has room, a prune to the
+same ceiling once free space falls below `rust_cache_prune_free_floor` (20%).
 
-sccache and ccache keep fixed ceilings; both enforce their own.
+A guard run that finds the pool already under its ceiling stops and says so. The
+space went somewhere the prune does not own, and naming that is more use than
+evicting artefacts that were not the cause. Set
+`rust_cache_prune_guard_enabled: false` to drop the guard, or
+`rust_cache_prune_schedule_weekday` to go back to weekly.
+
+## Which sccache builds actually use
 
 **sccache comes from upstream's release, not the distro.** Ubuntu ships 0.13.0
 against an upstream on 0.17.x, and a wrapper four versions behind is what a

@@ -6,6 +6,10 @@
 # hyperi-rust-cache-prune bounds that pool on a schedule, because cargo does
 # not track build artefacts and nothing upstream ever reclaims them.
 #
+# Two schedules, because a ceiling only binds while the tool runs. The daily
+# prune is the routine path. The guard runs hourly, costs one statvfs when the
+# disk has room, and prunes when free space drops below the floor.
+#
 # The whole file is optional: a machine with no cap still builds, so nothing
 # here may fail the run.
 
@@ -43,6 +47,26 @@
         mode: '0644'
       become: true
 
+    - name: Install the rust cache prune guard service
+      ansible.builtin.template:
+        src: hyperi-rust-cache-prune-guard.service.j2
+        dest: /etc/systemd/system/hyperi-rust-cache-prune-guard.service
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      when: rust_cache_prune_guard_enabled | bool
+
+    - name: Install the rust cache prune guard timer
+      ansible.builtin.template:
+        src: hyperi-rust-cache-prune-guard.timer.j2
+        dest: /etc/systemd/system/hyperi-rust-cache-prune-guard.timer
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      when: rust_cache_prune_guard_enabled | bool
+
     # Check mode does not write the unit files above, so systemd has nothing to
     # enable and the task would fail the run rather than preview it.
     - name: Enable and start the rust cache prune timer
@@ -53,6 +77,41 @@
         daemon_reload: true
       become: true
       when: not ansible_check_mode
+
+    - name: Enable and start the rust cache prune guard timer
+      ansible.builtin.systemd:
+        name: hyperi-rust-cache-prune-guard.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      become: true
+      when:
+        - not ansible_check_mode
+        - rust_cache_prune_guard_enabled | bool
+
+    # Turning the guard off has to remove it, not just stop writing it. A timer
+    # left enabled from a previous run would keep firing against a flag that
+    # says it is disabled.
+    - name: Stop the rust cache prune guard timer when disabled
+      ansible.builtin.systemd:
+        name: hyperi-rust-cache-prune-guard.timer
+        enabled: false
+        state: stopped
+      become: true
+      failed_when: false
+      when:
+        - not ansible_check_mode
+        - not rust_cache_prune_guard_enabled | bool
+
+    - name: Remove the rust cache prune guard units when disabled
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      become: true
+      loop:
+        - hyperi-rust-cache-prune-guard.timer
+        - hyperi-rust-cache-prune-guard.service
+      when: not rust_cache_prune_guard_enabled | bool
 
 - name: Schedule the prune (macOS)
   when: ansible_facts['distribution'] == 'MacOSX'
@@ -66,57 +125,38 @@
         mode: '0755'
       become: false
 
-    - name: Install the rust cache prune launch agent
-      ansible.builtin.template:
-        src: io.hyperi.rust-cache-prune.plist.j2
-        dest: "{{ rust_cache_prune_plist }}"
-        mode: '0644'
-      become: false
-      register: developer_rust_prune_plist
+    # One include per agent rather than a loop over the tasks: each inclusion
+    # gets its own register scope, so the bootout/bootstrap decision reads the
+    # plist result for the agent in hand.
+    - name: Install and load the rust cache prune launch agents
+      ansible.builtin.include_tasks: launchd_agent.yml
+      loop: "{{ developer_rust_launchd_agents }}"
+      loop_control:
+        loop_var: launchd_agent
+        label: "{{ launchd_agent.label }}"
+      vars:
+        developer_rust_launchd_agents: >-
+          {{ [{'label': rust_cache_prune_label,
+               'plist': rust_cache_prune_plist,
+               'template': 'io.hyperi.rust-cache-prune.plist.j2'}]
+             + ([{'label': rust_cache_prune_guard_label,
+                  'plist': rust_cache_prune_guard_plist,
+                  'template': 'io.hyperi.rust-cache-prune-guard.plist.j2'}]
+                if rust_cache_prune_guard_enabled | bool else []) }}
 
-    # `launchctl print` is the only reliable "is it loaded" probe; `list` greps
-    # a label that may match a different agent's prefix.
-    - name: Check whether the launch agent is already loaded
+    - name: Unload the rust cache prune guard launch agent when disabled
       ansible.builtin.command:
-        cmd: "launchctl print gui/{{ ansible_facts['user_uid'] }}/{{ rust_cache_prune_label }}"
+        cmd: "launchctl bootout gui/{{ ansible_facts['user_uid'] }}/{{ rust_cache_prune_guard_label }}"
       become: false
-      register: developer_rust_prune_loaded
       changed_when: false
       failed_when: false
+      when:
+        - not ansible_check_mode
+        - not rust_cache_prune_guard_enabled | bool
 
-    # bootout first: bootstrap on an already-loaded label is an error, and the
-    # plist may have changed underneath it.
-    - name: Unload the previous launch agent
-      ansible.builtin.command:
-        cmd: "launchctl bootout gui/{{ ansible_facts['user_uid'] }}/{{ rust_cache_prune_label }}"
+    - name: Remove the rust cache prune guard launch agent when disabled
+      ansible.builtin.file:
+        path: "{{ rust_cache_prune_guard_plist }}"
+        state: absent
       become: false
-      changed_when: false
-      failed_when: false
-      when:
-        - not ansible_check_mode
-        - developer_rust_prune_loaded.rc == 0
-        - developer_rust_prune_plist.changed
-
-    - name: Load the rust cache prune launch agent
-      ansible.builtin.command:
-        cmd: >-
-          launchctl bootstrap gui/{{ ansible_facts['user_uid'] }}
-          {{ rust_cache_prune_plist }}
-      become: false
-      register: developer_rust_prune_bootstrap
-      changed_when: developer_rust_prune_bootstrap.rc == 0
-      failed_when: false
-      when:
-        - not ansible_check_mode
-        - developer_rust_prune_loaded.rc != 0 or developer_rust_prune_plist.changed
-
-    - name: Warn when the launch agent did not load
-      ansible.builtin.set_fact:
-        deploy_warnings: >-
-          {{ deploy_warnings | default([])
-             + ['Load the rust cache prune launch agent: '
-                ~ (developer_rust_prune_bootstrap.stderr | default('unknown error'))] }}
-      when:
-        - not ansible_check_mode
-        - developer_rust_prune_bootstrap is defined
-        - developer_rust_prune_bootstrap.rc | default(0) != 0
+      when: not rust_cache_prune_guard_enabled | bool

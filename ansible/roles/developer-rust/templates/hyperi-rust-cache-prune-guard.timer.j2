@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch free space for the pooled Rust build cache
+
+[Timer]
+OnCalendar={{ rust_cache_prune_guard_schedule }}
+# Persistent so a box that was off catches up once, not once per missed hour.
+Persistent=true
+# Short jitter only. A guard that fires late is a guard that fired too late.
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

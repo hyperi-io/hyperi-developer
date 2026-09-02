@@ -1,0 +1,13 @@
+[Unit]
+Description=Prune the pooled Rust build cache when free space runs short
+
+[Service]
+Type=oneshot
+User={{ actual_user }}
+# Same prune with the same ceiling, gated on free space. Above the floor it
+# exits after one statvfs without walking the pool.
+ExecStart=/usr/local/bin/hyperi-rust-cache-prune --yes --max-size {{ rust_cache_build_dir_max }} --max-age-days {{ rust_cache_max_age_days }} --if-free-below {{ rust_cache_prune_free_floor }}
+# Walking a large pool is IO-bound; it must never compete with an active build.
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=1800
