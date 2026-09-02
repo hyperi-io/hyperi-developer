@@ -115,6 +115,10 @@
 
     # Matched on the stable line alone -- `rustup - update available` is rustup
     # offering to replace itself, which `rustup self update` owns, not this.
+    #
+    # A check that did not run is not the same as a toolchain that is current,
+    # so a failed check falls through to attempting the update rather than
+    # silently deciding there was nothing to do.
     - name: Update the Rust toolchain to current stable
       ansible.builtin.command:
         cmd: "{{ user_home }}/.cargo/bin/rustup update stable"
@@ -125,7 +129,8 @@
         RUSTUP_HOME: "{{ user_home }}/.rustup"
       changed_when: true
       when: >-
-        developer_rustup_check.stdout_lines
+        developer_rustup_check.rc | default(1) != 0
+        or developer_rustup_check.stdout_lines
         | select('search', '^stable-.*update available')
         | list | length > 0
 
@@ -462,9 +467,13 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   changed_when: true
-  when:
-    - developer_cargo_outdated.rc | default(1) == 0
-    - developer_cargo_outdated.stdout_lines | select('search', '\s+Yes\s*$') | list | length > 0
+  # Same reasoning as the rustup update above: a list that failed to run tells us
+  # nothing, and skipping on it would quietly stop upgrading.
+  when: >-
+    developer_cargo_outdated.rc | default(1) != 0
+    or developer_cargo_outdated.stdout_lines
+    | select('search', '\s+Yes\s*$')
+    | list | length > 0
 
 # ============================================================
 # Build acceleration: sccache + mold
