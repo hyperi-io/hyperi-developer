@@ -55,7 +55,8 @@ fi
 if have shellcheck; then
     ran=$((ran + 1))
     echo "==> shellcheck"
-    if shellcheck install.sh tools/ci/run-tests.sh tools/hyperi-doctor; then
+    if shellcheck install.sh tools/ci/run-tests.sh tools/hyperi-doctor \
+        ansible/roles/developer-rust/files/hyperi-rust-govern; then
         echo "    ok"
     else
         echo "    FAILED"

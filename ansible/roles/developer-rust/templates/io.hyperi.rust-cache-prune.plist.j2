@@ -20,6 +20,14 @@
 {% endif %}
     </array>
 
+    <!-- A launchd agent inherits no shell profile, and the pruner reads
+         CARGO_HOME to find the config that names the pool. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CARGO_HOME</key>
+        <string>{{ developer_rust_cargo_home }}</string>
+    </dict>
+
     <!-- launchd runs a missed calendar job once the machine wakes, which is
          what a laptop closed overnight needs. Omitting Weekday means daily. -->
     <key>StartCalendarInterval</key>

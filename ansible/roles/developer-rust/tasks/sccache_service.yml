@@ -95,6 +95,41 @@
     - developer_rust_sccache_start is failed
       or developer_rust_sccache_start.rc | default(0) != 0
 
+# A server started before the unit changed is still running the old ceiling and
+# base directories, because sccache reads them once at startup. Restarting is
+# only safe for a server this unit owns -- an unmanaged one may have a compile
+# executing inside it, which is why the start task above refuses to touch it.
+- name: Check whether the running server is this unit's
+  ansible.builtin.systemd_service:
+    name: hyperi-sccache.service
+    scope: user
+  become: true
+  become_user: "{{ actual_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
+  register: developer_rust_sccache_active
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Restart the sccache server so the new settings take effect
+  ansible.builtin.systemd:
+    name: hyperi-sccache.service
+    state: restarted
+    scope: user
+    daemon_reload: true
+  become: true
+  become_user: "{{ actual_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
+  when:
+    - not ansible_check_mode
+    - developer_rust_sccache_unit is changed
+    - developer_rust_sccache_active.status.ActiveState | default('') == 'active'
+    # A server the start task just brought up already runs the new unit.
+    - developer_rust_sccache_start is skipped
+  failed_when: false
+
 - name: Note that the sccache unit takes over at the next login
   ansible.builtin.set_fact:
     deploy_warnings: >-
@@ -102,6 +137,9 @@
          + ['sccache: an unmanaged server is already running, so the new unit'
             ~ ' was enabled but not started. It takes over at the next login,'
             ~ ' or run: systemctl --user start hyperi-sccache'] }}
+  # pgrep matches the unit's own server too, so without the ActiveState test
+  # this warned on every healthy converge.
   when:
     - not ansible_check_mode
     - developer_rust_sccache_running.rc == 0
+    - developer_rust_sccache_active.status.ActiveState | default('') != 'active'

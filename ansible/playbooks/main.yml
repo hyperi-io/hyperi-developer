@@ -13,6 +13,22 @@
   gather_facts: true
 
   pre_tasks:
+    # Per-machine settings that cannot live in the repo, because the repo is
+    # cloned onto every machine. `local-config/` is already gitignored.
+    #
+    # This exists because a host setting with no home is silently lost: a box
+    # with a dedicated cache volume that passed `-e rust_cache_root=/cache` once
+    # gets the DEFAULT on the next converge, and its build pool moves off the
+    # volume it was put on without a word.
+    # `always`, because a tagged run needs these too -- and a tagged run is
+    # exactly when a missing host setting does its damage, since a targeted
+    # re-converge is the common case.
+    - name: Load per-machine overrides if this host has any
+      ansible.builtin.include_vars:
+        file: "{{ item }}"
+      loop: "{{ q('first_found', [playbook_dir ~ '/../../local-config/vars.yml'], errors='ignore') }}"
+      tags: ['always']
+
     - name: Display system information
       ansible.builtin.debug:
         msg: |
@@ -305,6 +321,15 @@
     - role: power-profile
       become: false
       tags: ['power-profile', 'never']
+
+    # zram swap, so cgroup memory limits throttle instead of stalling. Opt-in
+    # and per-machine like power-profile: it is a host-wide memory policy, and
+    # a box that already has disk swap wants different numbers. Pairs with
+    # developer-rust's build governor, whose MemoryHigh has nothing to reclaim
+    # on a swapless host.
+    - role: zram_swap
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['zram', 'never']
 
     # System cleanup — always runs at the end.
     - role: system_cleanup

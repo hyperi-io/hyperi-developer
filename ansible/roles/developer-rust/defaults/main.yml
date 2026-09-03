@@ -6,6 +6,35 @@
 # rustup then tracks stable on its own.
 
 # ---------------------------------------------------------------------------
+# Toolchain location
+# ---------------------------------------------------------------------------
+# Empty means "ask the host". The role probes the target user's own login
+# environment for CARGO_HOME/RUSTUP_HOME and falls back to ~/.cargo and
+# ~/.rustup, which is what cargo and rustup themselves do.
+#
+# Hard-coding ~/.cargo here is what broke this: a host that relocates
+# CARGO_HOME (via /etc/environment, a profile drop-in, whatever) got a correct
+# config.toml written to a directory cargo never reads, and the stale file that
+# stayed in effect named a rustc-wrapper that no longer existed. Every build
+# failed and the converge reported success. Set these only to override the
+# host's own answer.
+rust_cargo_home: ""
+rust_rustup_home: ""
+
+# Post-condition check at the end of the toolchain run: fail the converge when
+# the config cargo will actually read names a rustc-wrapper that does not
+# resolve. Off only for a box where you know the wrapper is provisioned after
+# this role runs.
+rust_verify_wrapper: true
+
+# On a host that relocates CARGO_HOME, a config.toml left in ~/.cargo is inert
+# while the relocation holds and becomes live the moment it does not -- which is
+# how a file naming a long-gone rustc-wrapper stayed in effect here. Renamed
+# rather than deleted, matching what hyperi-rust-setup does when it takes over
+# an existing config, so nothing is destroyed on a host we do not control.
+rust_retire_superseded_config: true
+
+# ---------------------------------------------------------------------------
 # Build cache caps
 # ---------------------------------------------------------------------------
 # Build artefacts have no upstream cap (rust-lang/cargo#13136), so build-dir
@@ -80,13 +109,48 @@ rust_sccache_service_manage: true
 # shim, the slice and the config.
 rust_governor_enabled: true
 
-# One rust build at a time per user; later invocations wait for the lock.
-rust_governor_serialize: true
+# How many rust builds may be resident at once, per user. A memory semaphore,
+# not a queue length: memory is spent per CRATE rather than per job, so the
+# thing worth bounding is concurrent BUILDS and the bound is the slice's memory
+# budget divided by what one build costs.
+#
+#   auto   derive from this host's RAM (see rust_governor_build_allowance_gb)
+#   <int>  pin the count; 1 is a global mutex, which is what this used to be
+#   0      no semaphore at all
+#
+# `auto` on a 32 GB host computes 1, which is the check that the model
+# reproduces the behaviour that is known to work.
+rust_governor_slots: auto
 
-# A daemon started inside a governed build inherits the lock and holds it for
-# its own lifetime, which would otherwise hang every later cargo command. After
-# this many seconds the build proceeds unserialised and says so.
+# What one build is assumed to cost, in GB: the largest single rustc plus
+# headroom. Derived from an 11.6 GB peak on one workspace, so it is a starting
+# point rather than a constant -- a codebase whose memory scales with the job
+# count instead of with one huge crate will want a different number.
+rust_governor_build_allowance_gb: 14
+
+# Seconds to wait for a slot. On expiry the build proceeds at the FLOOR job
+# count, still inside the slice -- it degrades, it is not released. Waiting the
+# full time and then building unbounded would drop the limit at exactly the
+# moment contention is highest.
 rust_governor_lock_wait_seconds: 1800
+
+# Whether governed builds run with CARGO_INCREMENTAL=0, so sccache can cache
+# them. sccache refuses to cache any rustc call carrying -C incremental.
+#
+# OFF by default, because the win is narrower than it first looks. Cargo never
+# builds DEPENDENCIES incrementally, so those were always cacheable; what this
+# buys is caching of WORKSPACE crates, and it pays for it by losing incremental
+# on those same crates. That is a straight regression for an edit-rebuild loop,
+# worst on a large crate that compiles as a single rustc -- edit it and sccache
+# misses on the changed source with no incremental left to fall back on.
+#
+# Turn it ON for a build box, a CI runner, or a workstation running many
+# sessions against the same workspaces, where builds start from clean trees and
+# there is no incremental state to lose.
+#
+# Note for anyone opting out by hand: setting CARGO_INCREMENTAL=1 makes sccache
+# REFUSE the build outright rather than fall back to compiling.
+rust_governor_no_incremental: false
 
 # Percentages of the HOST's physical RAM (systemd resolves them all against
 # RAM, the swap cap included), so the same numbers ship everywhere. High
@@ -101,11 +165,19 @@ rust_governor_swap_max_pct: 25
 rust_governor_cpu_weight: 30
 
 # Cores held back from builds on any host with 4 or more; smaller hosts keep
-# every core. Also caps CARGO_BUILD_JOBS, because the cgroup quota is
-# invisible to rustc.
+# every core. Taken off the top BEFORE the remainder is divided between
+# concurrent builds, so the desktop keeps its share at every slot count.
 rust_governor_cpu_reserve_cores: 2
 
 # macOS has no cgroups; builds run under this taskpolicy QoS clamp instead.
 # `utility` sits below the desktop without background's disk-IO throttle and
 # E-core pinning.
 rust_governor_macos_qos: utility
+
+# The user manager's runtime directory, for every `systemctl --user` call the
+# role makes. Defined once because the fallback is wrong on a fleet box:
+# actual_user_uid is set by the developer role's init, which does not run under
+# a --tags run, so every call then falls back to the CONNECTION user's uid.
+# When that is fixed it is fixed here, in one place.
+developer_rust_user_env:
+  XDG_RUNTIME_DIR: "/run/user/{{ actual_user_uid | default(ansible_facts['user_uid']) }}"

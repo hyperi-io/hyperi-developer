@@ -4,6 +4,9 @@ Description=Prune the pooled Rust build cache when free space runs short
 [Service]
 Type=oneshot
 User={{ actual_user }}
+# A systemd unit inherits none of the user's shell environment, and the pruner
+# reads $CARGO_HOME to find the config that names the pool.
+Environment="CARGO_HOME={{ developer_rust_cargo_home }}"
 # Same prune with the same ceiling, gated on free space. Above the floor it
 # exits after one statvfs without walking the pool.
 ExecStart=/usr/local/bin/hyperi-rust-cache-prune --yes --max-size {{ rust_cache_build_dir_max }} --max-age-days {{ rust_cache_max_age_days }}{{ ' --cache-root ' ~ rust_cache_root if rust_cache_root else '' }} --if-free-below {{ rust_cache_prune_free_floor }}

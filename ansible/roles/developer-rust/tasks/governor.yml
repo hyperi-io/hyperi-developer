@@ -1,12 +1,29 @@
 ---
-# The rust build governor: one build at a time per user, the whole tree in
-# the rust-build.slice budget, priority below the desktop. Opt-OUT --
-# `rust_governor_enabled: false` removes everything it deployed.
+# The rust build governor: at most N builds at a time per user, N derived from
+# the slice's memory budget, the whole tree in the rust-build.slice budget,
+# priority below the desktop. Opt-OUT -- `rust_governor_enabled: false`
+# removes everything it deployed.
 #
 # The shim shadows ~/.cargo/bin/cargo from ~/.local/bin, which the SOE PATH
 # puts first. sccache is captured separately: compiles execute inside the
 # sccache SERVER, so hyperi-sccache.service carries Slice=rust-build.slice
 # (see hyperi-sccache.service.j2), or the budget would miss most of the work.
+
+# rust_governor_serialize was a boolean when the governor was a global mutex.
+# It is now a count, under a name that says so. Failing here rather than
+# ignoring it is deliberate: a host that still sets `false` believes it has
+# disabled serialisation, and silently applying `auto` instead would hand it
+# eight concurrent builds. A setting that is quietly ignored is the same defect
+# class as a config written to a directory the tool never reads.
+- name: Fail on the retired rust_governor_serialize variable
+  ansible.builtin.fail:
+    msg: >-
+      rust_governor_serialize has been replaced by rust_governor_slots, which
+      takes a COUNT rather than a boolean. `true` becomes
+      rust_governor_slots: 1 (one build at a time, the old behaviour),
+      `false` becomes rust_governor_slots: 0, and rust_governor_slots: auto
+      derives the count from this host's RAM.
+  when: rust_governor_serialize is defined
 
 - name: Deploy the rust build governor
   when: rust_governor_enabled | bool
@@ -103,13 +120,38 @@
         scope: user
       become: true
       become_user: "{{ actual_user }}"
-      environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
+      environment: "{{ developer_rust_user_env }}"
       when:
         - ansible_facts['system'] == 'Linux'
         - not ansible_check_mode
         - developer_rust_governor_slice is changed
       failed_when: false
+
+    # MemoryHigh throttles by reclaim, and with no swap the only reclaimable
+    # memory is page cache -- so a build past its budget stalls rather than
+    # slows. The governor and the zram_swap role are two halves of one thing,
+    # and this is what makes that visible at converge time rather than only in
+    # the README.
+    - name: Check whether this host has any swap
+      ansible.builtin.command:
+        cmd: swapon --show=NAME --noheadings
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      register: developer_rust_swap
+      when: ansible_facts['system'] == 'Linux'
+
+    - name: Warn that the memory budget has nothing to reclaim to
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Rust governor: deployed on a host with no swap. MemoryHigh'
+                ~ ' throttles by reclaim, so a build over budget will STALL'
+                ~ ' rather than slow. Apply the zram_swap role'
+                ~ ' (--tags zram) to give it somewhere to reclaim to.'] }}
+      when:
+        - ansible_facts['system'] == 'Linux'
+        - developer_rust_swap.stdout | default('') | trim | length == 0
 
   rescue:
     - name: Record that the rust governor did not deploy
@@ -179,8 +221,7 @@
         scope: user
       become: true
       become_user: "{{ actual_user }}"
-      environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
+      environment: "{{ developer_rust_user_env }}"
       when:
         - ansible_facts['system'] == 'Linux'
         - not ansible_check_mode

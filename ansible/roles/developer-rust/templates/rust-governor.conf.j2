@@ -1,7 +1,22 @@
 # Deployed by hyperi-developer (developer-rust role). Edits are overwritten.
 # Read by hyperi-rust-govern at the start of every governed invocation.
-HYPERI_RUST_GOVERN_SERIALIZE={{ '1' if rust_governor_serialize else '0' }}
-HYPERI_RUST_GOVERN_CPU_RESERVE={{ rust_governor_cpu_reserve_cores }}
-HYPERI_RUST_GOVERN_MACOS_QOS={{ rust_governor_macos_qos }}
-# Seconds to wait for the build lock before giving up and building unserialised.
-HYPERI_RUST_GOVERN_LOCK_WAIT={{ rust_governor_lock_wait_seconds }}
+#
+# Policy only. Every size is resolved by the shim against the live host, so a
+# resized VM needs no re-converge -- the same bargain the CPU reserve makes.
+#
+# Each value is written as a DEFAULT rather than an assignment. The shim sources
+# this file before reading its variables, so a plain assignment here would
+# silently beat anything the caller set, leaving no way to tune one invocation
+# and no way to test the shim against a real deployed config.
+HYPERI_RUST_GOVERN_SLOTS="${HYPERI_RUST_GOVERN_SLOTS:-{{ rust_governor_slots }}}"
+HYPERI_RUST_GOVERN_CPU_RESERVE="${HYPERI_RUST_GOVERN_CPU_RESERVE:-{{ rust_governor_cpu_reserve_cores }}}"
+HYPERI_RUST_GOVERN_MACOS_QOS="${HYPERI_RUST_GOVERN_MACOS_QOS:-{{ rust_governor_macos_qos }}}"
+# Seconds to wait for a build slot before building at the floor job count.
+HYPERI_RUST_GOVERN_LOCK_WAIT="${HYPERI_RUST_GOVERN_LOCK_WAIT:-{{ rust_governor_lock_wait_seconds }}}"
+# Matches rust-build.slice's MemoryHigh so the shim's slot count and systemd's
+# memory ceiling are derived from the same number.
+HYPERI_RUST_GOVERN_MEMORY_HIGH_PCT="${HYPERI_RUST_GOVERN_MEMORY_HIGH_PCT:-{{ rust_governor_memory_high_pct }}}"
+HYPERI_RUST_GOVERN_BUILD_ALLOWANCE_GB="${HYPERI_RUST_GOVERN_BUILD_ALLOWANCE_GB:-{{ rust_governor_build_allowance_gb }}}"
+# sccache cannot cache an incremental rustc call, and cargo's dev profile turns
+# incremental on by default.
+HYPERI_RUST_GOVERN_NO_INCREMENTAL="${HYPERI_RUST_GOVERN_NO_INCREMENTAL:-{{ '1' if rust_governor_no_incremental else '0' }}}"

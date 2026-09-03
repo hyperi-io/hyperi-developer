@@ -21,10 +21,108 @@
 # is on the day, edition 2024 included.
 
 # ============================================================
+# Where the toolchain actually lives
+# ============================================================
+# Everything below addresses cargo through these two facts, never through a
+# hard-coded ~/.cargo. Cargo reads $CARGO_HOME/config.toml and rustup reads
+# $RUSTUP_HOME, and neither is required to be under the home directory -- a
+# box with a dedicated toolchain volume relocates both. Writing to ~/.cargo on
+# such a host produces a file the tool silently ignores while a stale one stays
+# in effect, which is a failure mode with no error message anywhere in it.
+#
+# Ask the target user's own login shell, because that is the environment the
+# developer's cargo runs in: it sees /etc/environment (via pam_env under
+# become), /etc/profile.d and ~/.profile, which is where a relocation is
+# declared. Ansible's `ansible_facts['env']` is the CONNECTION user's
+# environment -- root under become -- so it cannot answer this.
+#
+# `${CARGO_HOME:-$HOME/.cargo}` is resolved by that shell, so the fallback uses
+# the user's real home and matches hyperi-rust-govern's own resolution.
+#
+# The sentinel is not decoration: a login shell runs /etc/profile.d and
+# ~/.profile first, and anything they print lands on stdout ahead of the answer.
+# Selecting on a marker rather than on line 0 is what stops a login banner
+# becoming CARGO_HOME.
+# One task for every platform. Linux runs it under become as the target user;
+# macOS as the connecting user, who is the target there. `timeout` is Linux
+# coreutils: a profile that blocks would otherwise hang the converge, and
+# `failed_when: false` offers no protection against a hang.
+#
+# Two sentinel lines rather than one line split on whitespace, so a path with a
+# space in it resolves whole instead of silently as its first word. `last`,
+# not `first`: the profile runs before the printf, so ours is always last, and
+# a profile that prints the sentinel itself cannot win.
+- name: Probe the target user's cargo environment
+  ansible.builtin.command:
+    cmd: >-
+      {{ 'zsh' if ansible_facts['distribution'] == 'MacOSX' else 'timeout 30 bash' }}
+      -lc 'printf "HYPERI_CARGO_HOME %s\nHYPERI_RUSTUP_HOME %s\n" "${CARGO_HOME:-$HOME/.cargo}" "${RUSTUP_HOME:-$HOME/.rustup}"'
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_rust_env_probe
+  changed_when: false
+  failed_when: false
+  # Must run in check mode too: the facts below are undefined without it, and
+  # every later task then templates an empty path.
+  check_mode: false
+  tags: ['rust-cache', 'rust-governor']
+
+# An explicit role variable, else what the host said, else the upstream default
+# so nothing downstream is ever templated blank. Trailing slashes are stripped
+# because the retire task below compares this against ~/.cargo as a string, and
+# `~/.cargo/` would read as a relocation and rename the live config.
+- name: Resolve the effective cargo and rustup homes
+  ansible.builtin.set_fact:
+    developer_rust_cargo_home: >-
+      {{ rust_cargo_home | default(_probed_cargo, true)
+         | default(user_home ~ '/.cargo', true) | regex_replace('/+$', '') }}
+    developer_rust_rustup_home: >-
+      {{ rust_rustup_home | default(_probed_rustup, true)
+         | default(user_home ~ '/.rustup', true) | regex_replace('/+$', '') }}
+  vars:
+    _lines: "{{ developer_rust_env_probe.stdout_lines | default([], true) }}"
+    _probed_cargo: >-
+      {{ _lines | select('match', '^HYPERI_CARGO_HOME ') | list | last
+         | default('') | regex_replace('^\S+ ', '') }}
+    _probed_rustup: >-
+      {{ _lines | select('match', '^HYPERI_RUSTUP_HOME ') | list | last
+         | default('') | regex_replace('^\S+ ', '') }}
+  tags: ['rust-cache', 'rust-governor']
+
+# Absolute, and free of the two characters that would break the root-owned
+# unit file this value is templated into: `%` is a systemd specifier and `"`
+# ends the quoted assignment.
+- name: Check the resolved toolchain paths are usable
+  ansible.builtin.assert:
+    that:
+      - developer_rust_cargo_home is match('^/')
+      - developer_rust_rustup_home is match('^/')
+      - developer_rust_cargo_home is not search('[%"]')
+      - developer_rust_rustup_home is not search('[%"]')
+    fail_msg: >-
+      Resolved CARGO_HOME={{ developer_rust_cargo_home }},
+      RUSTUP_HOME={{ developer_rust_rustup_home }} -- not an absolute path, or
+      contains % or ". Set rust_cargo_home/rust_rustup_home explicitly.
+    quiet: true
+  tags: ['rust-cache', 'rust-governor']
+
+- name: Report where the toolchain was resolved to
+  ansible.builtin.debug:
+    msg: >-
+      CARGO_HOME={{ developer_rust_cargo_home }}
+      RUSTUP_HOME={{ developer_rust_rustup_home }}
+    verbosity: 1
+  tags: ['rust-cache', 'rust-governor']
+
+# ============================================================
 # Rust Installation (Linux -- one path for both distros)
 # ============================================================
 
 - name: Install Rust via rustup (Linux)
+  # No rescue: every `cargo install` below needs the toolchain this block
+  # bootstraps, so warning past it only moves the abort to a task that reports
+  # it as a missing command.
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   block:
     - name: Remove distro Rust packages if present (Fedora)
       ansible.builtin.dnf:
@@ -54,7 +152,7 @@
     # otherwise the download-then-delete pair below reports changed every time.
     - name: Check whether rustup is already installed
       ansible.builtin.stat:
-        path: "{{ user_home }}/.cargo/bin/rustup"
+        path: "{{ developer_rust_cargo_home }}/bin/rustup"
       register: developer_rustup_bin
 
     - name: Bootstrap the Rust toolchain
@@ -84,12 +182,12 @@
         - name: Install the Rust toolchain via rustup-init
           ansible.builtin.command:
             cmd: /tmp/rustup-init -y --default-toolchain stable --no-modify-path
-            creates: "{{ user_home }}/.cargo/bin/rustup"
+            creates: "{{ developer_rust_cargo_home }}/bin/rustup"
           become: true
           become_user: "{{ actual_user }}"
           environment:
-            CARGO_HOME: "{{ user_home }}/.cargo"
-            RUSTUP_HOME: "{{ user_home }}/.rustup"
+            CARGO_HOME: "{{ developer_rust_cargo_home }}"
+            RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
 
         - name: Remove the rustup-init download
           ansible.builtin.file:
@@ -102,12 +200,12 @@
     # non-zero merely because a rustup self-update is offered.
     - name: Check whether the Rust toolchain is current
       ansible.builtin.command:
-        cmd: "{{ user_home }}/.cargo/bin/rustup check"
+        cmd: "{{ developer_rust_cargo_home }}/bin/rustup check"
       become: true
       become_user: "{{ actual_user }}"
       environment:
-        CARGO_HOME: "{{ user_home }}/.cargo"
-        RUSTUP_HOME: "{{ user_home }}/.rustup"
+        CARGO_HOME: "{{ developer_rust_cargo_home }}"
+        RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
       register: developer_rustup_check
       changed_when: false
       failed_when: false
@@ -121,12 +219,12 @@
     # silently deciding there was nothing to do.
     - name: Update the Rust toolchain to current stable
       ansible.builtin.command:
-        cmd: "{{ user_home }}/.cargo/bin/rustup update stable"
+        cmd: "{{ developer_rust_cargo_home }}/bin/rustup update stable"
       become: true
       become_user: "{{ actual_user }}"
       environment:
-        CARGO_HOME: "{{ user_home }}/.cargo"
-        RUSTUP_HOME: "{{ user_home }}/.rustup"
+        CARGO_HOME: "{{ developer_rust_cargo_home }}"
+        RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
       changed_when: true
       when: >-
         developer_rustup_check.rc | default(1) != 0
@@ -136,12 +234,12 @@
 
     - name: Install Rust components via rustup
       ansible.builtin.command:
-        cmd: "{{ user_home }}/.cargo/bin/rustup component add rustfmt clippy"
+        cmd: "{{ developer_rust_cargo_home }}/bin/rustup component add rustfmt clippy"
       become: true
       become_user: "{{ actual_user }}"
       environment:
-        CARGO_HOME: "{{ user_home }}/.cargo"
-        RUSTUP_HOME: "{{ user_home }}/.rustup"
+        CARGO_HOME: "{{ developer_rust_cargo_home }}"
+        RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
       # `component add` already prints "component X is up to date" and no-ops
       # when present, so key changed off that rather than always reporting it.
       register: developer_rustup_components
@@ -150,11 +248,6 @@
       # clippy ship in the default profile. So this task is effectively always
       # "not changed", which is honest: the components are present either way.
       changed_when: "'is up to date' not in developer_rustup_components.stderr"
-
-  # No rescue: every `cargo install` below needs the toolchain this block
-  # bootstraps, so warning past it only moves the abort to a task that reports
-  # it as a missing command.
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # brew's rust formula conflicts with rustup and brew refuses the pair, so a
 # Mac already on rustup keeps it -- rustup's toolchains carry cargo and
@@ -183,18 +276,22 @@
 # Cargo bin directory setup
 # ============================================================
 
+# As the user, not as root. The path comes from the user's own environment, and
+# every other consumer of it runs as the user -- having root create an arbitrary
+# user-supplied directory tree and hand the leaf to that user is a privilege
+# boundary this task has no reason to cross.
 - name: Create cargo bin directory (Linux)
   ansible.builtin.file:
-    path: "{{ user_home }}/.cargo/bin"
+    path: "{{ developer_rust_cargo_home }}/bin"
     state: directory
     mode: '0755'
-    owner: "{{ actual_user }}"
-    group: "{{ actual_user }}"
+  become: true
+  become_user: "{{ actual_user }}"
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Create cargo bin directory (macOS)
   ansible.builtin.file:
-    path: "{{ user_home }}/.cargo/bin"
+    path: "{{ developer_rust_cargo_home }}/bin"
     state: directory
     mode: '0755'
   become: false
@@ -207,7 +304,13 @@
 #
 # The guard is required either way -- an unguarded prepend stacks a copy per
 # nested shell -- and it also makes this a no-op on a soe box, where
-# /etc/profile.d/dev-path.sh already covers ~/.cargo/bin.
+# /etc/profile.d/dev-path.sh already covers the cargo bin directory.
+#
+# `${CARGO_HOME:-$HOME/.cargo}` rather than the resolved path: pam_env has
+# already applied /etc/environment by the time .profile runs, so the shell
+# knows the answer itself. That keeps the entry correct if the toolchain is
+# relocated later without a converge, and it is the same expression
+# hyperi-rust-govern resolves the real cargo with.
 - name: Add cargo bin to PATH in .profile (Linux)
   ansible.builtin.blockinfile:
     path: "{{ user_home }}/.profile"
@@ -218,8 +321,8 @@
     mode: '0644'
     block: |
       case ":$PATH:" in
-          *":$HOME/.cargo/bin:"*) ;;
-          *) export PATH="$HOME/.cargo/bin:$PATH" ;;
+          *":${CARGO_HOME:-$HOME/.cargo}/bin:"*) ;;
+          *) export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH" ;;
       esac
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
@@ -232,11 +335,22 @@
   failed_when: false
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
+# Same shell-derived form as the Linux .profile block above, for the same
+# reason.
+#
+# The regexp matches the two forms this role has ever written and nothing else.
+# It has to match the new line as well as the retired one, or lineinfile appends
+# a fresh copy every run -- but a loose `.*cargo.*/bin` also swallows an
+# unrelated `export PATH=` line that merely mentions cargo somewhere, replacing
+# every other entry on it.
+#
+# No `mode`: lineinfile applies it to a pre-existing file too, so setting 0644
+# would widen a .zshrc the user had deliberately kept at 0600.
 - name: Add cargo bin to PATH in .zshrc (macOS)
   ansible.builtin.lineinfile:
     path: "{{ user_home }}/.zshrc"
-    regexp: "^export PATH=.*\\.cargo/bin"
-    line: 'export PATH="{{ user_home }}/.cargo/bin:$PATH"'
+    regexp: '^export PATH="?(\$\{CARGO_HOME:-\$HOME/\.cargo\}|\S*/\.cargo)/bin'
+    line: 'export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"'
     state: present
     create: true
   become: false
@@ -305,9 +419,9 @@
 - name: Set cargo environment (Linux)
   ansible.builtin.set_fact:
     cargo_env:
-      PATH: "{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-      CARGO_HOME: "{{ user_home }}/.cargo"
-      RUSTUP_HOME: "{{ user_home }}/.rustup"
+      PATH: "{{ developer_rust_cargo_home }}/bin:{{ ansible_facts['env'].PATH }}"
+      CARGO_HOME: "{{ developer_rust_cargo_home }}"
+      RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   tags: ['rust-cache']
 
@@ -316,8 +430,14 @@
 - name: Set cargo environment (macOS)
   ansible.builtin.set_fact:
     cargo_env:
-      PATH: "/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ user_home }}/.cargo/bin:{{ ansible_facts['env'].PATH }}"
-      CARGO_HOME: "{{ user_home }}/.cargo"
+      PATH: >-
+        {{ '/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:'
+           ~ developer_rust_cargo_home ~ '/bin:' ~ ansible_facts['env'].PATH }}
+      CARGO_HOME: "{{ developer_rust_cargo_home }}"
+      # Resolves to ~/.rustup when the host says nothing, which is what rustup
+      # would have defaulted to anyway. Carried explicitly so a Mac that
+      # relocates it is not the one platform still hard-coded.
+      RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
   when: ansible_facts['distribution'] == 'MacOSX'
   tags: ['rust-cache']
 
@@ -329,7 +449,7 @@
 - name: Install cargo-binstall (prebuilt cargo tool fetcher)
   ansible.builtin.command:
     cmd: cargo install cargo-binstall --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-binstall"
+    creates: "{{ developer_rust_cargo_home }}/bin/cargo-binstall"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -344,7 +464,7 @@
 - name: Install the cargo tool set
   ansible.builtin.command:
     cmd: cargo install {{ item.crate }} --locked
-    creates: "{{ user_home }}/.cargo/bin/{{ item.bin }}"
+    creates: "{{ developer_rust_cargo_home }}/bin/{{ item.bin }}"
   loop:
     - {crate: bacon, bin: bacon}
     - {crate: cargo-nextest, bin: cargo-nextest}
@@ -366,14 +486,14 @@
 - name: Install cargo-llvm-cov (code coverage)
   ansible.builtin.command:
     cmd: cargo install cargo-llvm-cov --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-llvm-cov"
+    creates: "{{ developer_rust_cargo_home }}/bin/cargo-llvm-cov"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
 - name: Install the llvm-tools component (cargo-llvm-cov dependency)
   ansible.builtin.command:
-    cmd: "{{ user_home }}/.cargo/bin/rustup component add llvm-tools-preview"
+    cmd: "{{ developer_rust_cargo_home }}/bin/rustup component add llvm-tools-preview"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   environment: "{{ cargo_env }}"
@@ -386,7 +506,7 @@
 - name: Remove the superseded cargo-tarpaulin
   ansible.builtin.command:
     cmd: cargo uninstall cargo-tarpaulin
-    removes: "{{ user_home }}/.cargo/bin/cargo-tarpaulin"
+    removes: "{{ developer_rust_cargo_home }}/bin/cargo-tarpaulin"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -394,7 +514,7 @@
 - name: Install cargo-pgo (profile-guided optimisation)
   ansible.builtin.command:
     cmd: cargo install cargo-pgo --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-pgo"
+    creates: "{{ developer_rust_cargo_home }}/bin/cargo-pgo"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -402,7 +522,7 @@
 - name: Install cargo-chef (Docker layer caching)
   ansible.builtin.command:
     cmd: cargo install cargo-chef --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-chef"
+    creates: "{{ developer_rust_cargo_home }}/bin/cargo-chef"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -414,7 +534,7 @@
 - name: Install cargo-audit (RustSec advisory audit)
   ansible.builtin.command:
     cmd: cargo install cargo-audit --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-audit"
+    creates: "{{ developer_rust_cargo_home }}/bin/cargo-audit"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -422,7 +542,7 @@
 - name: Install cargo-hack (feature-matrix testing)
   ansible.builtin.command:
     cmd: cargo install cargo-hack --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-hack"
+    creates: "{{ developer_rust_cargo_home }}/bin/cargo-hack"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -435,7 +555,7 @@
 - name: Install cargo-update (for updating cargo tools)
   ansible.builtin.command:
     cmd: cargo install cargo-update --locked
-    creates: "{{ user_home }}/.cargo/bin/cargo-install-update"
+    creates: "{{ developer_rust_cargo_home }}/bin/cargo-install-update"
   environment: "{{ cargo_env }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
@@ -524,7 +644,7 @@
   environment: "{{ cargo_env | combine(hyperi_github_env) }}"
   register: developer_rust_setup
   changed_when: "'CHANGED' in developer_rust_setup.stdout"
-  # An optional build accelerator must never abort the run (see S1.T11).
+  # An optional build accelerator must never abort the run.
   failed_when: false
   tags: ['rust-cache']
 
@@ -533,6 +653,112 @@
     msg: "{{ developer_rust_setup.stdout_lines | default(['(no output)']) }}"
   when: developer_rust_setup.rc | default(0) != 0
   tags: ['rust-cache']
+
+# ============================================================
+# Post-condition: the toolchain the converge just left behind works
+# ============================================================
+# A rustc-wrapper that does not exist breaks EVERY cargo command on the box
+# with `No such file or directory`, and nothing upstream of here notices: the
+# accelerator is optional and swallows its own failures, the tools all report
+# success, and the config that is actually in effect may not even be the one
+# this run wrote. That combination produced a workstation where every build had
+# been failing since the wrapper's binary moved, through repeated green
+# converges.
+#
+# So this is a post-condition on the file cargo will really read, not a check on
+# what we intended to write, and it is fatal. A broken wrapper is not a degraded
+# accelerator, it is a toolchain that cannot compile anything.
+
+# BOTH candidate locations are checked, not just the resolved one. Checking
+# only where the role wrote would make this self-certifying: a resolution that
+# picked the wrong directory would write a good config there, read the same
+# good config back, and pass, while cargo went on reading a stale file
+# somewhere else. A leftover config in the location that is NOT in effect is
+# exactly the trap this whole change exists to close.
+- name: Verify no cargo config names an unusable rustc-wrapper
+  when: rust_verify_wrapper | default(true) | bool
+  tags: ['rust-cache']
+  block:
+    - name: Read every candidate cargo config
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_rust_cargo_configs
+      # A config that is absent is a legitimate state -- cargo has defaults for
+      # everything in it. Only one that NAMES a broken wrapper is a fault.
+      failed_when: false
+      check_mode: false
+      loop: "{{ [developer_rust_cargo_home ~ '/config.toml',
+                 user_home ~ '/.cargo/config.toml'] | unique }}"
+
+    # Both TOML quote styles and the dotted-key form, because the file is not
+    # always ours -- the whole point is to catch a foreign or stale one.
+    # `[^"'\n]` and not `[^"']`: the latter spans newlines, so a config whose
+    # value is unterminated swallows the rest of the file and the check then
+    # passes on nonsense.
+    - name: Extract the rustc-wrapper each config names
+      ansible.builtin.set_fact:
+        developer_rust_wrappers: >-
+          {{ developer_rust_cargo_configs.results
+             | selectattr('content', 'defined') | map(attribute='content')
+             | map('b64decode') | join('\n')
+             | regex_findall('(?m)^[ \t]*(?:build\.)?rustc-wrapper[ \t]*=[ \t]*["\x27]([^"\x27\n]+)["\x27]')
+             | unique }}
+
+    # argv, not cmd: the command module shlex-splits a cmd string, so a value
+    # like `sccache --flag` would be split and `command -v sccache` would pass
+    # while every build failed. Cargo treats the whole value as one program.
+    # `-x` on the result, because `command -v` also answers for a builtin or a
+    # profile-defined function, neither of which cargo can execute.
+    - name: Check that each configured rustc-wrapper resolves
+      ansible.builtin.command:
+        argv: [bash, -lc, '[ -x "$(command -v -- "$1")" ]', bash, "{{ item }}"]
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_rust_wrapper_checks
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      loop: "{{ developer_rust_wrappers }}"
+
+    # Renamed, not deleted. It is only reachable if the relocation is ever
+    # dropped, at which point cargo silently starts obeying whatever it says --
+    # so it is worth neutralising, but not worth destroying a file on a host we
+    # do not own. `removes:` makes this a no-op once the file is gone.
+    - name: Retire a cargo config superseded by a relocated CARGO_HOME
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ user_home }}/.cargo/config.toml"
+          - "{{ user_home }}/.cargo/config.toml.superseded"
+        removes: "{{ user_home }}/.cargo/config.toml"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_rust_retired
+      when:
+        - rust_retire_superseded_config | default(true) | bool
+        - developer_rust_cargo_home != user_home ~ '/.cargo'
+
+    # Fatal even on the run that just retired the offending file. The toolchain
+    # WAS broken, and a converge that repairs it and then says so is the loud
+    # failure this check exists to produce; the next run is clean.
+    - name: Fail when a cargo config names a rustc-wrapper that does not exist
+      ansible.builtin.fail:
+        msg: >-
+          A cargo config on this host sets rustc-wrapper =
+          "{{ developer_rust_wrapper_checks.results
+              | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+              | map(attribute='item') | join('", "') }}",
+          which does not resolve for {{ actual_user }}. Every cargo command that
+          reads it fails with "No such file or directory". The effective
+          CARGO_HOME here is {{ developer_rust_cargo_home }}.
+          {{ 'The stale ' ~ user_home ~ '/.cargo/config.toml has just been retired to config.toml.superseded -- re-run the converge.'
+             if developer_rust_retired is changed
+             else 'Check that is where you expect, then re-run /usr/local/bin/hyperi-rust-setup with that CARGO_HOME set.' }}
+      when: developer_rust_wrapper_checks.results | default([])
+            | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+            | list | length > 0
 
 # ============================================================
 # Build cache caps
