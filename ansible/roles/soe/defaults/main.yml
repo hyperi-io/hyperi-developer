@@ -49,6 +49,25 @@ soe_arcane_timezone: UTC
 # says -- the request schema rejects anything shorter before the policy is read.
 soe_arcane_password_policy: basic
 
+# Arcane's default login lasts about a day. Two knobs move that and BOTH are
+# needed -- either alone still logs you out.
+#
+# soe_arcane_session_timeout_minutes sets the access token's life, and the
+# access-token cookie is the only thing that survives a browser restart. The
+# server clamps it to 15..525600 minutes and has no never-expire value, so a
+# year from each login is the practical ceiling.
+#
+# soe_arcane_refresh_expiry stamps the session row's expiry at login and is
+# never extended on refresh, so leaving it at the image's 168h means every
+# request 401s at day seven whatever the timeout says.
+#
+# Off by default: Arcane holds the Docker socket, so a year-long cookie is a
+# per-machine decision. Both settings stay ABSENT while the flag is off, rather
+# than being written at a default, so a value set by hand in the UI survives.
+soe_arcane_long_session: false
+soe_arcane_session_timeout_minutes: 525600
+soe_arcane_refresh_expiry: 87600h
+
 # ============================================================================
 # Local services -- persistent ClickHouse + Redpanda for ad-hoc work, OPT-IN.
 # ============================================================================
