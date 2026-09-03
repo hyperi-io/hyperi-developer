@@ -1,0 +1,58 @@
+---
+# Delete a test VM and its disks. Refuses a vmid outside the test range.
+#
+#   ansible-playbook tests/proxmox/delete.yml -e vmid=8102
+
+- name: Delete a test VM
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    community.proxmox.proxmox_vm_info: &api
+      api_host: "{{ env.PROXMOX_HOST }}"
+      # A token, never a password. PROXMOX_TOKEN_ID is user@realm!name as
+      # hyperi-infra stores it; the modules take the two halves separately.
+      api_user: "{{ env.PROXMOX_TOKEN_ID.split('!')[0] }}"
+      api_token_id: "{{ env.PROXMOX_TOKEN_ID.split('!')[1] }}"
+      api_token_secret: "{{ env.PROXMOX_TOKEN_SECRET }}"
+      validate_certs: "{{ env.PROXMOX_API_VERIFY_SSL | default('true') | bool }}"
+    community.proxmox.proxmox_kvm: *api
+  tasks:
+    - name: Require a vmid
+      ansible.builtin.assert:
+        that: vmid is defined and vmid | string | length > 0
+        fail_msg: "pass -e vmid=<id>"
+        quiet: true
+
+    - name: Load tests/.env
+      ansible.builtin.include_tasks:
+        file: ../common/setup_env.yml
+
+    - name: Refuse a vmid outside the test range
+      ansible.builtin.include_tasks:
+        file: tasks/require_test_vmid.yml
+
+    - name: Look up the VM
+      community.proxmox.proxmox_vm_info:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+      register: proxmox_vm
+
+    - name: Refuse a vmid that does not exist
+      ansible.builtin.assert:
+        that: proxmox_vm.proxmox_vms | length == 1
+        fail_msg: "no VM with vmid {{ vmid }} on {{ env.PROXMOX_NODE }}"
+        quiet: true
+
+    # force: a running VM is stopped first rather than refused.
+    - name: Delete the VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        state: absent
+        force: true
+        timeout: 300
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "vmid {{ vmid }} ({{ proxmox_vm.proxmox_vms[0].name }}) deleted."
