@@ -213,8 +213,19 @@ def human(size: int) -> str:
     return f"{value:.1f}T"
 
 
-def cache_root() -> Path:
-    """The platform's cache directory -- must match hyperi-rust-setup exactly."""
+def cache_root(override: Path | None = None) -> Path:
+    """Where caches live -- must match what hyperi-rust-setup was given.
+
+    A box with a dedicated cache volume puts the pool on that disk, outside home,
+    which would otherwise be refused. The override names the same directory
+    `hyperi-rust-setup --cache-root` was given.
+
+    It is a flag rather than an environment read because a systemd unit does not
+    load the user's profile, so an XDG_CACHE_HOME set there is absent when the
+    timer fires.
+    """
+    if override is not None:
+        return override
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Caches"
     xdg = os.environ.get("XDG_CACHE_HOME")
@@ -521,6 +532,16 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--cache-root",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "the directory the pool is expected to live under, for a box whose cache "
+            "is on its own volume -- the same value hyperi-rust-setup was given"
+        ),
+    )
+    parser.add_argument(
         "--pool",
         type=Path,
         default=None,
@@ -549,10 +570,10 @@ def main() -> int:
     # and keeps working.
     if args.pool is None:
         pool = pool.resolve()
-        root = cache_root().resolve()
+        root = cache_root(args.cache_root).resolve()
         if pool == root or not pool.is_relative_to(root):
             print(f"refusing to prune {pool}: outside the cache root {root}.")
-            print("Point build.build-dir inside the cache root, or pass --pool to override.")
+            print("Pass --cache-root for a cache on its own volume, or --pool to name it.")
             return 1
 
     print(f"hyperi-rust-cache-prune: {pool}")

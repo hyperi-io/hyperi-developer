@@ -5,7 +5,7 @@ Description=Bound the pooled Rust build cache
 Type=oneshot
 User={{ actual_user }}
 # Runs entirely inside the user's own cache directory, so it needs no sudo.
-ExecStart=/usr/local/bin/hyperi-rust-cache-prune --yes --max-size {{ rust_cache_build_dir_max }} --max-age-days {{ rust_cache_max_age_days }}
+ExecStart=/usr/local/bin/hyperi-rust-cache-prune --yes --max-size {{ rust_cache_build_dir_max }} --max-age-days {{ rust_cache_max_age_days }}{{ ' --cache-root ' ~ rust_cache_root if rust_cache_root else '' }}
 # Walking a large pool is IO-bound; it must never compete with an active build.
 Nice=19
 IOSchedulingClass=idle

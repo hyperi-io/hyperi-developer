@@ -515,6 +515,7 @@
       --sccache-size {{ rust_cache_sccache_max }}
       --ccache-size {{ rust_cache_ccache_max }}
       --sccache-basedirs {{ rust_cache_sccache_basedirs | quote }}
+      {{ ('--cache-root ' ~ (rust_cache_root | quote)) if rust_cache_root else '' }}
       {{ '' if rust_cache_central_build_dir else '--no-build-dir' }}
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"

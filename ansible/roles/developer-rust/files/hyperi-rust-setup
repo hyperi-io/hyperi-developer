@@ -273,17 +273,25 @@ def cargo_version() -> tuple[int, int] | None:
     return (int(match.group(1)), int(match.group(2))) if match else None
 
 
-def cache_root(family: str) -> Path:
-    """The platform's cache directory -- the one place a user expects to be evictable."""
+def cache_root(family: str, override: Path | None = None) -> Path:
+    """Where caches live -- the platform default, or a directory named by the caller.
+
+    The override exists for a box with a dedicated cache volume, where the pool
+    belongs on that disk rather than on the one holding home. Whatever is chosen
+    has to be given to hyperi-rust-cache-prune as well, since it will not evict
+    a pool outside the root it was told about.
+    """
+    if override is not None:
+        return override
     if family == "macos":
         return Path.home() / "Library" / "Caches"
     xdg = os.environ.get("XDG_CACHE_HOME")
     return Path(xdg) if xdg else Path.home() / ".cache"
 
 
-def build_dir_path(family: str) -> Path:
+def build_dir_path(family: str, override: Path | None = None) -> Path:
     """Where intermediate build artefacts are pooled, and what the prune tool bounds."""
-    return cache_root(family) / "hyperi-rust-build"
+    return cache_root(family, override) / "hyperi-rust-build"
 
 
 def shell_env_file(family: str) -> Path:
@@ -512,7 +520,9 @@ def install_cargo_sweep(dry_run: bool, rep: Reporter) -> None:
 # ---------------------------------------------------------------------------
 
 
-def resolve_build_dir(family: str, wanted: bool, rep: Reporter) -> Path | None:
+def resolve_build_dir(
+    family: str, wanted: bool, rep: Reporter, *, cache_root_override: Path | None = None
+) -> Path | None:
     """Decide whether the central build directory can be configured on this box."""
     if not wanted:
         return None
@@ -525,7 +535,7 @@ def resolve_build_dir(family: str, wanted: bool, rep: Reporter) -> Path | None:
         have = ".".join(str(part) for part in version)
         rep.info(f"cargo {have} predates build-dir (needs {want}) -- keeping per-project target/")
         return None
-    return build_dir_path(family)
+    return build_dir_path(family, cache_root_override)
 
 
 def build_config(
@@ -597,14 +607,21 @@ def build_config(
 
 
 def write_cargo_config(
-    family: str, dry_run: bool, rep: Reporter, *, central_build_dir: bool
+    family: str,
+    dry_run: bool,
+    rep: Reporter,
+    *,
+    central_build_dir: bool,
+    cache_root_override: Path | None = None,
 ) -> None:
     home = cargo_home()
     config = home / "config.toml"
 
     existing = config.read_text(encoding="utf-8") if config.is_file() else ""
     carried = carry_over_sections(existing, rep) if existing else Carried("", "")
-    build_dir = resolve_build_dir(family, central_build_dir, rep)
+    build_dir = resolve_build_dir(
+        family, central_build_dir, rep, cache_root_override=cache_root_override
+    )
     content, managed = build_config(family, rep, build_dir=build_dir, carried=carried)
 
     if managed == 0:
@@ -982,6 +999,17 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--cache-root",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "put the pooled build cache under this directory instead of the platform "
+            "cache dir -- for a box with a dedicated cache volume. Give the same "
+            "value to hyperi-rust-cache-prune"
+        ),
+    )
+    parser.add_argument(
         "--no-build-dir",
         dest="central_build_dir",
         action="store_false",
@@ -1028,7 +1056,13 @@ def main() -> int:
     install_cargo_sweep(args.check, rep)
 
     rep.step("Global Cargo config")
-    write_cargo_config(family, args.check, rep, central_build_dir=args.central_build_dir)
+    write_cargo_config(
+        family,
+        args.check,
+        rep,
+        central_build_dir=args.central_build_dir,
+        cache_root_override=args.cache_root,
+    )
 
     rep.step("Cache caps")
     write_env_caps(
