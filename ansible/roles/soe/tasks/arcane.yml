@@ -234,17 +234,22 @@
                   | map(attribute='value'))) }}
       when: not ansible_check_mode
 
-    - name: Work out the auto-update settings this host should have
+    # authSessionTimeout is added only when the long session is opted into, so a
+    # run with the flag off leaves whatever is there rather than stamping a
+    # default over a value set by hand in the UI.
+    - name: Work out the settings this host should have
       # noqa: var-naming[no-role-prefix] -- soe_ IS the role prefix here
       ansible.builtin.set_fact:
-        soe_arcane_settings_want:
-          autoUpdate: "{{ soe_arcane_auto_update | bool | lower }}"
-          autoUpdateExcludedContainers: "{{ soe_arcane_auto_update_exclude | join(',') }}"
+        soe_arcane_settings_want: >-
+          {{ {'autoUpdate': soe_arcane_auto_update | bool | lower,
+              'autoUpdateExcludedContainers': soe_arcane_auto_update_exclude | join(',')}
+             | combine({'authSessionTimeout': soe_arcane_session_timeout_minutes | string}
+                       if soe_arcane_long_session | bool else {}) }}
 
-    # `autoUpdate` is a database setting rather than an environment override, so
-    # asserting it needs the API. Values are strings upstream, not booleans.
+    # These are database settings rather than environment overrides, so asserting
+    # them needs the API. Values are strings upstream, not booleans or numbers.
     # Only PUT on a real difference, otherwise every run reports changed.
-    - name: Assert Arcane's auto-update settings
+    - name: Assert Arcane's managed settings
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ soe_arcane_port }}/api/environments/0/settings"
         method: PUT
@@ -272,6 +277,12 @@
 
           There is still a login: auto-login sits behind a `buildables` Go build
           tag that no published image is compiled with.
+
+          {% if soe_arcane_long_session %}
+          Long sessions are on ({{ soe_arcane_session_timeout_minutes }} minutes).
+          Log out and back in once -- the session expiry is stamped at login, so
+          the session you are already in keeps its old one.
+          {% endif %}
 
           Stack: {{ soe_arcane_dir }}
           Updates: hyperi-update pulls and recreates it; Arcane's own updater
