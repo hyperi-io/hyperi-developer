@@ -1,0 +1,247 @@
+---
+# Create a clean test VM from a base template and snapshot it, so reset.yml
+# can return it to this exact state before every hyperi-developer run.
+#
+# The VM is cloned, sized, booted once to bring its packages current, then
+# STOPPED and snapshotted. hyperi-developer never runs here: the snapshot IS
+# the "before" state.
+#
+#   ansible-playbook tests/proxmox/create.yml -e vm_name=ubuntu-test.example.com \
+#       -e vmid=8101 -e ip=192.0.2.51/24
+#   ansible-playbook tests/proxmox/create.yml -e vm_name=scratch
+#
+# Without -e ip the VM takes DHCP. Size, storage, gateway and nameserver come
+# from the TEST VMS block in tests/.env -- see tests/.env.sample.
+
+- name: Clone a base template into the test range
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    snapshot: clean
+    vmid: ""
+    ip: ""
+  module_defaults:
+    community.proxmox.proxmox_vm_info: &api
+      api_host: "{{ env.PROXMOX_HOST }}"
+      # A token, never a password. PROXMOX_TOKEN_ID is user@realm!name as
+      # hyperi-infra stores it; the modules take the two halves separately.
+      api_user: "{{ env.PROXMOX_TOKEN_ID.split('!')[0] }}"
+      api_token_id: "{{ env.PROXMOX_TOKEN_ID.split('!')[1] }}"
+      api_token_secret: "{{ env.PROXMOX_TOKEN_SECRET }}"
+      validate_certs: "{{ env.PROXMOX_API_VERIFY_SSL | default('true') | bool }}"
+    community.proxmox.proxmox_kvm: *api
+    community.proxmox.proxmox_disk: *api
+    community.proxmox.proxmox_snap: *api
+  tasks:
+    - name: Require a VM name
+      ansible.builtin.assert:
+        that: vm_name is defined and vm_name | length > 0
+        fail_msg: "pass -e vm_name=<name>"
+        quiet: true
+
+    - name: Load tests/.env
+      ansible.builtin.include_tasks:
+        file: ../common/setup_env.yml
+
+    # A static VM is reached by its address, so nothing here waits on DNS. A
+    # DHCP VM is reached by the name the lab DNS registers for its lease: the
+    # VM name with the domain appended, unless it is already a FQDN.
+    - name: Resolve the address Ansible reaches the VM on
+      ansible.builtin.set_fact:
+        vm_host: >-
+          {{ ip | regex_replace('/.*$', '') if ip | length > 0 else
+             (vm_name if '.' in vm_name else vm_name ~ '.' ~ env.PROXMOX_TEST_DOMAIN) }}
+
+    - name: List the VMs on the node
+      community.proxmox.proxmox_vm_info:
+        node: "{{ env.PROXMOX_NODE }}"
+      register: proxmox_existing
+
+    # A VM of this name already on the node is a run that stopped partway: the
+    # clone succeeded and something after it did not. Finish it rather than
+    # clone a second one beside it.
+    - name: Adopt a VM of this name if one exists
+      ansible.builtin.set_fact:
+        proxmox_adopted: >-
+          {{ proxmox_existing.proxmox_vms | selectattr('name', 'eq', vm_name)
+             | map(attribute='vmid') | map('int') | list }}
+        proxmox_used: "{{ proxmox_existing.proxmox_vms | map(attribute='vmid') | map('int') | list }}"
+
+    # difference() is a set operation and returns its result unordered, so the
+    # sort is what makes "the lowest free id" true.
+    - name: Pick the vmid
+      ansible.builtin.set_fact:
+        vmid: >-
+          {{ proxmox_adopted[0] if proxmox_adopted | length > 0 else
+             (vmid if vmid | string | length > 0 else
+              (range(env.PROXMOX_TEST_VMID_MIN | int, env.PROXMOX_TEST_VMID_MAX | int + 1) | list
+               | difference(proxmox_used) | sort | first)) }}
+
+    # A vmid passed by hand is held to the same range, so a typo cannot land
+    # on a real machine.
+    - name: Refuse a vmid outside the test range or already in use
+      ansible.builtin.assert:
+        that:
+          - vmid | int >= env.PROXMOX_TEST_VMID_MIN | int
+          - vmid | int <= env.PROXMOX_TEST_VMID_MAX | int
+          - proxmox_adopted | length > 0 or vmid | int not in proxmox_used
+        fail_msg: >-
+          vmid {{ vmid }} is outside {{ env.PROXMOX_TEST_VMID_MIN }}-{{ env.PROXMOX_TEST_VMID_MAX }}
+          or already in use
+        quiet: true
+
+    - name: Clone the base template
+      community.proxmox.proxmox_kvm:
+        node: "{{ env.PROXMOX_NODE }}"
+        clone: "{{ env.PROXMOX_TEST_TEMPLATE_VMID }}"
+        vmid: "{{ env.PROXMOX_TEST_TEMPLATE_VMID }}"
+        newid: "{{ vmid }}"
+        name: "{{ vm_name }}"
+        full: true
+        storage: "{{ env.PROXMOX_TEST_STORAGE | default(omit, true) }}"
+        timeout: 600
+        state: present
+      when: proxmox_adopted | length == 0
+
+    # The base template carries no user, no network and the smallest size that
+    # boots. A key as well as a password: cloud images ship sshd with password
+    # login off, so the password serves the console and sudo, and the key is
+    # how Ansible gets in. Applied to an adopted VM too -- it is idempotent,
+    # and cloud-init picks a changed config up at the next boot.
+    - name: Set the size, cloud-init user, key and network
+      community.proxmox.proxmox_kvm:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        cores: "{{ env.PROXMOX_TEST_CORES | default(omit, true) }}"
+        memory: "{{ env.PROXMOX_TEST_MEMORY | default(omit, true) }}"
+        ostype: l26
+        ciuser: "{{ env.PROXMOX_TEST_USER }}"
+        cipassword: "{{ env.PROXMOX_TEST_PASSWORD }}"
+        sshkeys: "{{ lookup('file', env.PROXMOX_TEST_SSH_KEY ~ '.pub') }}"
+        nameservers: "{{ [env.PROXMOX_TEST_NAMESERVER] if env.PROXMOX_TEST_NAMESERVER | default('') | length > 0 else omit }}"
+        searchdomains: ["{{ env.PROXMOX_TEST_DOMAIN }}"]
+        ipconfig:
+          ipconfig0: "{{ 'ip=' ~ ip ~ ',gw=' ~ env.PROXMOX_TEST_GATEWAY if ip | length > 0 else 'ip=dhcp' }}"
+        update: true
+      register: proxmox_cloudinit
+
+    - name: Read the disk size
+      community.proxmox.proxmox_vm_info:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        config: current
+      register: proxmox_config
+
+    # Grown, never shrunk: the API refuses a shrink, so an adopted VM already
+    # at size is left alone. cloud-init grows the root filesystem at boot.
+    - name: Grow the disk
+      community.proxmox.proxmox_disk:
+        vmid: "{{ vmid }}"
+        disk: scsi0
+        size: "{{ env.PROXMOX_TEST_DISK }}"
+        state: resized
+      when:
+        - env.PROXMOX_TEST_DISK | default('') | length > 0
+        - proxmox_config.proxmox_vms[0].config.scsi0 is not search('size=' ~ env.PROXMOX_TEST_DISK ~ '(,|$)')
+      register: proxmox_disk
+
+    # A changed cloud-init config applies only at boot, so a running adopted VM
+    # is bounced. A fresh clone is already stopped and this is a no-op.
+    - name: Stop the VM so a cloud-init change applies at boot
+      community.proxmox.proxmox_kvm:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        state: stopped
+        force: true
+        timeout: 300
+      when: proxmox_cloudinit is changed or proxmox_disk is changed
+
+    - name: Start the VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        state: started
+
+    # Gated on sshd answering. The timeout is a backstop for a VM that never
+    # came up, not a timer to race.
+    - name: Wait for SSH
+      ansible.builtin.wait_for:
+        host: "{{ vm_host }}"
+        port: 22
+        timeout: 600
+
+    - name: Register the VM for the upgrade play
+      ansible.builtin.add_host:
+        name: "{{ vm_host }}"
+        groups: new_vm
+        ansible_user: "{{ env.PROXMOX_TEST_USER }}"
+        ansible_ssh_private_key_file: "{{ env.PROXMOX_TEST_SSH_KEY }}"
+        ansible_become_password: "{{ env.PROXMOX_TEST_PASSWORD }}"
+        # A fresh clone has a fresh host key every time. IdentitiesOnly: the
+        # client would otherwise offer every agent key first and exhaust
+        # sshd's MaxAuthTries before reaching this one.
+        ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes
+
+- name: Bring the base image current
+  hosts: new_vm
+  become: true
+  gather_facts: true
+  tasks:
+    # sshd answers before cloud-init has finished its own package work on the
+    # first boot, and the two would fight over the dpkg lock. This blocks on
+    # cloud-init's own completion signal. rc 2 is "done with recoverable
+    # errors", which a fresh image reports for warnings that do not matter here.
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: cloud-init status --wait
+      register: proxmox_cloud_init
+      changed_when: false
+      failed_when: proxmox_cloud_init.rc not in [0, 2]
+
+    - name: Upgrade every package (Debian family)
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+      when: ansible_facts['os_family'] == 'Debian'
+
+    # The whole point of this task is "everything to latest", which is the one
+    # case the package-latest rule exists to question.
+    - name: Upgrade every package (RedHat family)  # noqa: package-latest
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      when: ansible_facts['os_family'] == 'RedHat'
+
+- name: Stop and snapshot the clean state
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  # Play vars do not cross plays; -e still overrides both.
+  vars:
+    snapshot: clean
+  module_defaults:
+    community.proxmox.proxmox_kvm: *api
+    community.proxmox.proxmox_snap: *api
+  tasks:
+    # Stopped first. A snapshot of a running VM without vmstate is a crash
+    # image, and every rollback to it is then a hard reset.
+    - name: Stop the VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        state: stopped
+        force: true
+        timeout: 300
+
+    - name: Snapshot the clean state
+      community.proxmox.proxmox_snap:
+        vmid: "{{ vmid }}"
+        snapname: "{{ snapshot }}"
+        vmstate: false
+        state: present
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ vm_name }} is vmid {{ vmid }}, stopped, snapshot '{{ snapshot }}'.
+          Reset it with: ansible-playbook tests/proxmox/reset.yml -e vmid={{ vmid }}
