@@ -54,7 +54,7 @@ docker_fedora_supported_releases:
 # NodeSource publishes a repo PER MAJOR (node_24.x, node_22.x) and both provide
 # the package `nodejs`, so a box can hold exactly one system-wide major. That is
 # the n slot; fnm covers n-1 per user. Majors come from the SSoT -- see
-# hyperi_core_versions in inventories/localhost/group_vars/all.yml.
+# hyperi_core_versions in playbooks/group_vars/all.yml.
 #
 # The deb and rpm repos are signed by DIFFERENT keys, so both URLs are carried.
 node_major: "{{ hyperi_core_versions.node_major }}"
