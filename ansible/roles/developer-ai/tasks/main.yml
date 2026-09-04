@@ -1,0 +1,84 @@
+---
+# developer-ai -- opt-in AI coding-agent tooling.
+#
+# CLAUDE-FIRST BY DESIGN. Claude Code stays the driver; Codex is installed as
+# the adversarial reviewer and second opinion, reached from inside Claude Code
+# through OpenAI's own plugin. Nothing in this role makes Codex a primary agent
+# and nothing here installs Claude Code -- that is roles/soe/tasks/claude.yml,
+# because the same file carries HyperI managed settings.
+#
+# THE FOUR-LEVEL SELECTION MODEL (docs/install-matrix.md) applies as usual:
+#
+#   role   --tags developer-ai   everything below
+#   group  --tags ai             the same set, by theme
+#   tool   --tags codex          just the Codex CLI
+#          --tags codex-plugin   just the plugin (needs claude, codex, node)
+#
+# `ai` deliberately does NOT extend to the Claude Code install in `soe`. Adding
+# it there would let `--tags ai` pull HyperI org policy -- managed settings,
+# and through soe's dependencies the VPN clients and telemetry-disable -- onto
+# a machine that asked for AI tooling. The plugin's gate names the `claude` tag
+# instead, which installs Claude Code and nothing else.
+#
+# EVERY TOOL HERE IS PER USER. Claude Code, Codex and the plugin all live under
+# the TARGET user's home, so `install.sh`'s once-per-user loop is what makes a
+# multi-user box come out right, and every task below runs under become_user
+# rather than as the connecting account.
+#
+# A Headroom (headroomlabs-ai/headroom) context-compression proxy was built here
+# and REMOVED before it shipped. It works by pointing ANTHROPIC_BASE_URL at a
+# local proxy, and Claude Code gates capabilities on api.anthropic.com: behind
+# any custom base URL it stops sending the context-1m beta header and accounts
+# against 200k (headroom #1158), disables on-demand tool loading (#746), and
+# disables Remote Control outright (#1779, open, quoting Claude Code's own
+# "Remote Control is only available when using Claude via api.anthropic.com").
+# Trading a 1M window for token compression is a losing trade. Do not re-add it
+# without checking whether that gating has changed.
+
+# Tagged with every tag in the role for the same reason vpn-clients tags its
+# include_vars: without it this task carries only the role's own
+# ['developer-ai', 'never'], so `--tags ai` or `--tags codex` skips it while
+# codex.yml still runs and references homebrew_cask_env. The cask task then
+# fails on an undefined variable, the rescue turns that into a warning, and the
+# run reports success having never installed Codex on any Mac. `--tags
+# developer-ai` works, which is what would get tested.
+- name: Load macOS variables
+  ansible.builtin.include_vars:
+    file: macos.yml
+    apply:
+      tags: ['developer-ai', 'ai', 'codex', 'codex-plugin', 'verify']
+  tags: ['developer-ai', 'ai', 'codex', 'codex-plugin', 'verify']
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# Tagged with every tag in the role, not `always`: `always` loses to the
+# `never` gate this role carries in playbooks/main.yml, and an explicit list
+# cannot silently stop matching the way a special tag can.
+- name: Probe the AI agent dependencies
+  ansible.builtin.include_tasks:
+    file: init.yml
+    apply:
+      tags: ['developer-ai', 'ai', 'codex', 'codex-plugin', 'verify']
+  tags: ['developer-ai', 'ai', 'codex', 'codex-plugin', 'verify']
+
+- name: Install the Codex CLI
+  ansible.builtin.include_tasks:
+    file: codex.yml
+    apply:
+      tags: ['developer-ai', 'ai', 'codex']
+  tags: ['developer-ai', 'ai', 'codex']
+
+# After codex.yml, so a single run that installs both satisfies the plugin's
+# dependency instead of warning about the thing it just installed.
+- name: Install the Codex plugin for Claude Code
+  ansible.builtin.include_tasks:
+    file: codex_plugin_cc.yml
+    apply:
+      tags: ['developer-ai', 'ai', 'codex-plugin']
+  tags: ['developer-ai', 'ai', 'codex-plugin']
+
+- name: Verify the AI agent tooling
+  ansible.builtin.include_tasks:
+    file: verify.yml
+    apply:
+      tags: ['developer-ai', 'ai', 'verify']
+  tags: ['developer-ai', 'ai', 'verify']

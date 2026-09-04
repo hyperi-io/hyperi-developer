@@ -1,12 +1,19 @@
 ---
-# Claude Code CLI installation and managed settings
+# Claude Code CLI installation. THE BINARY ONLY.
 #
 # Linux: Native binary download with SHA256 verification from manifest
 # macOS: Homebrew cask
 #
 # Binary location: ~/.local/bin/claude (installed by 'claude install')
-# Settings location: /etc/claude-code/managed-settings.json (Linux)
-#                   /Library/Application Support/ClaudeCode/managed-settings.json (macOS)
+#
+# The HyperI managed settings moved to claude_policy.yml, and the split is the
+# point. Both used to live here under the same `claude` tag, so `--tags claude`
+# on anyone's machine installed the CLI and also wrote HyperI org policy into
+# /etc/claude-code/ -- a system-wide, unoverridable settings file, from a tag
+# whose advertised job is "install Claude Code". Nothing outside `soe` should
+# carry org policy, and this file is reachable from outside soe by design:
+# developer-ai's Codex plugin hard-requires Claude Code, and telling someone to
+# run `--tags claude` has to mean only that.
 
 # ============================================================================
 # Distribution URL
@@ -151,47 +158,5 @@
   environment: "{{ homebrew_cask_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
-# ============================================================================
-# System-wide Managed Settings
-# ============================================================================
-# These settings apply to all users and cannot be overridden.
-# - Disables telemetry, error reporting and the feedback prompts
-# - Disables Co-Authored-By and "Generated with Claude Code" attribution
-
-- name: Create Claude Code managed settings directory (Linux)
-  ansible.builtin.file:
-    path: /etc/claude-code
-    state: directory
-    mode: '0755'
-    owner: root
-    group: root
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Create Claude Code managed settings directory (macOS)
-  ansible.builtin.file:
-    path: /Library/Application Support/ClaudeCode
-    state: directory
-    mode: '0755'
-    owner: root
-    group: wheel
-  become: true
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-- name: Install Claude Code managed settings (Linux)
-  ansible.builtin.copy:
-    src: managed-settings.json
-    dest: /etc/claude-code/managed-settings.json
-    mode: '0644'
-    owner: root
-    group: root
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Install Claude Code managed settings (macOS)
-  ansible.builtin.copy:
-    src: managed-settings.json
-    dest: /Library/Application Support/ClaudeCode/managed-settings.json
-    mode: '0644'
-    owner: root
-    group: wheel
-  become: true
-  when: ansible_facts['distribution'] == 'MacOSX'
+# The system-wide managed settings moved to claude_policy.yml, under a tag that
+# only `soe` selects. They are org policy, and this file is not.

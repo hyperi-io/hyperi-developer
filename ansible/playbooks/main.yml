@@ -302,6 +302,18 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['soe-gui', 'never']
 
+    # AI coding-agent tooling (opt-in): the Codex CLI as a second opinion
+    # alongside Claude Code, plus OpenAI's Codex plugin FOR Claude Code.
+    #
+    # AFTER soe ON PURPOSE. Claude Code is a hard dependency of the Codex
+    # plugin and is installed by soe/tasks/claude.yml, so a single
+    # `--tags claude,codex-plugin` run has to reach that task first. Listed
+    # earlier, the plugin's dependency probe would run before Claude Code
+    # existed and skip the plugin the same run that installed its dependency.
+    - role: developer-ai
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['developer-ai', 'never']
+
     # macOS modern bash (opt-in, macOS-only).
     - role: bash-modern
       tags: ['bash-modern', 'never']

@@ -1,0 +1,54 @@
+---
+# Claude Code system-wide managed settings -- HyperI ORG POLICY.
+#
+# Applies to every user on the box and cannot be overridden by them:
+# - Disables telemetry, error reporting and the feedback prompts
+# - Disables Co-Authored-By and "Generated with Claude Code" attribution
+#
+# Split out of claude.yml so that the two carry DIFFERENT tags. The binary
+# install answers to `--tags claude`, which the developer-ai role's plugin gate
+# tells people to run; this file answers only to `--tags soe`. Together in one
+# file they shared the `claude` tag, so installing the CLI on any machine also
+# wrote an unoverridable HyperI settings file into /etc -- policy arriving
+# through a tag that says nothing about policy.
+#
+# Settings location: /etc/claude-code/managed-settings.json (Linux)
+#                    /Library/Application Support/ClaudeCode/managed-settings.json (macOS)
+
+- name: Create Claude Code managed settings directory (Linux)
+  ansible.builtin.file:
+    path: /etc/claude-code
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Create Claude Code managed settings directory (macOS)
+  ansible.builtin.file:
+    path: /Library/Application Support/ClaudeCode
+    state: directory
+    mode: '0755'
+    owner: root
+    group: wheel
+  become: true
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Install Claude Code managed settings (Linux)
+  ansible.builtin.copy:
+    src: managed-settings.json
+    dest: /etc/claude-code/managed-settings.json
+    mode: '0644'
+    owner: root
+    group: root
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Install Claude Code managed settings (macOS)
+  ansible.builtin.copy:
+    src: managed-settings.json
+    dest: /Library/Application Support/ClaudeCode/managed-settings.json
+    mode: '0644'
+    owner: root
+    group: wheel
+  become: true
+  when: ansible_facts['distribution'] == 'MacOSX'

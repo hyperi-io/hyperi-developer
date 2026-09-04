@@ -12,10 +12,13 @@
 #   * go tools         (gopls, govulncheck)              — user
 #   * npm globals      (maid, semantic-release, pnpm)    — user
 #   * Claude Code CLI  (self-installed under ~/.local)   — user
+#   * Codex plugin     (claude plugin update)            - user
 #
 # Tier 3 static binaries (kind, argocd, kubeconform, ...) come from Homebrew
 # formulae on macOS, so the Homebrew section already refreshes them -- the
-# GitHub re-fetch is a Linux-only concern.
+# GitHub re-fetch is a Linux-only concern. The Codex CLI is the `codex` cask,
+# so it rides that same section; only its Claude Code plugin, which brew knows
+# nothing about, needs one of its own.
 #
 # Each section is independent and self-guarding: a tool that isn't installed is
 # skipped (printed, not fatal), and a failing step is recorded and reported in
@@ -162,6 +165,7 @@ if (( ! ASSUME_YES )); then
     have go     && printf '  - go-installed tools (gopls, govulncheck)\n'
     have npm    && printf '  - npm global tools + pnpm\n'
     have claude && printf '  - Claude Code CLI\n'
+    have claude && printf '  - the Codex plugin for Claude Code, if installed\n'
     [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
     read -r "confirm?Proceed? [y/N] "
@@ -286,6 +290,31 @@ if have claude; then
     run "claude update" claude update
 else
     skip "claude not found in PATH"
+fi
+
+# --- Codex plugin for Claude Code ------------------------------------------
+# The codex binary is the `codex` cask, so the Homebrew section above already
+# moved it; a marketplace plugin is outside brew and has its own update verb,
+# which `claude update` does not cover. Gated on the plugin actually being
+# installed as well as on claude, so a Mac that never opted into the AI tooling
+# does not take an update attempt for a plugin it has never had. --json because
+# the human-readable listing is not a contract; the id is, and it is
+# plugin@marketplace.
+#
+# --yes because stdin is not a TTY under Ansible or the GUI app, which is the
+# documented trigger for the confirmation prompt.
+#
+# A string test rather than `| grep -q`: grep exits on the first match and
+# closes the pipe, the producer takes SIGPIPE, and under `set -o pipefail` the
+# pipeline then reports failure on a MATCH. That would skip the update on
+# exactly the Macs that have the plugin, intermittently, by output size.
+section "Codex plugin (Claude Code)"
+if ! have claude; then
+    skip "claude not found in PATH"
+elif [[ "$(claude plugin list --json 2>/dev/null)" == *codex@openai-codex* ]]; then
+    run "claude plugin update codex" claude plugin update codex@openai-codex --yes
+else
+    skip "the Codex plugin is not installed"
 fi
 
 # gcloud is intentionally NOT updated here: it is the brew cask 'gcloud-cli',

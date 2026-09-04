@@ -126,6 +126,8 @@ NOTES:
     random password, shown once, and never overwrites credentials already set
   - Use --tags-exclude to skip specific tags within a chosen group
   - Use --list-apps to see every per-app sub-tag for granular installs
+  - The AI agent tools (--tags developer-ai) install but do not sign in: codex
+    login is interactive and per-person, so the deploy leaves it to you
   - User-level settings (shell config, ~/.cargo, ~/.local, dconf, the container
     stacks) are applied for every account a person works in. Skipped by default:
     root, the system ranges, and the cloud image's own account (ubuntu,
@@ -199,7 +201,9 @@ HyperI SOE (soe, soe-gui) - org policy, includes everything above:
     auto-updates      unattended-upgrades / dnf-automatic
     update-timer      Weekly hyperi-update systemd timer
     bash-history      bash history auto-commit
-    claude            Claude Code CLI
+    claude            Claude Code CLI - the binary only, no org policy, so
+                      anyone can install it (developer-ai's plugin needs it)
+    claude-policy     HyperI managed settings for Claude Code (soe only)
     forgejo/codeberg  tea (Forgejo/Gitea CLI)
     colima            macOS container daemon + Apple container (macOS only)
     arcane            Container management UI, localhost-only (OPT-IN:
@@ -215,6 +219,10 @@ HyperI SOE (soe, soe-gui) - org policy, includes everything above:
     nemo              Nemo file manager (replaces Nautilus)
     desktop-cleanup   Hide duplicate apps, dedupe Flatpak/apt
     gnome-extensions  GNOME extensions (winlike / maclike)
+
+AI coding agents (developer-ai) - opt-in; ai is the group tag for both:
+    codex             OpenAI Codex CLI - the second opinion, not the driver
+    codex-plugin      Codex plugin FOR Claude Code; needs claude + codex + node
 
 Groups / client bundles (own tag; soe pulls them by default):
     vpn-clients       OpenVPN 3 + WireGuard + Tunnelblick (macOS)
@@ -642,7 +650,32 @@ for target_user in $TARGET_USERS; do
     fi
 done
 
-print_success "Hyperi Developer Environment installation complete!"
+# A failed optional component records a warning and the run carries on, so
+# ansible-playbook exits 0 (playbooks/main.yml, "WHAT DID NOT INSTALL"). That is
+# only acceptable while the warning is unmissable, which an unconditional
+# "complete!" is not.
+#
+# The count comes from the applied-state stamp the playbook writes last. Check
+# mode writes no stamp, so it says nothing rather than guessing.
+deploy_warning_count=""
+if [[ -z "$ANSIBLE_CHECK" && -r /var/lib/hyperi-developer/applied.json ]]; then
+    deploy_warning_count="$(python3 -c 'import json,sys; print(json.load(open("/var/lib/hyperi-developer/applied.json")).get("warnings", ""))' 2>/dev/null || true)"
+fi
+
+if [[ -n "$ANSIBLE_CHECK" ]]; then
+    print_success "Dry run complete. NOTHING was changed on this machine."
+    print_info "Re-run without --check to apply."
+    exit 0
+fi
+
+if [[ -n "$deploy_warning_count" && "$deploy_warning_count" != "0" ]]; then
+    print_warning "Installation finished with $deploy_warning_count component(s) NOT installed."
+    print_warning "Scroll up to 'Report what did not install' for the list and the reason."
+    print_warning "The rest of the environment is set up and usable."
+else
+    print_success "Hyperi Developer Environment installation complete!"
+fi
+
 print_info ""
 print_info "Next steps:"
 print_info "1. Log out and back in for group memberships to take effect (Docker)"

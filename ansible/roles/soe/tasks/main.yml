@@ -50,12 +50,24 @@
       tags: ['soe', 'bash-history']
   tags: ['soe', 'bash-history']
 
+# The BINARY carries the `claude` tag, so anyone can install Claude Code on its
+# own -- developer-ai's Codex plugin hard-requires it and its warning names this
+# tag. The POLICY below deliberately does not carry it: org settings belong to
+# soe, and a tag that says "install Claude Code" must not also write an
+# unoverridable settings file into /etc on a machine that is not ours.
 - name: Install Claude Code CLI
   ansible.builtin.include_tasks:
     file: claude.yml
     apply:
       tags: ['soe', 'claude']
   tags: ['soe', 'claude']
+
+- name: Apply the Claude Code managed settings
+  ansible.builtin.include_tasks:
+    file: claude_policy.yml
+    apply:
+      tags: ['soe', 'claude-policy']
+  tags: ['soe', 'claude-policy']
 
 - name: Install tea (Forgejo/Gitea CLI)
   ansible.builtin.include_tasks:
