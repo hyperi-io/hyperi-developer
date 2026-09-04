@@ -2,18 +2,18 @@
 [Unit]
 Description=Governed Rust builds (hyperi-developer)
 
-# systemd reads `-` as a hierarchy separator, so this unit lands under an
-# auto-created `rust.slice` that nothing manages and nothing limits. Harmless,
-# because the limits below bind on this slice -- but limits set on "rust.slice"
-# expecting them to reach builds would land on an empty wrapper.
+# No dash in the name, on purpose. systemd reads `-` as a hierarchy separator:
+# a `rust-build.slice` sits alone under an auto-created `rust.slice`, and since
+# CPUWeight is relative to SIBLINGS it is that wrapper's default weight of 100,
+# not the 30 below, that faces app.slice. Dash-free, this slice is a direct
+# child of the user manager and a true sibling of the desktop's slices.
 [Slice]
 # Percentages resolve against this host's own RAM and swap, so one unit fits
 # every machine. Both capture prongs land here: cargo trees via the
 # hyperi-rust-govern scope, sccache-hosted compiles via Slice= on
-# hyperi-sccache.service.
-#
-# MemoryHigh is also what the shim divides to size its build semaphore, so the
-# two are derived from one number and cannot drift.
+# hyperi-sccache.service. This is the ONLY memory bound on a build: nothing
+# queues builds or caps their job count, so a build over budget is throttled
+# here and, at MemoryMax, killed here -- the build, never the host.
 #
 # MemorySwapMax only means anything where swap exists. On a swapless host
 # MemoryHigh has nothing but page cache to reclaim, so it stalls a build
@@ -22,8 +22,11 @@ MemoryHigh={{ rust_governor_memory_high_pct }}%
 MemoryMax={{ rust_governor_memory_max_pct }}%
 MemorySwapMax={{ rust_governor_swap_max_pct }}%
 # Yields to the desktop under contention; no effect while the machine is idle.
+# This, not nice, is what makes a build defer on Linux: cgroup v2 splits CPU
+# between sibling cgroups by weight, and nice only orders threads inside their
+# own cgroup. The shim's nice 19 covers hosts where the cpu controller is not
+# delegated and this line is silently ignored.
 # No CPU quota anywhere: a quota wastes cores whenever a session sits idle,
 # whereas weight gives proportional share under contention and the whole box
-# when nothing is competing. Parallelism is bounded by CARGO_BUILD_JOBS, which
-# the shim scales to the number of neighbours the semaphore admits.
+# when nothing is competing. Parallelism is cargo's own default, every core.
 CPUWeight={{ rust_governor_cpu_weight }}

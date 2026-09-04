@@ -1,7 +1,8 @@
 # Many build sessions on one host
 
-Rust builds are bounded by a memory semaphore, the pooled build artefacts by a
-ceiling derived from the disk, and the compiler caches by fixed byte ceilings.
+Rust builds are bounded by a memory budget on a systemd slice, the pooled build
+artefacts by a ceiling derived from the disk, and the compiler caches by fixed
+byte ceilings.
 Nothing beyond those three is bounded here at all. This is what each means, and
 where the edges are.
 
@@ -25,41 +26,41 @@ answer.
 single `rustc` however high `-j` goes, so the job count sets how many *crates*
 build at once while the largest crate sets a floor no job setting goes under. On
 a 32-core workstation with 246 GB RAM the peak resident size of one `rustc` was
-11.6 GB. A host that admits only one build at a time arrives at that number by
-fitting one such process, not by a policy about job counts.
+11.6 GB. That is why the bound is a memory budget on the whole build tree and
+not a policy about job counts: a job count cannot bound what one process costs.
 
 Someone arriving cold with a new project gets the whole mechanism with no opt-in,
 which is why it is a shim on PATH rather than a setting to remember.
 
-## The governor admits N builds at once, sized from the host's own memory
+## The governor bounds memory and defers CPU, and rations neither
 
 `hyperi-rust-govern` is installed as `~/.local/bin/cargo`, ahead of the real
-cargo, so a build holds one of N slots for its lifetime. On Linux with a live
-user manager it also runs in `rust-build.slice`, whose memory and CPU limits are
-the other half of the model. Where there is no user bus the shim falls back to a
-QoS clamp on macOS or to `nice`, leaving the semaphore and the job cap as the
-bounds. Setting `rust_governor_slots: 0` disables the semaphore entirely.
+cargo. Every build runs at nice 19, and on Linux with a live user manager it also
+runs in `rustbuild.slice`, whose memory budget is a percentage of the host's own
+RAM and whose CPU weight sits below the desktop's. Where there is no live user
+manager the shim falls back to `nice` alone, with no memory bound behind it.
 
 ```mermaid
 flowchart TB
-    RAM[cgroup limit or MemTotal] -->|scaled by the MemoryHigh percentage| Budget[Memory budget]
-    Cores[Cores on the host] -->|drops the CPU reserve| Pool[Usable cores]
-    Budget -->|divides by the per-build allowance| N[Slot count N]
-    Pool -->|caps N at half the pool| N
-    N -->|divides the pool into| Jobs[CARGO_BUILD_JOBS]
-    N -->|creates| Slots[N slot files]
-    Jobs -->|sets -j for| Scope[Governed build]
-    Slots -->|admits one build to| Scope
+    Cargo[cargo build] --> Shim[hyperi-rust-govern]
+    Shim -->|Linux with a user bus| Scope[systemd scope in rustbuild.slice<br>nice 19]
+    Shim -->|macOS, container, no bus| Nice[nice 19 only]
+    Scope --> Mem[MemoryHigh throttles<br>MemoryMax kills the build]
+    Scope --> Weight[CPUWeight below the desktop]
+    Sccache[hyperi-sccache.service<br>Slice + Nice=19] --> Mem
+    Sccache --> Weight
 ```
 
-Both numbers are computed by the shim at run time, reproducing the arithmetic
-systemd does for `MemoryHigh=<pct>%` against the same total, so the slot count
-and the memory ceiling cannot drift and a resized host needs no re-converge. The
-check that the model reproduces behaviour known to work is that `auto` computes
-N=1 on a 32 GB host - the global mutex this was before it was a semaphore.
+Nothing withholds cores and nothing sets a job count - cargo's own default is
+already every core. A reserve or a computed `-j` is paid on an idle machine as
+well as a busy one, and buys nothing that yielding does not buy when it is
+needed. The semaphore this replaced did both, built at `-j3` on a 32-core box,
+and was shared state two sessions could disagree about. With nothing computed
+there is nothing to keep in sync.
 
-Slot mechanics, what happens at saturation, and why no CPU quota is set anywhere
-are in [rust-build-governor.md](rust-build-governor.md).
+Which instrument makes a build yield on which host, and why `CPUWeight` rather
+than nice is the Linux one, are in
+[rust-build-governor.md](rust-build-governor.md).
 
 ## The toolchain location is read from the host, never assumed
 
@@ -179,12 +180,11 @@ to compiling. Which hosts want it on is in
   of PID 1 and container processes are created under its tree: its levers are
   `cgroup-parent` in `daemon.json`, the per-container flag of the same name, and
   compose's `cgroup_parent`.
-- **A build that starts alone keeps the crowded job count.** `CARGO_BUILD_JOBS`
-  is fixed when the process starts, so a lone build on an idle host still runs at
-  the shared count. Pass your own value for a known-solo run.
-- **`RUST_TEST_THREADS` is unbounded.** The shim caps `CARGO_BUILD_JOBS`, but
-  libtest defaults its harness parallelism to the visible CPU count, so a
-  governed `cargo test` still spawns that many test threads.
-- **The per-build allowance comes from one workspace.** 14 GB is an 11.6 GB peak
-  plus headroom, measured once. A codebase whose memory scales with the job count
-  rather than with one huge crate wants a different number.
+- **Builds are not queued.** Several started at once all run at every core and
+  share the slice's memory budget, so on a small-RAM host one may be killed at
+  `MemoryMax` rather than wait its turn: a failed build, retried, not a failed
+  host.
+- **Nothing bounds memory where there is no user bus.** A container or a
+  degraded session gets nice 19 and nothing else.
+- **Disk priority is untouched.** `ionice` binds only under BFQ, and NVMe hosts
+  run `none` or `mq-deadline`, where it does nothing.

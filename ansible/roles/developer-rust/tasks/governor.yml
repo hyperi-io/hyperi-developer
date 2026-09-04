@@ -1,29 +1,41 @@
 ---
-# The rust build governor: at most N builds at a time per user, N derived from
-# the slice's memory budget, the whole tree in the rust-build.slice budget,
-# priority below the desktop. Opt-OUT -- `rust_governor_enabled: false`
-# removes everything it deployed.
+# The rust build governor: builds run at nice 19 inside rustbuild.slice, which
+# bounds their memory and puts them below the desktop for CPU. Opt-OUT --
+# `rust_governor_enabled: false` removes everything it deployed.
 #
 # The shim shadows ~/.cargo/bin/cargo from ~/.local/bin, which the SOE PATH
 # puts first. sccache is captured separately: compiles execute inside the
-# sccache SERVER, so hyperi-sccache.service carries Slice=rust-build.slice
-# (see hyperi-sccache.service.j2), or the budget would miss most of the work.
+# sccache SERVER, so hyperi-sccache.service carries Slice=rustbuild.slice and
+# its own Nice (see hyperi-sccache.service.j2), or the budget and the priority
+# would miss most of the work.
 
-# rust_governor_serialize was a boolean when the governor was a global mutex.
-# It is now a count, under a name that says so. Failing here rather than
-# ignoring it is deliberate: a host that still sets `false` believes it has
-# disabled serialisation, and silently applying `auto` instead would hand it
-# eight concurrent builds. A setting that is quietly ignored is the same defect
-# class as a config written to a directory the tool never reads.
-- name: Fail on the retired rust_governor_serialize variable
+# Retired settings fail the converge rather than being ignored. A host that sets
+# rust_governor_slots: 1 believes it has one build at a time, and silently
+# dropping the setting would hand it as many as it starts.
+- name: Fail on retired build-governor variables
   ansible.builtin.fail:
     msg: >-
-      rust_governor_serialize has been replaced by rust_governor_slots, which
-      takes a COUNT rather than a boolean. `true` becomes
-      rust_governor_slots: 1 (one build at a time, the old behaviour),
-      `false` becomes rust_governor_slots: 0, and rust_governor_slots: auto
-      derives the count from this host's RAM.
-  when: rust_governor_serialize is defined
+      {{ developer_rust_retired_governor_vars | join(', ') }}: retired. Builds
+      are no longer rationed -- there is no semaphore, no CPU reserve and no
+      job count, so nothing reads these. Memory is bounded by rustbuild.slice
+      (rust_governor_memory_high_pct / _memory_max_pct) and CPU is deferred by
+      nice 19 plus rust_governor_cpu_weight. Delete the setting.
+  vars:
+    developer_rust_retired_governor_vars: "{{ lookup('ansible.builtin.varnames',
+      '^rust_governor_(serialize|slots|cpu_reserve_cores|build_allowance_gb|lock_wait_seconds|macos_qos)$',
+      wantlist=True) }}"
+  when: developer_rust_retired_governor_vars | length > 0
+
+# The retired semaphore kept its slot files here; nothing reads them now.
+- name: Remove the retired build-slot directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ user_home }}/.cache/hyperi/hyperi-rust-govern-{{ developer_rust_uid }}.slots"
+    - "/run/user/{{ developer_rust_uid }}/hyperi-rust-govern-{{ developer_rust_uid }}.slots"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user }}"
 
 - name: Deploy the rust build governor
   when: rust_governor_enabled | bool
@@ -103,15 +115,26 @@
       become_user: "{{ actual_user }}"
       when: ansible_facts['system'] == 'Linux'
 
-    - name: Install the rust-build slice
+    - name: Install the rustbuild slice
       ansible.builtin.template:
-        src: rust-build.slice.j2
-        dest: "{{ user_home }}/.config/systemd/user/rust-build.slice"
+        src: rustbuild.slice.j2
+        dest: "{{ user_home }}/.config/systemd/user/rustbuild.slice"
         owner: "{{ actual_user }}"
         mode: '0644'
       become: true
       become_user: "{{ actual_user }}"
       register: developer_rust_governor_slice
+      when: ansible_facts['system'] == 'Linux'
+
+    # The dash put the old unit under an auto-created rust.slice, where its
+    # CPUWeight faced no sibling -- see rustbuild.slice.j2.
+    - name: Remove the dash-named slice this replaced
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/systemd/user/rust-build.slice"
+        state: absent
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_rust_governor_old_slice
       when: ansible_facts['system'] == 'Linux'
 
     - name: Reload the user manager so the slice limits are live
@@ -124,7 +147,7 @@
       when:
         - ansible_facts['system'] == 'Linux'
         - not ansible_check_mode
-        - developer_rust_governor_slice is changed
+        - developer_rust_governor_slice is changed or developer_rust_governor_old_slice is changed
       failed_when: false
 
     # MemoryHigh throttles by reclaim, and with no swap the only reclaimable
@@ -206,10 +229,13 @@
       failed_when: false
       when: ansible_facts['distribution'] == 'MacOSX'
 
-    - name: Remove the rust-build slice
+    - name: Remove the rustbuild slice and the dash-named one it replaced
       ansible.builtin.file:
-        path: "{{ user_home }}/.config/systemd/user/rust-build.slice"
+        path: "{{ user_home }}/.config/systemd/user/{{ item }}"
         state: absent
+      loop:
+        - rustbuild.slice
+        - rust-build.slice
       become: true
       become_user: "{{ actual_user }}"
       register: developer_rust_governor_slice_removed

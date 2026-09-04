@@ -135,14 +135,15 @@ developer installed is their call.
 `build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
 says so and leaves the per-project layout alone, so the default stays safe.
 
-## Bounding concurrent builds
+## The build governor
 
 `hyperi-rust-govern` is installed as `~/.local/bin/cargo`, ahead of the real
 cargo on PATH, so a developer or an agent who knows none of this runs
-`cargo build` and is governed: it holds one of N slots sized from the memory
-budget, and on Linux with a live user manager also lands in `rust-build.slice`.
-How N is chosen, what happens at saturation, and why it needs the `zram_swap`
-role are in [docs/rust-build-governor.md](../../../docs/rust-build-governor.md).
+`cargo build` and is governed: nice 19, and on Linux with a live user manager
+`rustbuild.slice`, which bounds memory and sits below the desktop for CPU.
+Which instrument yields on which host, and why it needs the `zram_swap` role,
+are in
+[docs/rust-build-governor.md](../../../docs/rust-build-governor.md).
 The host-wide picture is
 [docs/concurrent-dev-cache.md](../../../docs/concurrent-dev-cache.md).
 

@@ -1,68 +1,127 @@
-# Bounding concurrent Rust builds
+# The Rust build governor
 
 `hyperi-rust-govern` is installed by the `developer-rust` role as
 `~/.local/bin/cargo`, ahead of the real cargo on PATH, so a developer or an
-agent who knows none of this runs `cargo build` and is governed. It holds one of
-N build slots for the build's lifetime, and on Linux with a live user manager it
-also places the build in `rust-build.slice`.
+agent who knows none of this runs `cargo build` and is governed. Every build
+runs at nice 19, and on Linux with a live user manager it also runs inside
+`rustbuild.slice`. Only `cargo` is shimmed: a bare `rustc`, or anything run
+through `rustup run`, is ungoverned unless wrapped in `hyperi-rust-govern`.
 
-## How N is chosen
+## Memory is bounded, CPU is deferred
 
-**N is a memory semaphore, not a queue length.** Memory is spent per *crate*,
-not per job: one enormous crate compiles as a single `rustc` however high `-j`
-goes, so what is worth bounding is how many builds are resident at once.
+Two instruments, answering two different questions.
 
-    N    = min(MemoryHigh / per-build allowance, cores-minus-reserve / 2)
-    jobs = cores-minus-reserve / N          (floored at 2)
+**Memory is bounded by the slice.** `MemoryHigh` (50% of the host's RAM)
+throttles a build by reclaim, `MemoryMax` (70%) kills it, and `MemorySwapMax`
+(25%) caps what it may push to swap. Percentages, so one unit fits a laptop and
+a build box, and the build dies before the host does. sccache-hosted compiles
+sit inside the same budget because `hyperi-sccache.service` carries
+`Slice=rustbuild.slice`.
 
-Both are computed by the shim at run time, from the cgroup memory limit where
-one is set and `/proc/meminfo` otherwise, reproducing the arithmetic systemd
-does for `MemoryHigh=<pct>%` against the same total. The slot count and the
-memory ceiling therefore cannot drift, and a resized VM needs no re-converge.
+**CPU is not bounded at all -- it is deferred.** Nothing withholds cores and
+nothing sets a job count: cargo's own default is already every core. A build
+takes the whole machine while nobody else wants it, and drops to about a
+quarter of it the moment the desktop does. Rationing CPU -- a reserve, a
+computed `-j` -- is paid on an idle machine as well as a busy one, and buys
+nothing that yielding does not buy at the moment it is needed. The semaphore
+this replaced did exactly that: on a 32-core box it withheld two cores and
+divided the rest between the eight builds it would admit, so every build ran
+at `-j3`.
 
-| host RAM | MemoryHigh (50%) | N | jobs each (32 cores) |
-|---|---|---|---|
-| 256 GB | 128G | 8 | 3 |
-| 128 GB | 64G | 4 | 7 |
-| 64 GB | 32G | 2 | 15 |
-| 32 GB | 16G | 1 | 30 |
+```mermaid
+flowchart LR
+    Cargo[cargo build] --> Shim[hyperi-rust-govern]
+    Shim -->|Linux with a live user manager| Scope[systemd-run --scope<br>nice 19]
+    Shim -->|macOS, container, no manager| Nice[nice 19]
+    Scope --> Slice[rustbuild.slice<br>MemoryHigh / MemoryMax<br>CPUWeight]
+    Sccache[hyperi-sccache.service<br>Nice=19] --> Slice
+```
 
-The 32 GB row is a global mutex -- what this was before it was a semaphore --
-and is the check that the model reproduces behaviour known to work.
-`rust_governor_slots: 1` pins that everywhere.
+## Which instrument makes a build yield
 
-The per-build allowance (`rust_governor_build_allowance_gb`, 14 GB) is the
-largest single `rustc` observed plus headroom, taken from one workspace. A
-codebase whose memory scales with the job count rather than with one huge crate
-wants a different number.
+| host | what defers the build | what bounds memory |
+|---|---|---|
+| Linux, cpu controller delegated to the user manager | `CPUWeight=30` on the slice, against the desktop's `app.slice` | the slice |
+| Linux, cpu controller not delegated | nice 19, against everything in the same cpu cgroup -- the desktop included | the slice |
+| Linux with no live user manager (container, stale bus socket, degraded session) | nice 19, within the build's own cpu cgroup | nothing |
+| macOS | nice 19 | nothing |
 
-The CPU reserve comes off the top *before* the remainder is divided, so the
-desktop keeps its share at every slot count. No CPU quota is set anywhere: a
-quota wastes cores whenever a session idles, while `CPUWeight` gives
-proportional share under contention and the whole box when nothing competes.
+`CPUWeight`, not nice, is the Linux instrument. In cgroup v2 the CPU split
+between sibling cgroups is decided by `cpu.weight`, and a task's nice value
+only orders threads inside its own cgroup. The slice is a direct child of the
+user manager, so its siblings are `app.slice` and `session.slice` -- the
+desktop -- and 30 against their 100 is the split under contention. The name
+has no dash on purpose: systemd reads `-` as a hierarchy separator, so a
+`rust-build.slice` would sit alone under an auto-created `rust.slice` whose
+default weight of 100 is what would actually face the desktop.
 
-## At saturation
+What the weight does not reach is another login session. An ssh login is a
+`session-N.scope` beside the whole user manager, not inside it, so a build and
+a second ssh session split the CPU evenly whatever the slice says. A weight on
+`user@UID.service` itself would change that, and that is a system unit, not
+this role's.
 
-**A build degrades, it is not released.** A build that cannot get a slot within
-`rust_governor_lock_wait_seconds` proceeds at the floor job count -- and on
-Linux with a live user manager, inside the slice under its own `MemoryMax` of
-one allowance. Waiting the full timeout
-and then building unbounded would drop the limit at exactly the moment
-contention is highest.
+nice is what remains where the weight cannot apply -- no cpu controller
+delegated, no live user manager, macOS. It orders the build against everything
+sharing the build's own cpu cgroup and reaches nothing outside it. With the cpu
+controller not delegated into the user manager, the build and the desktop's
+processes are in that same cgroup, and nice 19 is what defers one to the other.
+A desktop app in another login session is still untouched by it -- the same
+boundary that stops `CPUWeight`.
 
-**On Linux a slot is released by the kernel, not by cleanup.** It is an
-`flock` on an open file description, so a killed or OOM-killed build frees its
-slot with no reaper and no stale-lock detection. The fd is closed for the build
-itself (`9>&-`), so a daemon the build starts cannot inherit the slot. macOS
-ships no `flock(1)`, so there a slot is a directory held by an exit trap with a
-liveness check on the recorded pid: a SIGKILLed holder is reclaimed by the next
-arrival rather than by the kernel.
+## What it does not do
 
-A build that starts alone keeps the crowded job count: `CARGO_BUILD_JOBS` is
-fixed when the process starts. For a known-solo run, pass `CARGO_BUILD_JOBS`
-yourself -- the shim respects a caller's value over its own.
+**It does not queue builds.** Several builds started at once all run, at every
+core, and share the slice's memory budget. On a small-RAM host that can mean one
+is killed at `MemoryMax` instead of waiting its turn -- a failed build, retried,
+rather than a failed host. Nothing queues them, and nothing ever did so
+reliably: the slot count was shared state two sessions could compute
+differently.
+
+**It does not touch disk priority.** `ionice` was considered and dropped: the
+idle class only binds under BFQ, and NVMe hosts run `none` or `mq-deadline`,
+where it does nothing.
+
+**It does not cap test threads.** libtest defaults `RUST_TEST_THREADS` to the
+visible CPU count, which is now also what the build itself uses.
+
+## Bypass and tuning
+
+    HYPERI_RUST_GOVERNOR=off cargo build     # bypass one invocation
+    hyperi-rust-govern <command> [args...]   # govern any other command
+
+The bypass covers cargo's own process tree. Compiles that sccache hosts run
+inside `hyperi-sccache.service`, which keeps its slice and its nice whatever
+the caller set. A service started with `cargo run` keeps the nice and the
+memory bound for its whole life, so bypass that one.
+
+`-e rust_governor_enabled=false` removes the lot -- shim, slice and config --
+rather than merely stopping it. To see what a host actually got:
+
+    systemctl --user show rustbuild.slice -p CPUWeight -p MemoryHigh -p MemoryMax
+
+The role writes `~/.config/hyperi/rust-governor.conf`, which the shim sources
+first. The value in it is written as `${VAR:-default}` on purpose, so an
+export in the shell beats the deployed file for one invocation and the shim can
+be tested against a real config. Nothing per-machine is needed: the memory
+percentages resolve against the host's own RAM, and there is no core count to
+tune.
+
+Five role variables went with the rationing: `rust_governor_slots`,
+`rust_governor_cpu_reserve_cores`, `rust_governor_build_allowance_gb`,
+`rust_governor_lock_wait_seconds` and `rust_governor_macos_qos`
+(`rust_governor_serialize` before them). A host that still sets one fails the
+converge rather than having it ignored: a host asking for one build at a time
+would otherwise silently get as many as it starts. Delete the setting.
 
 ## What it needs
+
+**Enough RAM for the biggest crate.** `MemoryMax` is 70% of the host's RAM, so
+a 16 GB laptop gives the whole slice 11.2 GB -- and one `rustc` on a large
+crate has been measured at 11.6 GB. That build is killed, and cargo reports the
+rustc process dying on signal 9 rather than an out-of-memory error. The levers
+are bypassing the governor for that one build, or building it on a box with
+more RAM.
 
 **Swap.** `MemoryHigh` throttles by reclaim, and on a swapless host the only
 reclaimable memory is page cache -- so a build past the line stalls rather than

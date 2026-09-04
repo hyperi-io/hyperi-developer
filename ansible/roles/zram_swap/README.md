@@ -23,7 +23,7 @@ It is somewhere for the throttle to push, which is why a few GB is the right
 size and a disk-backed swap file is not a substitute.
 
 This matters most on a host running `developer-rust`'s build governor, whose
-`rust-build.slice` sets `MemoryHigh` and `MemorySwapMax` as percentages of RAM.
+`rustbuild.slice` sets `MemoryHigh` and `MemorySwapMax` as percentages of RAM.
 Without swap, those limits do not degrade a build -- they wedge it.
 
 ## What it touches
