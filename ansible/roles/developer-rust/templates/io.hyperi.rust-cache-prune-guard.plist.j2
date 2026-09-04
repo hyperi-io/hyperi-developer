@@ -21,6 +21,14 @@
         <string>{{ rust_cache_prune_free_floor }}</string>
     </array>
 
+    <!-- A launchd agent inherits no shell profile, and the pruner reads
+         CARGO_HOME to find the config that names the pool. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CARGO_HOME</key>
+        <string>{{ developer_rust_cargo_home }}</string>
+    </dict>
+
     <!-- StartInterval rather than a calendar: the guard is not tied to a time
          of day, and launchd counts this from load so a sleeping laptop does
          not accrue a backlog. -->

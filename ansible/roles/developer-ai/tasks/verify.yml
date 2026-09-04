@@ -1,0 +1,66 @@
+---
+# Verification -- developer-ai.
+#
+# Only what this role installs, and only as the TARGET user. That second half is
+# the point: every tool here lands in a home directory, so a verify running as
+# the connecting account would check a service account's empty home and pass on
+# a workstation where nothing was installed. That is the failure mode
+# docs/install-matrix.md calls "a green tombstone", and it is why these commands
+# repeat the become_user dance rather than trusting the earlier probes.
+#
+# Each check re-probes rather than reading the facts set during the run, for the
+# same reason: a fact is what the role BELIEVED, and the verify exists to
+# disagree with it.
+
+- name: Verify the Codex CLI
+  ansible.builtin.command:
+    cmd: codex --version
+  environment: "{{ developer_ai_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_ai_verify_codex
+  changed_when: false
+  failed_when: developer_ai_verify_codex.rc != 0
+  when: developer_ai_codex_present | default(false) | bool
+
+# Gated on the INSTALL OUTCOME, not on the dependency probe. Gating on
+# claude+codex+node would fail this verify in two cases where nothing is wrong:
+# a `--tags verify` run on a box that has all three but never opted into the
+# plugin, and a run where the install genuinely failed and already recorded its
+# own deploy_warnings entry -- failing here would abort the play and suppress
+# the very report that names it. soe/tasks/verify.yml gates the same way, on
+# `openvpn3_install_failed`.
+#
+# Verified by id, not by "a command exited 0": `claude plugin list --json`
+# returns objects with an `id` of plugin@marketplace, which is the only thing
+# distinguishing this plugin from another of the same name in a different
+# marketplace.
+- name: Verify the Codex plugin is registered with Claude Code
+  ansible.builtin.command:
+    cmd: claude plugin list --json
+  environment: "{{ developer_ai_env | combine({'HOME': user_home}) }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_ai_verify_plugins
+  changed_when: false
+  failed_when: >-
+    (developer_ai_codex_plugin_name ~ '@' ~ developer_ai_codex_plugin_marketplace)
+    not in (developer_ai_verify_plugins.stdout | default(''))
+  when:
+    - not ansible_check_mode
+    - developer_ai_plugin_ok | default(false) | bool
+
+# A substring test rather than from_json, matching what hyperi-update does.
+# `from_json` raises on anything that is not JSON -- an update notice, a
+# first-run banner, an ANSI-coloured warning on stdout -- and a template error
+# inside failed_when is a task failure that aborts the play. A verify that can
+# be broken by a banner is not a verify.
+
+- name: Display the AI agent tooling verification
+  ansible.builtin.debug:
+    msg: |
+      AI agent tooling for {{ actual_user }}:
+        Codex CLI    : {{ developer_ai_verify_codex.stdout | default('not installed') }}
+        Codex plugin : {{ 'registered with Claude Code'
+                          if developer_ai_plugin_ok | default(false) | bool
+                          else 'not installed (needs claude + codex + node)' }}

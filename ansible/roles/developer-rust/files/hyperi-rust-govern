@@ -1,31 +1,52 @@
 #!/usr/bin/env bash
-# Governs Rust builds so they cannot take the machine down: one build at a
-# time per user, the whole process tree inside the rust-build.slice budget,
+# Governs Rust builds so they cannot take the machine down: at most N builds at
+# a time per user, the whole process tree inside the rust-build.slice budget,
 # and priority below the desktop.
 #
-# Installed as ~/.local/bin/cargo, which sits ahead of ~/.cargo/bin on the
-# SOE PATH, so cargo and everything it spawns is captured. sccache-hosted
-# compiles are captured separately: hyperi-sccache.service carries
-# Slice=rust-build.slice.
+# N is a MEMORY semaphore, not a queue length. Memory is spent per CRATE, not
+# per job -- one enormous crate compiles as a single rustc however high -j goes
+# -- so the bound is the slice's memory budget divided by what one build costs.
+# A small host computes N=1, which is a global mutex.
+#
+# Installed as ~/.local/bin/cargo, which sits ahead of the cargo bin directory
+# on the SOE PATH, so cargo and everything it spawns is captured.
+# sccache-hosted compiles are captured separately: hyperi-sccache.service
+# carries Slice=rust-build.slice.
 #
 #   HYPERI_RUST_GOVERNOR=off cargo build     # bypass one invocation
 #   hyperi-rust-govern <command> [args...]   # govern any other command
 #
-# cargo run holds the build lock for the program's whole lifetime, because
-# cargo stays resident wrapping the binary. Use the bypass for long-running
-# `cargo run` services.
+# cargo run holds its slot for the program's whole lifetime, because cargo
+# stays resident wrapping the binary. Under a semaphore that costs 1/N of
+# capacity rather than everything, but the bypass is still right for a
+# long-running `cargo run` service.
 #
 # Written for bash 3.2: stock macOS runs this.
 set -u
+
+# HOME is unset in a system unit, in a container whose uid has no passwd entry,
+# and under env -i. Unset, set -u aborts at the first $HOME below before any
+# tool runs; empty degrades to an unusable slot directory and an ungoverned
+# build, which is the right failure.
+HOME="${HOME-}"
 
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/rust-governor.conf"
 # shellcheck source=/dev/null
 [ -r "$CONF" ] && . "$CONF"
 
-SERIALIZE="${HYPERI_RUST_GOVERN_SERIALIZE:-1}"
+# auto = derive from this host's RAM. A positive integer pins the count. 0/off
+# disables the semaphore entirely. 1 is the old global mutex.
+SLOTS="${HYPERI_RUST_GOVERN_SLOTS:-auto}"
 RESERVE="${HYPERI_RUST_GOVERN_CPU_RESERVE:-2}"
 QOS="${HYPERI_RUST_GOVERN_MACOS_QOS:-utility}"
 LOCK_WAIT="${HYPERI_RUST_GOVERN_LOCK_WAIT:-1800}"
+# Must match rust-build.slice's MemoryHigh. Both resolve a percentage of the
+# same memory total -- systemd against MemTotal, this script against the cgroup
+# limit where one is set and MemTotal otherwise -- so on a bare host they agree.
+MEM_PCT="${HYPERI_RUST_GOVERN_MEMORY_HIGH_PCT:-50}"
+# What one build costs: the largest single rustc plus headroom. Derived from a
+# 11.6 GB peak on one workspace, so it is a starting point, not a constant.
+ALLOWANCE_GB="${HYPERI_RUST_GOVERN_BUILD_ALLOWANCE_GB:-14}"
 
 TOOL="$(basename "$0")"
 if [ "$TOOL" = "hyperi-rust-govern" ]; then
@@ -80,82 +101,238 @@ fi
 case "$cores" in
     ''|*[!0-9]*) cores=2 ;;
 esac
+
+# Leading zeros are stripped before every numeric guard: `08` passes a digit
+# test and then aborts bash arithmetic as an invalid octal constant, which
+# under set -u leaves N empty and silently removes the protection.
+RESERVE="${RESERVE#"${RESERVE%%[!0]*}"}"
+[ -z "$RESERVE" ] && RESERVE=0
 case "$RESERVE" in
-    ''|*[!0-9]*) RESERVE=2 ;;
+    *[!0-9]*) RESERVE=2 ;;
 esac
 case "$LOCK_WAIT" in
     ''|*[!0-9]*) LOCK_WAIT=1800 ;;
 esac
+MEM_PCT="${MEM_PCT#"${MEM_PCT%%[!0]*}"}"
+[ -z "$MEM_PCT" ] && MEM_PCT=0
+case "$MEM_PCT" in
+    *[!0-9]*) MEM_PCT=50 ;;
+esac
+ALLOWANCE_GB="${ALLOWANCE_GB#"${ALLOWANCE_GB%%[!0]*}"}"
+case "$ALLOWANCE_GB" in
+    ''|*[!0-9]*) ALLOWANCE_GB=14 ;;
+esac
+# taskpolicy's clamp names. That path has no fallback, so anything else would
+# make every cargo on a Mac fail with a usage error.
+case "$QOS" in
+    background|utility|maintenance|default) ;;
+    *) QOS=utility ;;
+esac
 
-# The cgroup quota is invisible to rustc, which sizes its parallelism off the
-# visible core count and thrashes inside the cap -- so the job count is
-# lowered to match. A box under 4 cores keeps them all.
-jobs="$cores"
+# Cores builds may use at all. The reserve is a property of the HOST -- keep
+# the desktop responsive -- so it comes off the top, before anything is divided
+# between concurrent builds. A box under 4 cores keeps them all.
+pool="$cores"
 if [ "$cores" -ge 4 ]; then
-    jobs=$((cores - RESERVE))
+    pool=$((cores - RESERVE))
 fi
-[ "$jobs" -lt 1 ] && jobs=1
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$jobs}"
+[ "$pool" -lt 1 ] && pool=1
+
+# Read the memory total rather than asking systemd. `systemctl show` is a D-Bus
+# round trip on every cargo invocation, reports `infinity` when the slice is not
+# loaded, and does not exist on macOS or in a container -- all three of which
+# this script has to keep working in. Reproducing systemd's own arithmetic
+# against the same total gives the same answer with none of that.
+#
+# The cgroup limit is preferred where one is set, because /proc/meminfo reports
+# the HOST's memory inside a container: a 4 GB container on a 256 GB box would
+# otherwise admit eight builds against an allowance it does not have.
+mem_total_kb() {
+    limit="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || true)"
+    case "$limit" in
+        ''|max|*[!0-9]*) ;;
+        *) echo $((limit / 1024)); return 0 ;;
+    esac
+    if [ -r /proc/meminfo ]; then
+        awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null
+        return 0
+    fi
+    if command -v sysctl >/dev/null 2>&1; then
+        bytes="$(sysctl -n hw.memsize 2>/dev/null)"
+        case "$bytes" in
+            ''|*[!0-9]*) return 0 ;;
+        esac
+        echo $((bytes / 1024))
+    fi
+}
+
+# N = min(memory budget / per-build allowance, pool / 2).
+#
+# The pool/2 term is not a safety margin: admitting more concurrent builds than
+# there are cores to give each one a couple of jobs makes every build slower
+# for no gain, and it is what makes the jobs arithmetic below unable to reach 0.
+compute_slots() {
+    total_kb="$(mem_total_kb)"
+    case "$total_kb" in
+        ''|*[!0-9]*) echo 1; return 0 ;;
+    esac
+
+    # Divide before multiplying: the loss is under a percent and it cannot
+    # overflow on a 32-bit shell.
+    high_kb=$(( (total_kb / 100) * MEM_PCT ))
+    allowance_kb=$(( ALLOWANCE_GB * 1024 * 1024 ))
+    n=$(( high_kb / allowance_kb ))
+
+    n_cpu=$(( pool / 2 ))
+    [ "$n" -gt "$n_cpu" ] && n="$n_cpu"
+    [ "$n" -lt 1 ] && n=1
+    echo "$n"
+}
+
+# The same strip as the guards above, on a copy: `auto` has to survive it.
+SLOTS_N="${SLOTS#"${SLOTS%%[!0]*}"}"
+[ -z "$SLOTS_N" ] && SLOTS_N=0
+
+# Anything unrecognised falls to 1 rather than to 0: a typo in the config must
+# not silently remove the protection. That also catches Jinja rendering a
+# leftover boolean `rust_governor_serialize: true` as `True`, which means
+# serialise, which is one slot.
+case "$SLOTS" in
+    auto|AUTO) N="$(compute_slots)" ;;
+    0|off|OFF|false|False|FALSE|no|No|NO) N=0 ;;
+    *[!0-9]*) N=1 ;;
+    *) N="$SLOTS_N" ;;
+esac
+
+# Jobs scale with the number of neighbours the semaphore admits, rather than
+# assuming sole occupancy. Floored at 2: a measured single-job build took 2.3x
+# as long, which is never the right computed default.
+if [ "$N" -ge 1 ]; then
+    jobs=$((pool / N))
+else
+    jobs="$pool"
+fi
+[ "$jobs" -lt 2 ] && jobs=2
+[ "$pool" -lt 2 ] && jobs=1
+
 export HYPERI_RUST_GOVERNED=1
 
-LOCK="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/hyperi-rust-govern-$(id -u).lock"
+# Never /tmp. A world-writable slot directory lets any local account take an
+# exclusive flock on every slot file -- read access is enough for flock(2) --
+# and pin every build on the host at the degraded job count. It also lets one
+# be pre-created unwritable, which is worse. ~/.cache is the fallback because
+# XDG_RUNTIME_DIR is absent for cron, containers, CI and plain `ssh host cargo`.
+#
+# Tested for emptiness, not just for being unset: an XDG_RUNTIME_DIR set to ""
+# passes :- and yields a path at the filesystem root.
+if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+    SLOT_BASE="$XDG_RUNTIME_DIR"
+else
+    SLOT_BASE="${XDG_CACHE_HOME:-$HOME/.cache}/hyperi"
+fi
+SLOT_DIR="$SLOT_BASE/hyperi-rust-govern-$(id -u).slots"
 uname_s="$(uname -s)"
 
+slot=0
+
 notify_wait() {
-    echo "hyperi-rust-govern: another rust build holds the lock -- waiting (HYPERI_RUST_GOVERNOR=off to bypass)" >&2
+    echo "hyperi-rust-govern: all $N build slots are taken -- waiting (HYPERI_RUST_GOVERNOR=off to bypass)" >&2
 }
 
-# The same fd inheritance that makes the lock outlive a crash also hands it to
-# any daemon the build starts, which then holds it for its own lifetime.
-notify_timeout() {
-    if [ -n "${1:-}" ]; then
-        echo "hyperi-rust-govern: lock held by PID(s) $1 for over ${LOCK_WAIT}s -- building unserialised (HYPERI_RUST_GOVERNOR=off to silence)" >&2
-    else
-        echo "hyperi-rust-govern: lock held for over ${LOCK_WAIT}s -- building unserialised (HYPERI_RUST_GOVERNOR=off to silence)" >&2
-    fi
+# No holder PIDs are reported. fuser on the slot files lists every process with
+# the fd open, which is waiters and the reporting process too, so the number was
+# consistently larger than the number of builds and told nobody anything.
+notify_degraded() {
+    echo "hyperi-rust-govern: no slot after ${LOCK_WAIT}s -- building at -j$jobs, capped at ${ALLOWANCE_GB}G" >&2
 }
 
-# Linux: flock on fd 9. The fd survives exec, so the lock lives exactly as
-# long as the build and releases on any exit, crash included.
-if [ "$SERIALIZE" = "1" ] && command -v flock >/dev/null 2>&1; then
-    # An XDG_RUNTIME_DIR that is set but absent leaves fd 9 unopened, and every
-    # flock below then fails instantly -- which is not the same as contention.
-    # No 2>/dev/null here: on success that redirect would persist and silence
-    # the build's own stderr.
-    if ! exec 9>"$LOCK"; then
-        echo "hyperi-rust-govern: cannot open $LOCK -- building unserialised" >&2
-    elif ! flock -n 9; then
-        notify_wait
-        # Serialisation is an optimisation, so a stuck holder degrades the build
-        # rather than hanging it.
-        if ! flock -w "$LOCK_WAIT" 9; then
-            # fuser space-separates several holders, so squeeze rather than
-            # delete or they concatenate into one meaningless number.
-            lock_holder=""
-            command -v fuser >/dev/null 2>&1 &&
-                lock_holder="$(fuser "$LOCK" 2>/dev/null | tr -s '[:space:]' ' ')"
-            lock_holder="${lock_holder# }"
-            notify_timeout "${lock_holder% }"
+# One fd over N files: reopening fd 9 closes the previous description and
+# releases any flock on it, so slot choice is which FILE you open. That keeps
+# this to bash 3.2 with no eval and no {var}> named descriptors.
+#
+# `<>` rather than `>`: `>` truncates, so probing a busy slot would wipe the
+# holder's file on the way past.
+take_slot() {
+    i=0
+    while [ "$i" -lt "$N" ]; do
+        n=$(( (start_at + i - 1) % N + 1 ))
+        i=$((i + 1))
+        # No 2>/dev/null on an exec redirect: on success it would persist and
+        # silence the build's own stderr.
+        exec 9<>"$SLOT_DIR/slot.$n" || continue
+        if flock "$@" 9; then
+            slot="$n"
+            return 0
         fi
+    done
+    return 1
+}
+
+# A slot directory that cannot be used is NOT contention, and must not be
+# mistaken for it: every lock would fail instantly, the wait loop would spin its
+# whole budget in zero seconds printing a line per attempt, and the build would
+# end at the degraded job count on a completely idle host. Checked once, and
+# treated as ungoverned so the computed job count survives.
+#
+# The file open is probed as well as the mkdir: mkdir -p succeeds on a directory
+# that already exists whether or not it is writable, and it is the open inside
+# take_slot that has to work. ENOSPC and a read-only remount both land here.
+#
+# Created 0700, because a traversable home is not a private one: read access is
+# all flock(2) needs, so a 0755 $HOME with a 0775 cache directory lets any local
+# account hold every slot and pin every build at the degraded job count.
+if [ "$N" -ge 1 ] && { ! (umask 077; mkdir -p "$SLOT_DIR") || ! : >>"$SLOT_DIR/slot.1"; } 2>/dev/null; then
+    echo "hyperi-rust-govern: cannot use $SLOT_DIR -- building ungoverned at -j$jobs" >&2
+    N=0
+fi
+
+if [ "$N" -ge 1 ] && command -v flock >/dev/null 2>&1; then
+    # Spread waiters across slots rather than having every arrival stampede
+    # slot 1 and hand it to whoever wakes first.
+    start_at=$(( ($$ % N) + 1 ))
+
+    if ! take_slot -n; then
+        notify_wait
+        waited=0
+        # Short blocking waits cycled across every slot, so a waiter takes
+        # whichever frees first. One pass costs up to 2N seconds.
+        while [ "$waited" -lt "$LOCK_WAIT" ]; do
+            take_slot -w 2 && break
+            waited=$(( waited + 2 * N ))
+        done
     fi
-elif [ "$SERIALIZE" = "1" ]; then
+elif [ "$N" -ge 1 ]; then
     # macOS ships no flock(1). A pid-stamped mkdir lock is atomic everywhere;
-    # a holder that died without cleaning up is detected and cleared.
-    LOCK_D="$LOCK.d"
+    # a holder that died without cleaning up is detected and cleared. The trap
+    # is not inherited by children, so this path never had the daemon problem
+    # the flock path needed 9>&- to fix -- but a trap does not fire on SIGKILL,
+    # which is why the liveness check below is still required.
+    start_at=$(( ($$ % N) + 1 ))
     notified=0
     waited=0
-    holder=""
-    locked=0
     while [ "$waited" -lt "$LOCK_WAIT" ]; do
-        if mkdir "$LOCK_D" 2>/dev/null; then
-            locked=1
-            break
-        fi
-        holder="$(cat "$LOCK_D/pid" 2>/dev/null || true)"
-        # A failed clear falls through to the wait, so the loop always advances.
-        if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
-            rm -rf "$LOCK_D" && continue
-        fi
+        i=0
+        while [ "$i" -lt "$N" ]; do
+            n=$(( (start_at + i - 1) % N + 1 ))
+            i=$((i + 1))
+            if mkdir "$SLOT_DIR/slot.$n.d" 2>/dev/null; then
+                # Stamped BEFORE the loop exits, so a reclaimer can never see a
+                # live holder's directory with no pid in it and clear it.
+                printf '%s\n' "$$" >"$SLOT_DIR/slot.$n.d/pid"
+                slot="$n"
+                break
+            fi
+            holder="$(cat "$SLOT_DIR/slot.$n.d/pid" 2>/dev/null || true)"
+            [ -n "$holder" ] || continue
+            kill -0 "$holder" 2>/dev/null && continue
+            # Rename rather than remove: exactly one reclaimer can win the mv,
+            # so two waiters cannot both clear and hand the same slot to two
+            # different builds.
+            if mv "$SLOT_DIR/slot.$n.d" "$SLOT_DIR/slot.$n.stale.$$" 2>/dev/null; then
+                rm -rf "$SLOT_DIR/slot.$n.stale.$$"
+            fi
+        done
+        [ "$slot" -ne 0 ] && break
         if [ "$notified" -eq 0 ]; then
             notify_wait
             notified=1
@@ -163,35 +340,72 @@ elif [ "$SERIALIZE" = "1" ]; then
         sleep 2
         waited=$((waited + 2))
     done
-    if [ "$locked" -eq 1 ]; then
-        printf '%s\n' "$$" >"$LOCK_D/pid"
+    if [ "$slot" -ne 0 ]; then
         # Single quotes: expanded when the trap fires, not here.
-        trap 'rm -rf "$LOCK_D"' EXIT INT TERM
-    else
-        # No trap: the directory belongs to whoever still holds it.
-        notify_timeout "$holder"
+        trap 'rm -rf "$SLOT_DIR/slot.$slot.d"' EXIT INT TERM
     fi
 fi
 
+# No slot after the wait: degrade, do not release. The old behaviour proceeded
+# unserialised after the timeout, dropping the bound at the exact moment
+# contention was highest. The floor job count alone would not bound memory --
+# it is spent per crate, and one big crate peaks the same at -j2 as at -j30 --
+# so the systemd path below also caps the build at one allowance.
+SLOTLESS_CAP=""
+if [ "$slot" -eq 0 ] && [ "$N" -ge 1 ]; then
+    jobs=2
+    [ "$pool" -lt 2 ] && jobs=1
+    SLOTLESS_CAP="--property=MemoryMax=${ALLOWANCE_GB}G"
+    notify_degraded
+fi
+
+# After acquisition, never before: a build that had to degrade needs the lower
+# count, and a caller's own CARGO_BUILD_JOBS still wins over both.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$jobs}"
+
+# sccache cannot cache a rustc call carrying -C incremental. Off by default:
+# cargo never builds dependencies incrementally, so this only makes WORKSPACE
+# crates cacheable, and it costs incremental on those same crates. Worth it on a
+# box where builds start from clean trees, not on an edit-rebuild loop.
+#
+# A caller's own value still wins, but setting it to 1 makes sccache refuse the
+# build outright rather than fall back to compiling.
+if [ "${HYPERI_RUST_GOVERN_NO_INCREMENTAL:-0}" = "1" ]; then
+    export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+fi
+
 # Linux with a live user manager: the scope joins rust-build.slice, whose
-# memory/CPU limits are deployed by the developer-rust role. The exec keeps
-# the flock fd, the TTY, signals and the exit code.
+# memory/CPU limits are deployed by the developer-rust role.
+#
+# Run and wait rather than exec, and close fd 9 for the child. The fd is what
+# holds the slot, and exec handed it to every descendant -- so any daemon the
+# build started kept the slot for its own lifetime. Waiting costs one bash
+# process, outside the scope; the kernel still releases the slot on a crash,
+# because flock is held against the open file description.
+#
+# XDG_RUNTIME_DIR must be non-empty, not merely defaulted: systemd-run --user
+# cannot reach the bus without it even when the socket is found by path.
 if [ "$uname_s" = "Linux" ] && command -v systemd-run >/dev/null 2>&1 \
-    && [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]; then
-    exec systemd-run --user --scope --quiet --collect \
-        --slice=rust-build.slice \
-        --property=CPUQuota="$((jobs * 100))%" \
-        -- "$REAL" "$@"
+    && [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+    systemd-run --user --scope --quiet --collect \
+        --slice=rust-build.slice ${SLOTLESS_CAP:+"$SLOTLESS_CAP"} \
+        -- "$REAL" "$@" 9>&-
+    exit "$?"
 fi
 
 # macOS: QoS clamp puts every thread below the desktop's priority. No memory
 # cap here -- taskpolicy's jetsam limit is per-process and cannot bound the
-# tree -- so the job cap above is the memory lever.
+# tree -- so on that platform the semaphore and the job cap ARE the memory
+# model, with nothing behind them.
+#
+# 9>&- on these two as well: a Mac with Homebrew util-linux has flock(1), so it
+# takes the flock path above and reaches here holding fd 9. Closing an fd that
+# was never opened is a no-op, so this is safe on the mkdir path too.
 if [ "$uname_s" = "Darwin" ] && command -v taskpolicy >/dev/null 2>&1; then
-    taskpolicy -c "$QOS" "$REAL" "$@"
+    taskpolicy -c "$QOS" "$REAL" "$@" 9>&-
     exit "$?"
 fi
 
 # No systemd user manager (container, degraded session): priority only.
-nice -n 19 "$REAL" "$@"
+nice -n 19 "$REAL" "$@" 9>&-
 exit "$?"

@@ -19,5 +19,11 @@ collections:
   # Required by the molecule docker driver, not by any role.
   - name: community.docker
     version: ">=5.0.0"
+
+  # tests/proxmox/create.yml and reset.yml. The proxmox_* modules left
+  # community.general for this collection and are removed from it at 15.0.0,
+  # which the floor above will reach.
+  - name: community.proxmox
+    version: ">=1.0.0"
   - name: ansible.posix
     version: ">=2.0.0"

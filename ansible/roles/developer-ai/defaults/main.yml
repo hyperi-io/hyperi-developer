@@ -1,0 +1,71 @@
+---
+# ============================================================================
+# SHARED ENVIRONMENT
+# ============================================================================
+# One PATH for every probe and every install in this role, covering both
+# platforms so the tasks do not each carry their own copy.
+#
+# `{{ user_home }}/.local/bin` is the load-bearing entry and the reason this is
+# not just the inherited PATH: claude, codex and uv-installed tools all land
+# there, PER USER. `ansible_facts['env'].PATH` is the CONNECTING user's, which
+# on a fleet machine is a service account that has none of them -- it is
+# appended for the system binaries, never relied on for the agent CLIs.
+developer_ai_env:
+  PATH: >-
+    /opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{
+    user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}
+
+# ============================================================================
+# CODEX CLI
+# ============================================================================
+# The official installer, which is the same route `learn.chatgpt.com/docs/codex/cli`
+# documents. chatgpt.com/codex/install.sh is a 302 to releases.openai.com; the
+# redirect is followed rather than hardcoded so a move upstream does not need a
+# change here.
+#
+# Why the script rather than a get_url of the release asset: the asset is not a
+# bare binary. `codex-package-<target>.tar.gz` is a ~120 MB tree that has to be
+# staged into $CODEX_HOME/packages/standalone/<version>-<target>/ and symlinked
+# twice, and the script verifies its SHA256 against the published
+# codex-package_SHA256SUMS before it does so. Reimplementing that here would buy
+# nothing on integrity and would leave us owning a layout upstream versions.
+#
+# The thin `codex-<target>.tar.gz` assets are NOT in codex-package_SHA256SUMS --
+# they have no published digest at all. That is the trap to avoid: they are the
+# obvious thing to reach for and the only unverifiable option.
+developer_ai_codex_installer_url: https://chatgpt.com/codex/install.sh
+
+# No version pin, per the repo's one install mode: every tool resolves its
+# version when the installer runs (docs/install-matrix.md). Codex ships several
+# stable releases a WEEK, so this moves faster than most -- `CODEX_RELEASE` is
+# the upstream knob if a host ever needs to be held back, and it belongs in
+# local-config/vars.yml on that host rather than here.
+developer_ai_codex_release: ""
+
+# ============================================================================
+# CODEX PLUGIN FOR CLAUDE CODE
+# ============================================================================
+# Names come from the repo's .claude-plugin/marketplace.json: the marketplace is
+# `openai-codex` and the plugin inside it is `codex`. Both are needed -- the
+# install id is plugin@marketplace.
+developer_ai_codex_plugin_marketplace: openai-codex
+developer_ai_codex_plugin_repo: openai/codex-plugin-cc
+developer_ai_codex_plugin_name: codex
+
+# User scope, so the plugin follows the developer rather than a checkout. This
+# is also `claude plugin install`'s own default; stated explicitly because the
+# whole point of this role is that user scope means the TARGET user, not
+# whoever Ansible connected as.
+developer_ai_codex_plugin_scope: user
+
+# The plugin's hooks are `node <script>.mjs`, invoked directly, so node is
+# required even when Codex itself was installed as a standalone binary with no
+# npm involved. Upstream's README asks for 18.18 or later; the npm package's own
+# `engines` says >=16, which is the looser and wrong number to size from.
+#
+# The gate compares the MAJOR only, so 18.0 through 18.17 would pass a check
+# upstream would fail. Accepted rather than parsed further: the whole 18 line
+# went end-of-life in April 2025, so a host running one has a bigger problem
+# than this plugin, and a minor-level comparison here would be precision about
+# a version nobody should be on.
+developer_ai_node_min_major: 18

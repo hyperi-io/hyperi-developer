@@ -2,15 +2,28 @@
 [Unit]
 Description=Governed Rust builds (hyperi-developer)
 
+# systemd reads `-` as a hierarchy separator, so this unit lands under an
+# auto-created `rust.slice` that nothing manages and nothing limits. Harmless,
+# because the limits below bind on this slice -- but limits set on "rust.slice"
+# expecting them to reach builds would land on an empty wrapper.
 [Slice]
 # Percentages resolve against this host's own RAM and swap, so one unit fits
 # every machine. Both capture prongs land here: cargo trees via the
 # hyperi-rust-govern scope, sccache-hosted compiles via Slice= on
 # hyperi-sccache.service.
+#
+# MemoryHigh is also what the shim divides to size its build semaphore, so the
+# two are derived from one number and cannot drift.
+#
+# MemorySwapMax only means anything where swap exists. On a swapless host
+# MemoryHigh has nothing but page cache to reclaim, so it stalls a build
+# instead of slowing it -- the zram_swap role is what makes this budget behave.
 MemoryHigh={{ rust_governor_memory_high_pct }}%
 MemoryMax={{ rust_governor_memory_max_pct }}%
 MemorySwapMax={{ rust_governor_swap_max_pct }}%
 # Yields to the desktop under contention; no effect while the machine is idle.
-# The cores-minus-reserve CPU quota is not here: hyperi-rust-govern sets it on
-# each scope from the live core count, so a resized VM needs no re-converge.
+# No CPU quota anywhere: a quota wastes cores whenever a session sits idle,
+# whereas weight gives proportional share under contention and the whole box
+# when nothing is competing. Parallelism is bounded by CARGO_BUILD_JOBS, which
+# the shim scales to the number of neighbours the semaphore admits.
 CPUWeight={{ rust_governor_cpu_weight }}

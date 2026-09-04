@@ -18,6 +18,18 @@ Environment=SCCACHE_NO_DAEMON=1
 # The server exits after 600s idle by default, which systemd would read as the
 # service failing.
 Environment=SCCACHE_IDLE_TIMEOUT=0
+# The cap and the base directories are set HERE, not left to the shell profile.
+# The server reads them once at startup and holds them for its whole life, and a
+# unit inherits pam_env rather than /etc/profile.d -- so a hand-set value in
+# /etc/environment silently beat the role's, and the running server ended up
+# with a ceiling nobody configured. A unit Environment= is applied last and
+# wins, and changing it here is what tells the role to restart the server.
+Environment=SCCACHE_CACHE_SIZE={{ rust_cache_sccache_max }}
+{% if rust_cache_sccache_basedirs %}
+# sccache keys on absolute paths, so the same source built under a different
+# root misses. Listed roots are stripped before hashing.
+Environment=SCCACHE_BASEDIRS={{ rust_cache_sccache_basedirs }}
+{% endif %}
 ExecStart=/usr/local/bin/sccache
 Restart=on-failure
 RestartSec=5

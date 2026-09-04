@@ -87,6 +87,7 @@ flowchart TD
 | `vpn-clients` | OpenVPN 3, WireGuard, Tunnelblick (macOS) |
 | `vm` | VM guest optimisations (QEMU/SPICE agents) |
 | `power-profile` | Sleep/idle/lid policy. `always-on` (default) or `vm`, via `-e power_profile=<name>` |
+| `zram` | Compressed-RAM swap so cgroup memory limits throttle instead of stalling. Pairs with the Rust build governor |
 | `arcane` | Arcane container UI, localhost-only. Off unless `-e soe_arcane_enabled=true`. Add `-e soe_arcane_long_session=true` for a year-long login |
 | `local-services` | Persistent local ClickHouse + Redpanda for spikes. Off unless `-e soe_local_services_enabled=true` |
 
@@ -158,7 +159,20 @@ That matters most on a fleet machine reached over SSH as a service account,
 because that account's home is not the desktop. Get it wrong and the run still
 reports success -- the settings simply land where nobody sees them.
 
+Settings that are true of one machine rather than of the repo -- a dedicated
+cache volume, say -- go in `local-config/vars.yml` at the repo root, which is
+gitignored and loaded on every run, tagged or not. A setting passed once as
+`-e` and never written down is lost at the next converge: a box with a 512G
+cache volume had its Rust build pool silently moved onto the root filesystem
+that way. Anything in that file runs with the playbook's own authority -- root,
+under `become` -- so treat it exactly as you would the playbook.
+
 ## What Gets Installed
+
+The summary below is the shape of it. [docs/install-matrix.md](docs/install-matrix.md)
+is the single source of truth for the detail: every role, group, persona and
+tool, which tag selects it, how each one is fetched, and which of them verify a
+digest. Read that before changing a role or adding a tool.
 
 **Default** (`./install.sh`) - a lightweight generic CLI dev base, nothing HyperI-specific:
 
@@ -174,7 +188,9 @@ reports success -- the settings simply land where nobody sees them.
 - `infrastructure`: OpenTofu + OpenBao (the OSS forks, no HashiCorp BUSL tools), AWS CLI v2, checkov, and terraform-docs for generating IaC module reference docs (engine-agnostic -- it reads `.tf` whichever binary runs it, and OpenTofu has no native `tofu docs`). Under `k8s`: kubectl + kubectx + kubens + k9s + kind + argocd + dive + kustomize + kubeconform + kube-linter. helm is NOT in that group -- it sits in `cloud`, so plain `--tags infrastructure` gets it whether or not you select `k8s`. The `data` group: clickhouse-client, rpk, valkey-cli, vector. The `cloudflare` group: flarectl + wrangler (flarectl builds from source on both platforms -- Cloudflare ships no binary -- so Linux needs `developer-go`)
 - `contributor`: hyperi-ci and the tools its checks drive (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, ansible-lint, pre-commit, act, and git-scrub for rewriting AI residue or a leaked secret out of git history -- gitleaks scans FULL history, so a secret removed from HEAD still fails the gate. macbash is here too: it flags the GNU-only bash constructs that break on macOS, and CONTRIBUTING.md asks for it on every shell change
 - `soe` / `soe-gui`: HyperI org policy: VPN clients, Claude Code, Slack, LibreOffice, RDP client, telemetry-disable, auto-updates, GNOME taskbar
+- `developer-ai` (off by default): the OpenAI Codex CLI as a second opinion alongside Claude Code rather than a replacement for it, plus OpenAI's Codex plugin FOR Claude Code, so `/codex:review` and `/codex:adversarial-review` are things Claude asks Codex for. The plugin is skipped -- with a warning naming the tag that fixes it -- unless claude, codex and a new enough node are all present for that user, because it installs happily without them and then throws on every invocation. Sign-in stays the person's: `codex login --device-auth` on a box with no browser
 - `power-profile` (off by default, and deliberately not in `soe`): sleep, idle and lid policy, selected per machine. `always-on` (the default profile) never idle-suspends on mains power and does not sleep when the lid shuts -- for a repurposed laptop doing build work, or a desktop that has to answer ssh. `vm` never sleeps or suspends at all, for an unattended RDP guest that nobody can walk over and wake. Battery behaviour stays stock under `always-on`, because a machine that will not sleep in a bag cooks itself. Profiles are data files, so adding one is adding a file -- see [roles/power-profile/README.md](ansible/roles/power-profile/README.md)
+- `zram` (off by default, and deliberately not in `soe`): a small compressed-RAM swap device, sized from the host's RAM and capped at 8 GiB. It exists because cgroup `MemoryHigh` throttles by reclaim, and on a swapless host the only reclaimable memory is page cache -- so a build past its budget stalls rather than slows. Pairs with the Rust build governor, which warns at converge time when it lands on a swapless host. Never restarts a running device, so a size change waits for a reboot -- see [roles/zram_swap/README.md](ansible/roles/zram_swap/README.md)
 - `arcane` (off by default): [Arcane](https://getarcane.app), a web UI for the containers on the box. Enable it with `-e soe_arcane_enabled=true` and you get a daemon on `http://localhost:3552` that comes back after a reboot and keeps itself updated. Works against docker-ce on Linux and colima on macOS. Bound to loopback because it holds the Docker socket, so whatever reaches that port owns the machine. Login is whatever Arcane seeds -- `arcane` / `arcane-admin` as upstream documents it. The role sets neither, and only clears the forced first-login password prompt, which it does by re-submitting that seeded password so the credentials stay unchanged. That needs the password policy relaxed to `basic` (`soe_arcane_password_policy`), because upstream's default `strong` policy rejects its own seeded password. There is still a login -- auto-login sits behind a `buildables` Go build tag that no published image is compiled with, so zero-auth is not available without building your own image. The login lasts about a day by default, which is a prompt every morning on a dev box -- `-e soe_arcane_long_session=true` stretches it to a year from each login. It is off by default because Arcane holds the Docker socket, and it takes one log-out and log-in to take effect, since the session expiry is stamped at login
 - `local-services` (off by default): a persistent local ClickHouse and Redpanda for ad-hoc work -- somewhere to poke at a query or hand-feed a topic without waiting for a suite to build. Enable with `-e soe_local_services_enabled=true`. Deployed **stopped**: `restart: no`, so a reboot leaves them down and they cost nothing until `local-services up`, which pulls latest and takes seconds. Both capped at 1GB and bound to loopback. They are spike instances -- integration and e2e suites create and tear down their own containers, because a shared daemon makes a suite non-hermetic and order-dependent
 

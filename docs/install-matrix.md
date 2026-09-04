@@ -100,6 +100,7 @@ flowchart TD
 | contributor | `contributor` | developer | opt-in |
 | soe | `soe` | contributor | opt-in |
 | soe-gui | `soe-gui` | astral, rdp-client | opt-in |
+| developer-ai | `developer-ai` | - (probed, not declared) | opt-in |
 | rdp-server | `rdp-server` | - | opt-in |
 | rdp-client | `rdp-client` | - | opt-in; pulled by default via soe-gui |
 | vpn-clients | `vpn-clients` | - | opt-in / soe default |
@@ -108,6 +109,15 @@ flowchart TD
 | vm_optimizer | `vm` | - | opt-in |
 | system_cleanup | `always` | - | always (cache-clean only) |
 
+`developer-ai`'s empty Deps column is not the same empty as the others. It has
+three hard dependencies - Claude Code, the codex binary, node - and declares
+none of them, because declaring them would be wrong twice over. Claude Code
+comes only from `soe`, so depending on it drags HyperI org policy onto a box
+that asked for a review tool; node comes from the `developer` base rather than
+`developer-node`, so the dependency that looks right supplies nothing. Claude
+Code is also per-USER on Linux, which no role graph can answer. The run probes
+the target for all three instead and names the tag that fixes each miss.
+
 ## Groups - themed tag bundles inside a role
 
 A group is a themed tag over several tools in one role, so you can take the set
@@ -115,6 +125,7 @@ without the whole role.
 
 | Group | Tag | Role | Tools |
 |---|---|---|---|
+| ai | `ai` | developer-ai | Codex CLI, the Codex plugin for Claude Code |
 | cloudflare | `cloudflare` | infrastructure | flarectl, wrangler |
 | data | `data` | infrastructure | clickhouse-client, rpk, valkey-cli, vector |
 | forgejo | `forgejo` / `codeberg` | soe | tea (Forgejo/Gitea CLI) |
@@ -134,10 +145,23 @@ from their publisher and verify it. The rest rest on HTTPS and the release tag,
 which a publisher can in principle force-move. Extending checksum-at-download to
 the other manual binaries is the outstanding hardening (hyperi-ci #66).
 
-Four fetches do verify a digest today, and they are the ones whose SHA is held
-in the repo or read from a published manifest: the Go toolchain, rustup-init,
-the Claude Code binary, and macbash (whose `.sha256` sits beside the asset on
-downloads.hyperi.io, so the fetch also re-pulls a republished binary).
+Four fetches verify a digest IN THIS REPO, and they are the ones whose SHA is
+held here or read from a published manifest: the Go toolchain, rustup-init, the
+Claude Code binary, and macbash (whose `.sha256` sits beside the asset on
+downloads.hyperi.io, so the fetch also re-pulls a republished binary). A fifth,
+the Codex CLI on Linux, DELEGATES the check to a vendor script this repo runs
+unverified. That is a weaker position than the other four and is counted
+separately on purpose.
+
+Codex is the one where what is verified matters. The installer script has no
+published checksum of its own; what it verifies is its payload, the
+`codex-package-<target>.tar.gz` release tarball, against the published
+`codex-package_SHA256SUMS` before it unpacks anything. So the digest covers what
+lands on disk, not the script that puts it there, and the script is re-fetched
+and re-run unattended by the weekly `hyperi-update` timer on an soe box. That
+check is still most of why the role runs the installer rather than fetching the
+asset itself: the thin `codex-<target>.tar.gz` assets, the obvious thing to
+reach for instead, are not in that manifest and have no published digest at all.
 
 ### developer (base, additive - runs bare)
 
@@ -252,9 +276,14 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 
 | Tool(s) | Platforms | Method |
 |---|---|---|
-| node, npm | all | vendor-repo / brew |
-| semantic-release (+ plugins) | all | npm global |
-| pnpm, corepack | all | corepack (ships with node) |
+| eslint, prettier | all | npm global |
+
+The runtime is NOT here. node, npm, semantic-release, pnpm and corepack live in
+the `developer` base -- they are core tooling that semantic-release and CI need,
+so the base installs them and this role adds only the linters. That matters
+because it decides which tag fixes a missing node: `developer`, not
+`developer-node`. developer-ai's plugin gate says so in its warning, and this
+table used to say the opposite.
 
 #### developer-typescript (dep: developer-node)
 
@@ -335,7 +364,8 @@ hyperi-ci.
 
 | Tool(s) | Platforms | Method |
 |---|---|---|
-| Claude Code CLI | Linux github-binary (SHA-verified) / macOS cask | github-binary / cask |
+| Claude Code CLI (binary, tag `claude`) | Linux github-binary (SHA-verified) / macOS cask | github-binary / cask |
+| Claude Code managed settings (tag `claude-policy`, soe only) | all | role file -> `/etc/claude-code/` |
 | tea (Forgejo/Gitea CLI, `forgejo` / `codeberg` tags; `gh` is GitHub-only) | Linux github-binary / macOS brew | github-binary / brew |
 | openvpn3 client (-> vpn-clients group) | Fedora COPR / Ubuntu vendor-repo / macOS brew | vendor-repo / brew |
 | WireGuard, Tunnelblick (macOS) | all / macOS | distro / cask |
@@ -346,6 +376,52 @@ hyperi-ci.
 | Arcane container UI (opt-in `soe_arcane_enabled`; `soe_arcane_long_session` for a year-long login) | all | container image |
 | Local ClickHouse + Redpanda (opt-in `soe_local_services_enabled`) | all | container image |
 | removals / update_command / admin-scripts (opt-in `never`, on for soe) | Linux | tombstones + scripts |
+
+### developer-ai (opt-in AI coding agents)
+
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| Codex CLI | Linux | vendor-script (chatgpt.com/codex/install.sh; payload digest-verified) |
+| Codex CLI | macOS | cask `codex` (there is no formula) |
+| codex-plugin-cc, the Codex plugin FOR Claude Code | all | `claude plugin install codex@openai-codex` |
+
+Claude-first by design. Claude Code stays the driver and Codex is the
+adversarial reviewer, reached from inside Claude Code through OpenAI's own
+plugin. Nothing in this role installs Claude Code - that is `soe`'s
+`claude` tag, which installs the BINARY AND NOTHING ELSE. The HyperI managed
+settings that used to ride along with it now sit behind `claude-policy`, which
+only `soe` selects, so `--tags claude` on a machine that is not ours no longer
+writes an unoverridable settings file into `/etc`. Codex ships several stable
+releases a week, so it moves faster than most of this matrix.
+
+The plugin's dependencies are hard, and all three are per user: Claude Code, a
+codex that answers both `codex --version` and `codex app-server --help`, and
+node 18.18+ (its hooks run `node <script>.mjs` directly). Miss one and the run
+SKIPS the plugin and names the tag that fixes it - `claude`, `codex`, or
+`developer` for node, which is where node lives. Installing it regardless would
+leave slash commands that throw on every invocation, and a converge reporting
+success over them.
+
+**No context-compression proxy, deliberately.** Headroom
+(headroomlabs-ai/headroom) was built into this role and taken back out before it
+shipped. It works by pointing `ANTHROPIC_BASE_URL` at a local proxy, and Claude
+Code gates capabilities on `api.anthropic.com`: behind any custom base URL it
+stops sending the `context-1m` beta header and accounts against 200k
+([headroom #1158](https://github.com/headroomlabs-ai/headroom/issues/1158)),
+disables on-demand tool loading, inflating context by roughly 25K tokens
+([#746](https://github.com/headroomlabs-ai/headroom/issues/746)), and disables
+Remote Control outright
+([#1779](https://github.com/headroomlabs-ai/headroom/issues/1779), open, quoting
+Claude Code's own *"Remote Control is only available when using Claude via
+api.anthropic.com"*). Trading a 1M window for token compression is a losing
+trade. The 1M half is partly recoverable with a `[1m]`-suffixed model alias and
+tool search with `ENABLE_TOOL_SEARCH=true`; Remote Control is not. Check whether
+that gating still holds before anyone re-adds it.
+
+Neither Codex nor the plugin works straight off a converge. Both need an
+interactive `codex login` (`codex login --device-auth` where there is no
+browser), which the deploy deliberately does not automate: it would put a
+per-user credential in the deploy path of a public repo.
 
 ### Targeted deployment roles (opt-in, not in any persona)
 
@@ -564,9 +640,23 @@ golangci-lint is here for a different reason: Fedora does package it, but the
 build trails upstream, and a linter behind the Go toolchain cannot read the
 newer stdlib.
 
-`hyperi-update` (the "update my system" command) runs all three tiers plus the
-OS / snap / flatpak sweep, so one command brings everything current. soe
-schedules it on a timer; the base leaves update cadence to the host.
+**Codex fits no tier cleanly.** On macOS it is Tier 1: the `codex` cask, swept
+by `brew upgrade`. On Linux there is no repo, no snap and no language manager,
+and it is not Tier 3 either - the release asset is a package TREE that has to be
+staged and symlinked, not a bare binary the re-fetch helpers could drop into
+`/usr/local/bin`. Its update path is re-running the official installer, which
+resolves the current release, verifies the payload digest and short-circuits
+when what is staged is already current. `hyperi-update` does exactly that,
+guarded on codex being present.
+
+The Codex plugin is a channel of its own again: `claude plugin update
+codex@openai-codex`, which `claude update` does not reach because that moves the
+CLI and not its marketplace plugins.
+
+`hyperi-update` (the "update my system" command) runs all three tiers and the
+two out-of-tier channels above, plus the OS / snap / flatpak sweep, so one
+command brings everything current. soe schedules it on a timer; the base leaves
+update cadence to the host.
 
 ## Checking what a host actually has
 

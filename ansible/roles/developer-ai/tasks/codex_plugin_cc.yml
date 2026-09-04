@@ -1,0 +1,296 @@
+---
+# codex-plugin-cc -- OpenAI's Codex plugin FOR Claude Code.
+#
+# This is the piece that makes the arrangement Claude-first: it adds /codex:*
+# slash commands and a codex-rescue subagent INSIDE Claude Code, so a review or
+# a second opinion is something Claude asks Codex for. It embeds no Codex
+# runtime of its own -- it shells out to the `codex` binary on PATH.
+#
+# THE DEPENDENCIES ARE HARD, AND ALL THREE ARE PER USER.
+#
+#   Claude Code   it is a Claude Code plugin. Nothing else loads it.
+#   codex         `codex --version` AND `codex app-server --help` must both
+#                 answer. The plugin checks both; an old Codex reports
+#                 "advanced runtime unavailable", which is a different failure
+#                 from an absent one and looks identical from the outside.
+#   node >= 18.18 the plugin's hooks.json runs `node <script>.mjs` directly, so
+#                 node is needed even where Codex was installed as a standalone
+#                 binary and npm never entered the picture.
+#
+# Without them the plugin still INSTALLS and its slash commands still appear --
+# they just throw on every invocation. That is the failure this gate prevents.
+#
+# The plugin's own release cadence is far behind the CLI's (last commit
+# 2026-07-08, against a Codex shipping several stable releases a week). The
+# two-probe gate below catches an OLD codex under a new plugin; it cannot catch
+# a new codex under an old plugin, which is the direction actually running.
+# `--tags-exclude codex-plugin` is the way out if that ever bites.
+
+# Set first so every later branch, including the skip, leaves it defined.
+# verify.yml gates on THIS rather than on the dependency probe: a plugin that
+# was never asked for must not fail a verify, and a plugin whose install failed
+# must surface as the warning it already recorded rather than as an aborted run
+# that suppresses playbooks/main.yml's whole post_tasks report.
+- name: Assume the Codex plugin is not installed until proven otherwise
+  ansible.builtin.set_fact:
+    developer_ai_plugin_ok: false
+
+# ============================================================================
+# THE GATE
+# ============================================================================
+- name: Skip the Codex plugin and say exactly what is missing
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+  # accumulator playbooks/main.yml post_tasks reports from. See
+  # docs/resilient-deploy.md.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['codex-plugin-cc: skipped for ' ~ actual_user ~ ' -- '
+            ~ ([]
+               + (['Claude Code is not installed (add the claude tag)']
+                  if not developer_ai_claude_present | bool else [])
+               + (['the Codex CLI is missing or too old for its app server '
+                   ~ '(add the codex tag)']
+                  if not developer_ai_codex_present | bool else [])
+               + (['node ' ~ developer_ai_node_min_major ~ '+ is required by the '
+                   ~ "plugin's hooks and this host has "
+                   ~ (developer_ai_node_probe.stdout | default('none'))
+                   ~ ' (node ships in the developer base, so add the developer tag)']
+                  if not developer_ai_node_ok | bool else [])
+              ) | join('; ')] }}
+  when: >-
+    not (developer_ai_claude_present | bool
+         and developer_ai_codex_present | bool
+         and developer_ai_node_ok | bool)
+
+# Everything below is gated on the same condition. A block keeps the gate in
+# one place rather than repeating it on eight tasks, where one would eventually
+# be missed.
+- name: Install the Codex plugin for Claude Code
+  when:
+    - developer_ai_claude_present | bool
+    - developer_ai_codex_present | bool
+    - developer_ai_node_ok | bool
+  block:
+
+    # ========================================================================
+    # MARKETPLACE
+    # ========================================================================
+    # A plugin is installed as plugin@marketplace, so the marketplace has to be
+    # known first. `openai-codex` is the name declared in the repo's own
+    # .claude-plugin/marketplace.json -- not a name we choose, and not the repo
+    # path, which is why both are carried in defaults.
+    #
+    # --json because the human-readable output is not a contract. The shape is
+    # a list of objects with `name`, `source` and `repo`.
+    - name: List the marketplaces Claude Code knows about
+      ansible.builtin.command:
+        cmd: claude plugin marketplace list --json
+      environment: "{{ developer_ai_env | combine({'HOME': user_home}) }}"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_ai_marketplaces
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # Parsing is wrapped because `from_json` on anything that is not JSON raises
+    # a template error, and a template error in a set_fact is a task failure
+    # that aborts the play. `claude` emitting an update notice, a first-run
+    # banner or an ANSI-coloured warning on stdout is enough to trigger it. The
+    # rescue is what makes the comment "treated as not present" true rather than
+    # aspirational.
+    #
+    # MATCHED ON name AND repo, not name alone. A marketplace called
+    # `openai-codex` that someone else registered first would otherwise satisfy
+    # the check, and `plugin install codex@openai-codex` would take a Claude
+    # Code plugin -- SessionStart and Stop hooks running node in this user's
+    # home -- from whatever source that marketplace points at.
+    - name: Interpret the marketplace list
+      block:
+        - name: Determine the Codex marketplace's registration state
+          ansible.builtin.set_fact:
+            developer_ai_marketplace_entries: >-
+              {{ ((developer_ai_marketplaces.stdout | default('') | trim) or '[]')
+                 | from_json
+                 | selectattr('name', 'defined')
+                 | selectattr('name', 'equalto', developer_ai_codex_plugin_marketplace)
+                 | list }}
+
+        - name: Split registered-and-correct from registered-to-something-else
+          ansible.builtin.set_fact:
+            developer_ai_marketplace_known: >-
+              {{ developer_ai_marketplace_entries
+                 | selectattr('repo', 'defined')
+                 | selectattr('repo', 'equalto', developer_ai_codex_plugin_repo)
+                 | list | length > 0 }}
+            developer_ai_marketplace_conflict: >-
+              {{ developer_ai_marketplace_entries | length > 0
+                 and (developer_ai_marketplace_entries
+                      | selectattr('repo', 'defined')
+                      | selectattr('repo', 'equalto', developer_ai_codex_plugin_repo)
+                      | list | length == 0) }}
+
+      rescue:
+        - name: Treat an unreadable marketplace list as not registered
+          ansible.builtin.set_fact:
+            developer_ai_marketplace_known: false
+            developer_ai_marketplace_conflict: false
+
+    # Refuse rather than install through it. Adding our marketplace would not
+    # displace theirs, and installing anyway would run their code.
+    - name: Refuse to install through a marketplace pointing somewhere else
+      # noqa: var-naming[no-role-prefix] -- see the note above.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['codex-plugin-cc: NOT installed for ' ~ actual_user
+                ~ ' -- a marketplace named ' ~ developer_ai_codex_plugin_marketplace
+                ~ ' is already registered and does not point at '
+                ~ developer_ai_codex_plugin_repo ~ '. Installing through it would '
+                ~ 'run a third party as a Claude Code plugin. Resolve by hand: '
+                ~ 'claude plugin marketplace list'] }}
+      when: developer_ai_marketplace_conflict | bool
+
+    - name: Add the Codex marketplace
+      ansible.builtin.command:
+        cmd: claude plugin marketplace add {{ developer_ai_codex_plugin_repo }}
+      environment: "{{ developer_ai_env | combine({'HOME': user_home}) }}"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_ai_marketplace_add
+      changed_when: developer_ai_marketplace_add.rc == 0
+      failed_when: false
+      when:
+        - not developer_ai_marketplace_known | bool
+        - not developer_ai_marketplace_conflict | bool
+        - not ansible_check_mode
+
+    # ========================================================================
+    # PLUGIN
+    # ========================================================================
+    - name: List the plugins Claude Code has installed
+      ansible.builtin.command:
+        cmd: claude plugin list --json
+      environment: "{{ developer_ai_env | combine({'HOME': user_home}) }}"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_ai_plugins
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Interpret the plugin list
+      block:
+        - name: Determine whether the Codex plugin is already installed
+          ansible.builtin.set_fact:
+            developer_ai_plugin_installed: >-
+              {{ (developer_ai_codex_plugin_name ~ '@' ~ developer_ai_codex_plugin_marketplace)
+                 in (((developer_ai_plugins.stdout | default('') | trim) or '[]')
+                     | from_json | map(attribute='id') | list) }}
+
+      rescue:
+        - name: Treat an unreadable plugin list as not installed
+          ansible.builtin.set_fact:
+            developer_ai_plugin_installed: false
+
+    # --yes because stdin and stdout are not a TTY under Ansible, which is the
+    # documented trigger for the confirmation prompt. This plugin declares a
+    # path source rather than a command source, so there should be nothing to
+    # confirm -- the flag costs nothing and removes the one shape that could
+    # hang an unattended converge.
+    #
+    # --scope explicitly, even though `user` is also the CLI default: user
+    # scope here means the TARGET user's ~/.claude, and that is the whole
+    # reason this task runs under become_user rather than as the connecting
+    # account.
+    - name: Install the Codex plugin
+      ansible.builtin.command:
+        cmd: >-
+          claude plugin install
+          {{ developer_ai_codex_plugin_name }}@{{ developer_ai_codex_plugin_marketplace }}
+          --scope {{ developer_ai_codex_plugin_scope }}
+          --yes
+      environment: "{{ developer_ai_env | combine({'HOME': user_home}) }}"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_ai_plugin_install
+      changed_when: developer_ai_plugin_install.rc == 0
+      failed_when: false
+      when:
+        - not developer_ai_plugin_installed | bool
+        - not developer_ai_marketplace_conflict | bool
+        - not ansible_check_mode
+
+    # ========================================================================
+    # VERIFY, RATHER THAN ASSUME
+    # ========================================================================
+    # Every command above carries failed_when: false so a bad one cannot sink a
+    # run that is also installing other things. That bargain is only honest if
+    # something afterwards checks the result -- otherwise the role reports
+    # success on a box where nothing was installed.
+    - name: Confirm the Codex plugin is installed
+      ansible.builtin.command:
+        cmd: claude plugin list --json
+      environment: "{{ developer_ai_env | combine({'HOME': user_home}) }}"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_ai_plugins_after
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: not ansible_check_mode
+
+    - name: Record whether the Codex plugin took
+      when: not ansible_check_mode
+      block:
+        - name: Read the plugin back by id
+          ansible.builtin.set_fact:
+            developer_ai_plugin_ok: >-
+              {{ (developer_ai_codex_plugin_name ~ '@' ~ developer_ai_codex_plugin_marketplace)
+                 in (((developer_ai_plugins_after.stdout | default('') | trim) or '[]')
+                     | from_json | map(attribute='id') | list) }}
+
+      rescue:
+        - name: Treat an unreadable plugin list as a failed install
+          ansible.builtin.set_fact:
+            developer_ai_plugin_ok: false
+
+    - name: Record that the Codex plugin did not install
+      # noqa: var-naming[no-role-prefix] -- see the note above.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['codex-plugin-cc: install did not take for ' ~ actual_user ~ ' -- '
+                ~ (developer_ai_plugin_install.stderr | default('no error reported')
+                   | trim | truncate(160))] }}
+      when:
+        - not ansible_check_mode
+        - not developer_ai_marketplace_conflict | bool
+        - not developer_ai_plugin_ok | bool
+
+    # ========================================================================
+    # WHAT THIS DELIBERATELY DOES NOT DO
+    # ========================================================================
+    # `/codex:setup --enable-review-gate` installs a Stop hook with a 900 second
+    # timeout that can put Claude and Codex into a long-running loop. Upstream's
+    # own README warns it "may drain usage limits quickly. Only enable it when
+    # you plan to actively monitor the session." A provisioning run is the exact
+    # opposite of an actively monitored session, so the gate is never armed
+    # here -- it stays a deliberate per-developer choice.
+    #
+    # `/codex:setup` itself is also left alone: it is an in-session slash
+    # command that expects a signed-in Codex, and sign-in is the human's step.
+    - name: Note how to finish setting the Codex plugin up
+      ansible.builtin.debug:
+        msg: |
+          Codex plugin installed for {{ actual_user }}. To finish, in Claude Code:
+
+            /codex:setup        # once, after `codex login`
+            /codex:review       # read-only review of the working tree
+            /codex:adversarial-review
+
+          The review gate (/codex:setup --enable-review-gate) is NOT enabled by
+          this deploy: it can loop Claude and Codex against each other and burn
+          usage limits unattended. Turn it on yourself if you want it.
+      when: developer_ai_plugin_ok | bool

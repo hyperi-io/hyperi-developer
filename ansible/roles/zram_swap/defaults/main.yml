@@ -1,0 +1,37 @@
+---
+# zram swap.
+#
+# This exists for ONE reason: cgroup memory throttling is implemented as
+# reclaim. `MemoryHigh` does not block an allocation, it pushes the cgroup into
+# reclaim and lets it continue. On a host with NO swap the only reclaimable
+# memory is page cache, so once a build's ANONYMOUS memory passes the line
+# there is nothing left to reclaim and the throttle stops being a slowdown and
+# becomes a stall.
+#
+# zram makes anonymous pages reclaimable again by compressing them in RAM. It
+# is not extra capacity and it is not a swap tier -- it is somewhere for the
+# throttle to push, so a build over its budget degrades instead of wedging.
+# That is why a few GB is the right size and a disk-backed swap file is not the
+# same thing.
+
+zram_swap_enabled: true
+
+# MiB, evaluated by the generator against this host's own RAM. Capped at 8 GiB
+# because the point is a reclaim target, not capacity: 246 GB gets 8192,
+# 32 GB gets 4096, 8 GB gets 1024.
+zram_swap_size: "min(ram / 8, 8192)"
+
+# zstd compresses harder than lzo-rle for a little more CPU, which is the right
+# trade here -- the device is small and the host has cores to spare.
+zram_swap_compression: zstd
+
+# 180, not the stock 60. Swappiness balances reclaiming page cache against
+# reclaiming anonymous memory, and it was tuned for swap that costs a disk seek.
+# zram costs a memcpy and a compress, so anonymous memory is the CHEAPER thing
+# to reclaim and the default has the balance backwards. Values above 100 need
+# kernel 5.8 or newer.
+#
+# This is correct for the zram-ONLY swap this role sets up. Set it to "" to
+# leave the host's swappiness alone -- which is what you want if the box also
+# has disk swap, because 180 would then push anonymous pages onto a disk.
+zram_swap_swappiness: 180

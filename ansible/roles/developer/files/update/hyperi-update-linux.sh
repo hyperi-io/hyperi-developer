@@ -14,6 +14,8 @@
 #   * Go toolchain     (/usr/local/go, no upstream repo) — needs sudo
 #   * fnm Node majors  (the n-1 Node, per user)         — user
 #   * Claude Code CLI  (self-installed under ~/.local)  — user
+#   * Codex CLI        (re-run of the installer)        - user
+#   * Codex plugin     (claude plugin update)           - user
 #
 # Note on the dev stacks: node, gh, docker and git come from UPSTREAM signed
 # repos, so "System packages" above already carries them to latest -- there is
@@ -130,6 +132,8 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     have npm      && printf '  - npm global tools + pnpm\n'
     printf '  - static release binaries (kind, argocd, kubeconform, kube-linter, dive, kustomize, k9s, yq, terraform-docs, golangci-lint)\n'
     have claude   && printf '  - Claude Code CLI\n'
+    have codex    && printf '  - Codex CLI (re-run of the official installer)\n'
+    have claude   && printf '  - the Codex plugin for Claude Code, if installed\n'
     [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
     read -r -p "Proceed? [y/N] " confirm
@@ -509,6 +513,59 @@ if have claude; then
     run "claude update" claude update
 else
     skip "claude not found in PATH"
+fi
+
+# --- Codex CLI -------------------------------------------------------------
+# No apt/dnf repo, no snap, no language manager -- and not a Tier 3 static
+# binary either, because the release asset is a package TREE that has to be
+# staged and symlinked, not a bare executable the refetch_* helpers could drop
+# into /usr/local/bin. So nothing above reaches it.
+#
+# Re-running the official installer IS the update path: it resolves the current
+# release, verifies the package tarball against the published
+# codex-package_SHA256SUMS, and short-circuits when the staged version is
+# already current. There is no non-interactive `codex update` verb to prefer
+# over it. The installer script has no published checksum of its own, so what
+# the digest covers is the payload, not the script that fetches it.
+#
+# CODEX_NON_INTERACTIVE=1 is the installer's own knob for skipping prompts,
+# which is what keeps this safe under --yes and the weekly timer. Run as the
+# normal user (NOT under sudo) so it updates ~/.local/bin and ~/.codex, not
+# root's.
+section "Codex CLI"
+if have codex; then
+    codex_installer="$(mktemp)"
+    if curl -fsSL https://chatgpt.com/codex/install.sh -o "$codex_installer"; then
+        run "codex installer" env CODEX_NON_INTERACTIVE=1 sh "$codex_installer"
+    else
+        fail "Codex CLI: could not fetch the installer"
+    fi
+    rm -f "$codex_installer"
+else
+    skip "codex not found in PATH"
+fi
+
+# --- Codex plugin for Claude Code ------------------------------------------
+# `claude update` moves the CLI only; a marketplace plugin has its own update
+# verb. Gated on the plugin actually being installed as well as on claude, so
+# a box that never opted into the AI tooling does not take an update attempt
+# for a plugin it has never had. --json because the human-readable listing is
+# not a contract; the id is, and it is plugin@marketplace.
+#
+# --yes because stdin is not a TTY under Ansible or the weekly timer, which is
+# the documented trigger for the confirmation prompt.
+#
+# A string test rather than `| grep -q`: grep exits on the first match and
+# closes the pipe, the producer takes SIGPIPE, and under `set -o pipefail` the
+# pipeline then reports failure on a MATCH. That would skip the update on
+# exactly the boxes that have the plugin, intermittently, by output size.
+section "Codex plugin (Claude Code)"
+if ! have claude; then
+    skip "claude not found in PATH"
+elif [[ "$(claude plugin list --json 2>/dev/null)" == *codex@openai-codex* ]]; then
+    run "claude plugin update codex" claude plugin update codex@openai-codex --yes
+else
+    skip "the Codex plugin is not installed"
 fi
 
 # --- Arcane ----------------------------------------------------------------

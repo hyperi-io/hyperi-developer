@@ -134,12 +134,21 @@ developer installed is their call.
 `build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
 says so and leaves the per-project layout alone, so the default stays safe.
 
+## Bounding concurrent builds
+
+`hyperi-rust-govern` is installed as `~/.local/bin/cargo`, ahead of the real
+cargo on PATH, so a developer or an agent who knows none of this runs
+`cargo build` and is governed: the build lands in `rust-build.slice` and holds
+one of N slots, where N is derived from the slice's memory budget. How N is
+chosen, what happens at saturation, and why it needs the `zram_swap` role are in
+[docs/rust-build-governor.md](../../../docs/rust-build-governor.md).
+
 ## SSoT
 
 This role is the source of truth for the global Cargo config. It was
 `hyperi-ci`'s `scripts/setup-rust-dev.py` until 2026-07-17.
 
-That script is not what got ported. A review found it could not be adopted:
+That script is not what got ported. It could not be adopted:
 
 - It moved `target/` directories across filesystems with `os.rename`, which
   raises `EXDEV` and has no copy fallback. Proven on a real host where

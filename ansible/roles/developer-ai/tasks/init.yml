@@ -1,0 +1,118 @@
+---
+# Dependency probe. Everything else in this role gates on the facts set here.
+#
+# WHY PROBE RATHER THAN DECLARE. Two of the three dependencies cannot be
+# expressed in the role graph at all (see meta/main.yml), and the one that
+# could -- Claude Code -- is installed PER USER on Linux, to
+# ~/.local/bin/claude. A role graph answers "was this role selected", not "does
+# this user have the binary", and on a host of unknown state those are
+# different questions. A converge that assumed the first would report success
+# while installing a plugin that throws on every invocation.
+#
+# Every probe below therefore runs AS THE TARGET USER, not as whoever Ansible
+# connected as. On a fleet machine those differ: the connection is a service
+# account whose home holds none of these tools, so a probe under `become: false`
+# would report "missing" on a perfectly good workstation -- or, worse, report
+# "present" for a service account that has a copy the developer cannot reach.
+
+# ============================================================================
+# CLAUDE CODE
+# ============================================================================
+# Hard dependency of the Codex plugin -- the plugin IS a Claude Code plugin,
+# so nothing else can load it. Installed by roles/soe/tasks/claude.yml, which
+# also carries HyperI org policy, hence `--tags claude` as the narrow fix in
+# the warnings rather than `--tags soe`.
+- name: Probe for Claude Code
+  ansible.builtin.command:
+    cmd: claude --version
+  environment: "{{ developer_ai_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_ai_claude_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# ============================================================================
+# CODEX CLI
+# ============================================================================
+# Probed BEFORE codex.yml runs, because tag selection can reach a consumer
+# without its producer: `--tags codex-plugin` on a box that already has Codex
+# must work, and must not claim Codex is missing merely because this run did
+# not install it. codex.yml re-sets this fact after it installs.
+#
+# Two probes, not one. The plugin's own availability check (its
+# scripts/lib/codex.mjs) runs `codex --version` AND `codex app-server --help`,
+# and reports "advanced runtime unavailable" when the second fails. So a Codex
+# that is present but too old is a live failure mode, not just an absent one,
+# and a single version probe would call that box ready.
+- name: Probe for the Codex CLI
+  ansible.builtin.command:
+    cmd: codex --version
+  environment: "{{ developer_ai_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_ai_codex_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Probe the Codex app-server runtime the plugin drives
+  ansible.builtin.command:
+    cmd: codex app-server --help
+  environment: "{{ developer_ai_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_ai_codex_appserver_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: developer_ai_codex_probe.rc | default(1) == 0
+
+# ============================================================================
+# NODE
+# ============================================================================
+# Hard dependency of the PLUGIN, not of Codex. The plugin's hooks.json invokes
+# `node <script>.mjs` directly, so node is required even where Codex was
+# installed as a standalone binary with no npm anywhere in the picture. Node
+# lives in the `developer` base, NOT in `developer-node` (which is eslint and
+# prettier) -- so the tag that fixes a missing node is `developer`.
+- name: Probe for node
+  ansible.builtin.command:
+    cmd: node --version
+  environment: "{{ developer_ai_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_ai_node_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# An absent node leaves stdout empty, the regex matches nothing, and the int
+# filter yields 0 -- which fails the minimum test exactly as a too-old node
+# does. One code path for "no node" and "wrong node".
+- name: Resolve the node major version
+  ansible.builtin.set_fact:
+    developer_ai_node_major: >-
+      {{ developer_ai_node_probe.stdout | default('')
+         | regex_replace('^v?([0-9]+).*$', '\1') | int }}
+
+# ============================================================================
+# THE FACTS EVERYTHING ELSE GATES ON
+# ============================================================================
+- name: Record which agent tooling this user already has
+  ansible.builtin.set_fact:
+    developer_ai_claude_present: "{{ developer_ai_claude_probe.rc | default(1) == 0 }}"
+    developer_ai_codex_present: >-
+      {{ developer_ai_codex_probe.rc | default(1) == 0
+         and developer_ai_codex_appserver_probe.rc | default(1) == 0 }}
+    developer_ai_node_ok: "{{ developer_ai_node_major | int >= developer_ai_node_min_major | int }}"
+
+- name: Display the dependency probe result
+  ansible.builtin.debug:
+    msg: |
+      AI agent tooling for {{ actual_user }} ({{ user_home }}):
+        Claude Code : {{ developer_ai_claude_probe.stdout | default('not found') }}
+        Codex CLI   : {{ developer_ai_codex_probe.stdout | default('not found') }}
+        node        : {{ developer_ai_node_probe.stdout | default('not found') }}
+                      {{ 'ok' if developer_ai_node_ok else 'need >= ' ~ developer_ai_node_min_major }}

@@ -1,0 +1,35 @@
+---
+galaxy_info:
+  author: HyperI
+  description: >-
+    Opt-in AI coding-agent tooling: the OpenAI Codex CLI as a second opinion
+    alongside Claude Code, plus OpenAI's Codex plugin for Claude Code.
+  company: HyperI
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Fedora
+      versions: ['43', '44']
+    - name: Ubuntu
+      versions: ['noble', 'resolute']
+
+# NO meta dependencies, deliberately, and the reason is worth stating because
+# the obvious wiring is wrong twice over.
+#
+# 1. Claude Code is a hard dependency of the Codex plugin, and the only role
+#    that installs it today is `soe`. Depending on soe would drag HyperI ORG
+#    POLICY -- VPN clients, telemetry-disable, branding, managed settings --
+#    onto a machine that asked for a code-review tool. roles/soe/tasks/main.yml
+#    is explicit that soe holds only "what we would have no business putting on
+#    anyone else's machine", so pulling it from here would break that contract.
+#
+# 2. Node is a hard dependency of the plugin's hooks, and it does NOT come from
+#    `developer-node` -- that role installs eslint and prettier. Node itself is
+#    in the `developer` base. So a dependency on developer-node would look
+#    right, satisfy the linter, and supply nothing.
+#
+# The dependencies are therefore PROBED on the target and reported by name --
+# see tasks/init.yml. That is also the honest shape for a host of unknown
+# state: the answer to "is Claude Code here" is per-USER on Linux (it installs
+# to ~/.local/bin/claude), so no role graph could answer it anyway.
+dependencies: []
