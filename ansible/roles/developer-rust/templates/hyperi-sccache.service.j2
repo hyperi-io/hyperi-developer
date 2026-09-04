@@ -11,7 +11,10 @@ Type=simple
 {% if rust_governor_enabled | default(true) %}
 # Compiles execute inside this server, not inside cargo, so the server must
 # live in the governed slice or the rust-build budget misses most of the work.
-Slice=rust-build.slice
+# The same goes for priority: a compile here inherits nothing from the nice 19
+# the shim put on cargo, so the server carries its own.
+Slice=rustbuild.slice
+Nice=19
 {% endif %}
 Environment=SCCACHE_START_SERVER=1
 Environment=SCCACHE_NO_DAEMON=1
