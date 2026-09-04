@@ -2,9 +2,9 @@
 
 `hyperi-rust-govern` is installed by the `developer-rust` role as
 `~/.local/bin/cargo`, ahead of the real cargo on PATH, so a developer or an
-agent who knows none of this runs `cargo build` and is governed. It places the
-build in `rust-build.slice` and holds one of N build slots for the build's
-lifetime.
+agent who knows none of this runs `cargo build` and is governed. It holds one of
+N build slots for the build's lifetime, and on Linux with a live user manager it
+also places the build in `rust-build.slice`.
 
 ## How N is chosen
 
@@ -79,6 +79,7 @@ and sccache misses on the changed source with nothing to fall back on.
 
 Turn it on for a build box, a CI runner, or a workstation running many sessions
 against the same workspaces, where builds start from clean trees and there is no
-incremental state to lose. Opting out by hand is
-`HYPERI_RUST_GOVERN_NO_INCREMENTAL=0`, not `CARGO_INCREMENTAL=1` -- the latter
-makes sccache refuse the build outright.
+incremental state to lose. `HYPERI_RUST_GOVERN_NO_INCREMENTAL=1` turns it on for
+one invocation where the role left it off, and `=0` opts out where the role
+turned it on. Neither is `CARGO_INCREMENTAL=1`, which makes sccache refuse the
+build outright.

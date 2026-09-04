@@ -30,8 +30,9 @@ but it is Linux-x86-64 only with no LTO support, so it is a candidate rather
 than a default. Ubuntu, Debian, Fedora and macOS.
 
 Note sccache does not cache incremental compilation, which the `dev` profile
-enables by default; it passes those through. The wins show up on `--release`
-and on clean rebuilds.
+enables by default; those calls pass through uncached. Setting
+`CARGO_INCREMENTAL=1` by hand is different again - sccache then refuses the
+build outright. The wins show up on `--release` and on clean rebuilds.
 
 ## Keeping the caches bounded
 
@@ -85,8 +86,8 @@ unaffected.
 
 `hyperi-rust-cache-prune` then bounds that pool on a schedule -- a systemd timer
 on Linux, a launchd agent on macOS, daily and at idle IO priority. It drops
-workspaces not built for `rust_cache_max_age_days`, then evicts
-least-recently-built ones until the pool is under `rust_cache_build_dir_max`.
+workspaces not built for `rust_cache_max_age_days`, then evicts the oldest by
+build time until the pool is under `rust_cache_build_dir_max`.
 It touches no project `target/`, and reports the self-capping caches without
 pruning them.
 
@@ -138,10 +139,12 @@ says so and leaves the per-project layout alone, so the default stays safe.
 
 `hyperi-rust-govern` is installed as `~/.local/bin/cargo`, ahead of the real
 cargo on PATH, so a developer or an agent who knows none of this runs
-`cargo build` and is governed: the build lands in `rust-build.slice` and holds
-one of N slots, where N is derived from the slice's memory budget. How N is
-chosen, what happens at saturation, and why it needs the `zram_swap` role are in
-[docs/rust-build-governor.md](../../../docs/rust-build-governor.md).
+`cargo build` and is governed: it holds one of N slots sized from the memory
+budget, and on Linux with a live user manager also lands in `rust-build.slice`.
+How N is chosen, what happens at saturation, and why it needs the `zram_swap`
+role are in [docs/rust-build-governor.md](../../../docs/rust-build-governor.md).
+The host-wide picture is
+[docs/concurrent-dev-cache.md](../../../docs/concurrent-dev-cache.md).
 
 ## SSoT
 
