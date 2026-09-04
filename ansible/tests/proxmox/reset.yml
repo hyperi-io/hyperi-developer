@@ -1,0 +1,145 @@
+---
+# Return a test VM to its clean snapshot, start it, and write an inventory for
+# it, so hyperi-developer can be run against a known state and then the run
+# thrown away.
+#
+#   ansible-playbook tests/proxmox/reset.yml -e vmid=8101
+#   ansible-playbook -i tests/proxmox/inventory_proxmox.yml playbooks/main.yml --tags developer-rust
+#   ansible-playbook tests/proxmox/reset.yml -e vmid=8101 -e start=false
+#
+# A test VM is off except while a test runs. The last line returns it to the
+# snapshot and leaves it stopped.
+#
+# Snapshot name, login user and password default to the TEST VMS block in
+# tests/.env and can be overridden per VM:
+#
+#   ansible-playbook tests/proxmox/reset.yml -e vmid=8100 -e snapshot=initial_build \
+#       -e test_user=dfe -e test_password=dfe
+
+- name: Reset a test VM to its clean snapshot
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    start: true
+  module_defaults:
+    community.proxmox.proxmox_vm_info: &api
+      api_host: "{{ env.PROXMOX_HOST }}"
+      # A token, never a password. PROXMOX_TOKEN_ID is user@realm!name as
+      # hyperi-infra stores it; the modules take the two halves separately.
+      api_user: "{{ env.PROXMOX_TOKEN_ID.split('!')[0] }}"
+      api_token_id: "{{ env.PROXMOX_TOKEN_ID.split('!')[1] }}"
+      api_token_secret: "{{ env.PROXMOX_TOKEN_SECRET }}"
+      validate_certs: "{{ env.PROXMOX_API_VERIFY_SSL | default('true') | bool }}"
+    community.proxmox.proxmox_kvm: *api
+    community.proxmox.proxmox_snap: *api
+  tasks:
+    - name: Require a vmid
+      ansible.builtin.assert:
+        that: vmid is defined and vmid | string | length > 0
+        fail_msg: "pass -e vmid=<id>"
+        quiet: true
+
+    - name: Load tests/.env
+      ansible.builtin.include_tasks:
+        file: ../common/setup_env.yml
+
+    - name: Resolve the per-VM settings
+      ansible.builtin.set_fact:
+        snapshot: "{{ snapshot | default('clean', true) }}"
+        test_user: "{{ test_user | default(env.PROXMOX_TEST_USER, true) }}"
+        test_password: "{{ test_password | default(env.PROXMOX_TEST_PASSWORD, true) }}"
+
+    - name: Refuse a vmid outside the test range
+      ansible.builtin.include_tasks:
+        file: tasks/require_test_vmid.yml
+
+    - name: Look up the VM
+      community.proxmox.proxmox_vm_info:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        config: current
+      register: proxmox_vm
+
+    - name: Refuse a vmid that does not exist
+      ansible.builtin.assert:
+        that: proxmox_vm.proxmox_vms | length == 1
+        fail_msg: "no VM with vmid {{ vmid }} on {{ env.PROXMOX_NODE }}"
+        quiet: true
+
+    # A static VM is reached by its address, so nothing here waits on DNS. A
+    # DHCP VM is reached by the name the lab DNS registers for its lease: the
+    # VM name with the domain appended, unless it is already a FQDN.
+    - name: Resolve the address Ansible reaches the VM on
+      ansible.builtin.set_fact:
+        vm_host: >-
+          {{ proxmox_static[0] if proxmox_static | length > 0 else
+             (proxmox_name if '.' in proxmox_name else proxmox_name ~ '.' ~ env.PROXMOX_TEST_DOMAIN) }}
+      vars:
+        proxmox_name: "{{ proxmox_vm.proxmox_vms[0].name }}"
+        proxmox_static: "{{ proxmox_vm.proxmox_vms[0].config.ipconfig0 | default('') | regex_findall('ip=([0-9.]+)/') }}"
+
+    # Stopped before rollback. A rollback of a running VM to a snapshot taken
+    # without vmstate is a hard reset, and the stop makes the ordering explicit
+    # rather than incidental.
+    - name: Stop the VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        state: stopped
+        force: true
+        timeout: 300
+
+    - name: Roll back to the snapshot
+      community.proxmox.proxmox_snap:
+        vmid: "{{ vmid }}"
+        snapname: "{{ snapshot }}"
+        state: rollback
+
+    - name: Start the VM
+      community.proxmox.proxmox_kvm:
+        node: "{{ env.PROXMOX_NODE }}"
+        vmid: "{{ vmid }}"
+        state: started
+      when: start | bool
+
+    - name: Wait for SSH
+      ansible.builtin.wait_for:
+        host: "{{ vm_host }}"
+        port: 22
+        timeout: 600
+      when: start | bool
+
+    - name: Drop the inventory of a VM left stopped
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/inventory_proxmox.yml"
+        state: absent
+      when: not start | bool
+
+    # Overwritten on every reset, and gitignored: it carries the login.
+    - name: Write the inventory
+      when: start | bool
+      ansible.builtin.copy:
+        dest: "{{ playbook_dir }}/inventory_proxmox.yml"
+        mode: '0600'
+        content: |
+          [test_vm]
+          {{ vm_host }}
+
+          [test_vm:vars]
+          ansible_user={{ test_user }}
+          ansible_ssh_private_key_file={{ env.PROXMOX_TEST_SSH_KEY }}
+          ansible_become_password={{ test_password }}
+          # A rolled-back VM presents the same host key every time, but a
+          # recreated one does not, and this file is thrown away with it.
+          # IdentitiesOnly: the client would otherwise offer every agent key
+          # first and exhaust sshd's MaxAuthTries before reaching this one.
+          ansible_ssh_common_args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          vmid {{ vmid }} ({{ proxmox_vm.proxmox_vms[0].name }}) is back at
+          '{{ snapshot }}' and
+          {{ 'running at ' ~ vm_host ~ '. Next: ansible-playbook -i tests/proxmox/inventory_proxmox.yml playbooks/main.yml'
+             if start | bool else 'stopped.' }}
