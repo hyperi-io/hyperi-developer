@@ -6,6 +6,7 @@
 - name: Delete a test VM
   hosts: localhost
   connection: local
+  become: false
   gather_facts: false
   module_defaults:
     community.proxmox.proxmox_vm_info: &api

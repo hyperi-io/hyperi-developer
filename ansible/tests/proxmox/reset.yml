@@ -20,6 +20,9 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  # ansible.cfg turns become on for every play; here it would write the
+  # inventory as root, 0600, unreadable by the user about to run against it.
+  become: false
   vars:
     start: true
   module_defaults:
