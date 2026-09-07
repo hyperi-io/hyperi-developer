@@ -16,6 +16,7 @@
 - name: Clone a base template into the test range
   hosts: localhost
   connection: local
+  become: false
   gather_facts: false
   vars:
     snapshot: clean
@@ -215,6 +216,7 @@
 - name: Stop and snapshot the clean state
   hosts: localhost
   connection: local
+  become: false
   gather_facts: false
   # Play vars do not cross plays; -e still overrides both.
   vars:

@@ -359,10 +359,13 @@
 # ============================================================
 # Build dependencies for cargo tools that compile from source
 # ============================================================
+# rustc links through `cc`, and a clean cloud image ships without one: the
+# first `cargo install` on a fresh Fedora fails at `linker cc not found`.
 
 - name: Install cargo build dependencies (Ubuntu)
   ansible.builtin.apt:
     name:
+      - build-essential
       - libssl-dev
       - pkg-config
     state: present
@@ -371,6 +374,7 @@
 - name: Install cargo build dependencies (Fedora)
   ansible.builtin.dnf:
     name:
+      - gcc
       - openssl-devel
       - pkg-config
     state: present
