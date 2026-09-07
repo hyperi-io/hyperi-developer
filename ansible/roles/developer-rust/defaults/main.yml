@@ -107,32 +107,18 @@ rust_sccache_service_manage: true
 # Concurrent cargo/rustc across several projects can OOM a host outright --
 # observed taking down a 30G build box. Opt-OUT: disabling it removes the
 # shim, the slice and the config.
+#
+# MEMORY is BOUNDED, by rustbuild.slice: MemoryHigh throttles by reclaim and
+# MemoryMax kills the build rather than the host. Both are percentages of the
+# host's own RAM, so one number fits a laptop and a build box.
+#
+# CPU is not bounded at all -- it is DEFERRED. Builds run at nice 19 under a
+# below-desktop CPUWeight, so they take every core while nobody else wants one
+# and drop to about a quarter the moment the desktop does. Nothing withholds
+# cores and nothing sets a job count: cargo's own default is already every
+# core, and rationing CPU costs throughput on an idle machine to buy
+# responsiveness that only matters on a busy one.
 rust_governor_enabled: true
-
-# How many rust builds may be resident at once, per user. A memory semaphore,
-# not a queue length: memory is spent per CRATE rather than per job, so the
-# thing worth bounding is concurrent BUILDS and the bound is the slice's memory
-# budget divided by what one build costs.
-#
-#   auto   derive from this host's RAM (see rust_governor_build_allowance_gb)
-#   <int>  pin the count; 1 is a global mutex, which is what this used to be
-#   0      no semaphore at all
-#
-# `auto` on a 32 GB host computes 1, which is the check that the model
-# reproduces the behaviour that is known to work.
-rust_governor_slots: auto
-
-# What one build is assumed to cost, in GB: the largest single rustc plus
-# headroom. Derived from an 11.6 GB peak on one workspace, so it is a starting
-# point rather than a constant -- a codebase whose memory scales with the job
-# count instead of with one huge crate will want a different number.
-rust_governor_build_allowance_gb: 14
-
-# Seconds to wait for a slot. On expiry the build proceeds at the FLOOR job
-# count, still inside the slice -- it degrades, it is not released. Waiting the
-# full time and then building unbounded would drop the limit at exactly the
-# moment contention is highest.
-rust_governor_lock_wait_seconds: 1800
 
 # Whether governed builds run with CARGO_INCREMENTAL=0, so sccache can cache
 # them. sccache refuses to cache any rustc call carrying -C incremental.
@@ -160,24 +146,17 @@ rust_governor_memory_high_pct: 50
 rust_governor_memory_max_pct: 70
 rust_governor_swap_max_pct: 25
 
-# Weight is contention-only: the desktop always wins under load, and an idle
-# machine still gives builds full speed. 100 is the systemd default weight.
+# Contention-only: the desktop wins under load, and an idle machine still gives
+# builds every core. 100 is the systemd default, so 30 is a bit under a third of
+# the desktop's share when both want the CPU at once. This, not the shim's nice
+# 19, is what makes a build yield on Linux -- rustbuild.slice.j2 says why.
 rust_governor_cpu_weight: 30
-
-# Cores held back from builds on any host with 4 or more; smaller hosts keep
-# every core. Taken off the top BEFORE the remainder is divided between
-# concurrent builds, so the desktop keeps its share at every slot count.
-rust_governor_cpu_reserve_cores: 2
-
-# macOS has no cgroups; builds run under this taskpolicy QoS clamp instead.
-# `utility` sits below the desktop without background's disk-IO throttle and
-# E-core pinning.
-rust_governor_macos_qos: utility
 
 # The user manager's runtime directory, for every `systemctl --user` call the
 # role makes. Defined once because the fallback is wrong on a fleet box:
 # actual_user_uid is set by the developer role's init, which does not run under
 # a --tags run, so every call then falls back to the CONNECTION user's uid.
 # When that is fixed it is fixed here, in one place.
+developer_rust_uid: "{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
 developer_rust_user_env:
-  XDG_RUNTIME_DIR: "/run/user/{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
+  XDG_RUNTIME_DIR: "/run/user/{{ developer_rust_uid }}"

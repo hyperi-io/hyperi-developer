@@ -215,7 +215,7 @@ is the meta-role pulling them all.
 | sccache | all | github-binary, latest each run (Tier 3) / brew |
 | cargo-sweep | all | cargo-binstall / cargo |
 | hyperi-rust-setup, hyperi-rust-cache-prune | all | role file -> `/usr/local/bin` |
-| build governor (`hyperi-rust-govern` + `rust-build.slice`) | all | role file + user unit |
+| build governor (`hyperi-rust-govern` + `rustbuild.slice`) | all | role file + user unit |
 
 Every cargo tool is installed with `--locked`, and `hyperi-update` refreshes them
 with `cargo install-update -a --locked`. `cargo install` ignores the crate's
@@ -242,15 +242,14 @@ full toolchain converge:
 
 The build governor is the same shape (`--tags rust-governor`), and opt-OUT
 (`-e rust_governor_enabled=false` removes it). Concurrent cargo/rustc across
-several projects can OOM a host outright, so: one build at a time per user
-(later ones wait on a lock), the whole tree -- sccache-hosted compiles
-included -- inside `rust-build.slice` with memory capped as a percentage of
-the host's RAM, CPU capped at cores minus two, and priority below the
-desktop. macOS has no cgroups and gets the lock, the job cap and a
-`taskpolicy` QoS clamp instead -- no hard memory ceiling.
-`HYPERI_RUST_GOVERNOR=off` bypasses one invocation.
+several projects can OOM a host outright, so: the whole tree -- sccache-hosted
+compiles included -- runs inside `rustbuild.slice` with memory capped as a
+percentage of the host's RAM, at nice 19 and a CPU weight below the desktop's.
+No core is withheld and no job count is set: builds take every core until
+something else wants one. macOS has no cgroups and gets nice 19 alone -- no
+hard memory ceiling. `HYPERI_RUST_GOVERNOR=off` bypasses one invocation.
 
-That tag installs both tools, writes the caps, and schedules the prune
+The `rust-cache` tag installs both tools, writes the caps, and schedules the prune
 (systemd timer on Linux, launchd agent on macOS). Sizes come from
 `rust_cache_*` in the role defaults; a build box overrides them per host.
 
