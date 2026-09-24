@@ -7,8 +7,9 @@
 # not track build artefacts and nothing upstream ever reclaims them.
 #
 # Two schedules, because a ceiling only binds while the tool runs. The daily
-# prune is the routine path. The guard runs hourly, costs one statvfs when the
-# disk has room, and prunes when free space drops below the floor.
+# prune is the routine path. The guard runs every five minutes as the user,
+# costs one statvfs when the disk has room, and below the floor prunes until the
+# free-space target is met.
 #
 # The whole file is optional: a machine with no cap still builds, so nothing
 # here may fail the run.
@@ -65,6 +66,7 @@
         group: root
         mode: '0644'
       become: true
+      register: developer_rust_guard_timer
       when: rust_cache_prune_guard_enabled | bool
 
     # Check mode does not write the unit files above, so systemd has nothing to
@@ -78,11 +80,13 @@
       become: true
       when: not ansible_check_mode
 
+    # Restarted when its schedule changes: a restart re-arms OnBootSec, which is
+    # already past, so the guard runs once straight away on the new schedule.
     - name: Enable and start the rust cache prune guard timer
       ansible.builtin.systemd:
         name: hyperi-rust-cache-prune-guard.timer
         enabled: true
-        state: started
+        state: "{{ 'restarted' if developer_rust_guard_timer is changed else 'started' }}"
         daemon_reload: true
       become: true
       when:
