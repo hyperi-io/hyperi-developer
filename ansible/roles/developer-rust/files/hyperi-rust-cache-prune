@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Keep the Rust build cache under a fixed ceiling.
+"""Keep the pooled Rust build cache, and the disk under it, inside their bounds.
 
 Run it yourself:
 
     hyperi-rust-cache-prune              # report, then ask before deleting
     hyperi-rust-cache-prune --check      # report only, delete nothing
-    hyperi-rust-cache-prune --yes        # no prompt (how the timer invokes it)
-    hyperi-rust-cache-prune --if-free-below 20%   # only when the disk is tight
+    hyperi-rust-cache-prune --yes        # no prompt (how the timers invoke it)
+    hyperi-rust-cache-prune --if-free-below 15% --free-target 25%
+                                         # only when the disk is tight, and
+                                         # then until a quarter of it is free
 
 Why this exists
 ---------------
@@ -22,17 +24,35 @@ and this is what bounds it.
 
 How it decides what to go
 -------------------------
-Two passes over the pool, in order:
+Oldest first, in one ordering:
 
 1. Age. A workspace not built for `--max-age-days` is dropped outright. The
    cost of being wrong is one slow rebuild.
-2. Size. If the pool is still over the ceiling, drop least-recently-built
-   workspaces until it is under.
+2. Ceiling. While the pool is over `--max-size`, drop the least-recently-built
+   workspace.
+3. Free space. While the filesystem has less free than `--free-target`, keep
+   dropping the least-recently-built workspace, whatever the ceiling says.
 
 Least-recently-built, not least-recently-used: a read does not update mtime, so
 a workspace you compile against daily and one you only link against look the
 same. Age is measured from the newest thing cargo wrote, which is the closest
 honest proxy.
+
+A workspace a build is using right now is never dropped. For the whole of a
+build, cargo holds an exclusive flock on a lock file in each profile directory
+of the build-dir: `.cargo-build-lock`, or `.cargo-lock` in cargo 1.91
+(src/cargo/core/compiler/layout.rs, `Layout::new`). This tool takes the same
+locks without waiting, leaves the workspace alone when any is held, and keeps
+them through the delete, so a build that starts meanwhile waits for it. Cargo
+takes no lock on NFS, so a pool there has nothing to detect.
+
+The ceiling
+-----------
+`auto` is a sixth of the filesystem, floor 40G, while the pool shares a
+filesystem with the user's home. On a filesystem of its own, such as a volume
+given over to caches, `auto` means no ceiling at all: a fixed share of such a
+volume evicts the live working set, and the free-space floor and target bound
+the pool there instead.
 
 When it runs at all
 -------------------
@@ -45,13 +65,20 @@ be scheduled often enough to matter and still do nothing almost every time: if
 the filesystem holding the pool has more free space than the floor, it exits
 before walking anything.
 
-The floor takes a percentage as well as a byte count, because the same number
-cannot be right on a 256G laptop and a 692G build box.
+Below the floor, a guarded run prunes until `--free-target` is free, or back to
+the floor itself when no target is given. The gap between floor and target is
+what stops the next few builds pushing the disk straight back under the floor.
 
-A guarded run that finds the pool already inside its ceiling does not go
-looking for more to delete. It says the pool is not where the space went and
-stops. Reclaiming artefacts that were not the problem would be the wrong
-answer to a disk filled by something else.
+The floor and target take a percentage as well as a byte count, because the
+same number cannot be right on a 256G laptop and a 692G build box.
+
+Docker
+------
+When the pool runs out before the target is met, and Docker keeps its data on
+the same filesystem, the run asks Docker to prune its own build cache unused for
+three days and then, if still short, unused images created over a week ago. It
+does that as the invoking user through Docker's own commands: never sudo, and
+never the daemon's config. `--no-docker` switches it off.
 
 What it does NOT touch
 ----------------------
@@ -65,9 +92,8 @@ It does not touch the cargo registry or the sccache/ccache stores either. Those
 have their own eviction and are reported on only.
 """
 
-from __future__ import annotations
-
 import argparse
+import fcntl
 import os
 import re
 import shutil
@@ -92,6 +118,21 @@ AUTO_FLOOR = "40G"
 # artefacts and is the unit that gets evicted.
 POOL_DEPTH = 2
 
+# The build-dir lock is `.cargo-build-lock` in current cargo and was `.cargo-lock` in 1.91.
+BUILD_LOCK_NAMES = (".cargo-build-lock", ".cargo-lock")
+# Reaches <profile>, <target>/<profile> and a tool's own nested build dir such as
+# llvm-cov-target/<target>/<profile>.
+BUILD_LOCK_DEPTH = 4
+
+# Oldest data first: build cache nothing has used for three days, then unused images created
+# over a week ago.
+DOCKER_PRUNES = (
+    ("build cache", ("builder", "prune", "-f", "--filter", "until=72h")),
+    ("unused images", ("image", "prune", "-af", "--filter", "until=168h")),
+)
+# A prune over a large image store takes minutes, and the guard's unit allows the whole run 30.
+DOCKER_TIMEOUT = 900
+
 _SIZE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([KMGT]?)i?B?\s*$", re.IGNORECASE)
 _PERCENT = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*%\s*$")
 _MULTIPLIER = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}
@@ -103,6 +144,7 @@ class Reporter:
     def __init__(self) -> None:
         self.freed = 0
         self.warnings: list[str] = []
+        self.busy: list[str] = []
 
     def info(self, msg: str) -> None:
         print(f"  {msg}")
@@ -132,7 +174,7 @@ def parse_size(text: str) -> int:
     return int(float(match.group(1)) * _MULTIPLIER[match.group(2).upper()])
 
 
-def parse_size_or_auto(text: str):
+def parse_size_or_auto(text: str) -> int | str:
     """Accept a size, or the literal `auto` to derive one from the disk.
 
     Returned as the string "auto" rather than a number because the filesystem
@@ -143,7 +185,7 @@ def parse_size_or_auto(text: str):
     return parse_size(text)
 
 
-def parse_size_or_percent(text: str):
+def parse_size_or_percent(text: str) -> tuple[str, float]:
     """A byte count, or a share of the filesystem written as a percentage.
 
     Returned as a (kind, value) pair rather than a number because a percentage
@@ -160,7 +202,13 @@ def parse_size_or_percent(text: str):
     return ("bytes", parse_size(text))
 
 
-def above_free_floor(pool: Path, floor, rep: Reporter) -> bool:
+def resolve_threshold(spec: tuple[str, float], total: int) -> int:
+    """Turn a (kind, value) pair from parse_size_or_percent into bytes of one filesystem."""
+    kind, value = spec
+    return int(total * value / 100) if kind == "percent" else int(value)
+
+
+def above_free_floor(pool: Path, floor: tuple[str, float], rep: Reporter) -> bool:
     """Has the filesystem holding the pool got more free space than the floor?
 
     One statvfs, called before anything walks the pool, so a guarded run that
@@ -168,7 +216,6 @@ def above_free_floor(pool: Path, floor, rep: Reporter) -> bool:
     blocks are not ours to spend and counting them would let the guard sit
     quiet while writes are already failing.
     """
-    kind, value = floor
     try:
         usage = shutil.disk_usage(pool)
     except OSError as exc:
@@ -177,7 +224,7 @@ def above_free_floor(pool: Path, floor, rep: Reporter) -> bool:
         rep.warn(f"could not measure free space at {pool} ({exc}) -- pruning anyway")
         return False
 
-    threshold = int(usage.total * value / 100) if kind == "percent" else value
+    threshold = resolve_threshold(floor, usage.total)
     where = f"{human(usage.free)} free of {human(usage.total)}"
     if usage.free > threshold:
         rep.info(f"{where}, above the {human(threshold)} floor -- nothing to do")
@@ -186,10 +233,38 @@ def above_free_floor(pool: Path, floor, rep: Reporter) -> bool:
     return False
 
 
-def resolve_max_size(value, pool: Path, rep: Reporter) -> int:
-    """Turn `auto` into bytes for the filesystem that actually holds the pool."""
-    if value != "auto":
+def measure_free(path: Path) -> int | None:
+    """Free bytes on the filesystem holding path, or None when statvfs fails."""
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:
+        return None
+
+
+def same_filesystem(first: Path, second: Path) -> bool | None:
+    """Whether two paths sit on one filesystem, or None when either cannot be stat'd.
+
+    stat needs no read access to the directory itself, so this also answers for
+    a data root owned by root.
+    """
+    try:
+        return os.stat(first).st_dev == os.stat(second).st_dev
+    except OSError:
+        return None
+
+
+def resolve_max_size(value: int | str, pool: Path, rep: Reporter) -> int | None:
+    """Turn `auto` into bytes for the filesystem that holds the pool, or None for no ceiling."""
+    if isinstance(value, int):
         return value
+    # A pool off the home filesystem is on a volume given over to caches, where only free
+    # space is a meaningful bound.
+    if same_filesystem(pool, Path.home()) is False:
+        rep.info(
+            "ceiling: none (auto -- the pool has a filesystem of its own, "
+            "so the free-space floor and target bound it)"
+        )
+        return None
     floor = parse_size(AUTO_FLOOR)
     try:
         total = shutil.disk_usage(pool).total
@@ -202,6 +277,38 @@ def resolve_max_size(value, pool: Path, rep: Reporter) -> int:
         f"{human(total)} filesystem, floor {AUTO_FLOOR})"
     )
     return derived
+
+
+def resolve_free_target(
+    target: tuple[str, float] | None,
+    floor: tuple[str, float] | None,
+    pool: Path,
+    rep: Reporter,
+) -> int | None:
+    """The free space a run prunes towards, in bytes, or None when it has none.
+
+    Given only a floor, the target is the floor. A target under the floor is
+    raised to it, since stopping there leaves the disk below the floor.
+    """
+    spec = target if target is not None else floor
+    if spec is None:
+        return None
+    try:
+        total = shutil.disk_usage(pool).total
+    except OSError as exc:
+        rep.warn(f"could not measure the filesystem at {pool} ({exc}) -- no free-space target")
+        return None
+    wanted = resolve_threshold(spec, total)
+    if floor is not None:
+        minimum = resolve_threshold(floor, total)
+        if wanted < minimum:
+            rep.warn(
+                f"free target {human(wanted)} is below the {human(minimum)} floor "
+                "-- using the floor"
+            )
+            wanted = minimum
+    rep.info(f"free-space target: {human(wanted)} of {human(total)}")
+    return wanted
 
 
 def human(size: int) -> str:
@@ -352,28 +459,140 @@ def find_workspaces(pool: Path) -> list[Workspace]:
     return [Workspace(leaf) for leaf in leaves]
 
 
+def build_locks(workspace: Path) -> list[Path]:
+    """Every cargo build-dir lock file under one workspace's artefacts.
+
+    A directory holding a lock is a profile directory, and what sits below it
+    is cargo's output, so the search stops there.
+    """
+    found: list[Path] = []
+    level = [workspace]
+    for _ in range(BUILD_LOCK_DEPTH):
+        below: list[Path] = []
+        for directory in level:
+            locks = [directory / name for name in BUILD_LOCK_NAMES]
+            present = [lock for lock in locks if lock.is_file()]
+            if present:
+                found.extend(present)
+                continue
+            try:
+                with os.scandir(directory) as entries:
+                    below.extend(
+                        Path(entry.path) for entry in entries if entry.is_dir(follow_symlinks=False)
+                    )
+            except OSError:
+                continue
+        level = below
+    return found
+
+
+def take_build_locks(workspace: Path) -> list[int] | None:
+    """Take every build lock in a workspace without waiting.
+
+    Returns the held descriptors, or None when a build holds any of them. A lock
+    file that cannot be opened or flocked protects nothing, so it is passed over,
+    as cargo passes over a filesystem that does not support locking.
+    """
+    held: list[int] = []
+    for lock in build_locks(workspace):
+        try:
+            fd = os.open(lock, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            release_build_locks(held)
+            return None
+        except OSError:
+            os.close(fd)
+            continue
+        held.append(fd)
+    return held
+
+
+def release_build_locks(held: list[int]) -> None:
+    """Drop locks taken by take_build_locks, since closing a descriptor releases its flock."""
+    for fd in held:
+        os.close(fd)
+
+
+class FreeSpaceTarget:
+    """Whether the pool's filesystem has reached its free-space target yet.
+
+    Credited with what this run has freed as well as re-measured, and the larger
+    answer wins. A filesystem can report deleted space as free only after its
+    next commit, and a re-measure alone would then evict far past the target. A
+    dry run deletes nothing, so the credit is all it has.
+    """
+
+    def __init__(self, pool: Path, target: int, dry_run: bool, rep: Reporter) -> None:
+        self.pool = pool
+        self.target = target
+        self.dry_run = dry_run
+        self.rep = rep
+        self.baseline = rep.freed
+        self.start = measure_free(pool)
+        if self.start is None:
+            rep.warn(
+                f"could not measure free space at {pool} -- the free-space target is not applied"
+            )
+
+    def free(self) -> int | None:
+        if self.start is None:
+            return None
+        credited = self.start + self.rep.freed - self.baseline
+        if self.dry_run:
+            return credited
+        measured = measure_free(self.pool)
+        return credited if measured is None else max(measured, credited)
+
+    def short(self) -> bool:
+        free = self.free()
+        return free is not None and free < self.target
+
+
 def remove(workspace: Workspace, reason: str, dry_run: bool, rep: Reporter) -> bool:
-    """Drop one workspace. False means the bytes are still on disk.
+    """Drop one workspace unless a build is using it. False means the bytes are still on disk.
 
     The caller has to know, because counting a failed removal against the pool
     total reports a cache back under its ceiling while it is still over.
     """
-    if dry_run:
-        rep.info(f"[check] would drop {workspace.path.name} ({human(workspace.size)}, {reason})")
+    held = take_build_locks(workspace.path)
+    if held is None:
+        rep.busy.append(workspace.path.name)
+        rep.info(f"kept {workspace.path.name} ({human(workspace.size)}) -- a build is using it")
+        return False
+    # Held through the delete, so a build that starts meanwhile waits instead of writing into a
+    # tree being removed.
+    try:
+        if dry_run:
+            rep.info(
+                f"[check] would drop {workspace.path.name} ({human(workspace.size)}, {reason})"
+            )
+            rep.freed += workspace.size
+            return True
+        try:
+            shutil.rmtree(workspace.path)
+        except OSError as exc:
+            rep.warn(f"could not remove {workspace.path}: {exc}")
+            return False
+        rep.change(f"dropped {workspace.path.name} ({human(workspace.size)}, {reason})")
         rep.freed += workspace.size
         return True
-    try:
-        shutil.rmtree(workspace.path)
-    except OSError as exc:
-        rep.warn(f"could not remove {workspace.path}: {exc}")
-        return False
-    rep.change(f"dropped {workspace.path.name} ({human(workspace.size)}, {reason})")
-    rep.freed += workspace.size
-    return True
+    finally:
+        release_build_locks(held)
 
 
 def prune_pool(
-    pool: Path, dry_run: bool, rep: Reporter, *, max_size: int, max_age_days: int
+    pool: Path,
+    dry_run: bool,
+    rep: Reporter,
+    *,
+    max_size: int | None,
+    max_age_days: int,
+    target: FreeSpaceTarget | None = None,
 ) -> int:
     """Bound the pool, and return what it still occupies.
 
@@ -386,9 +605,8 @@ def prune_pool(
         return 0
 
     total = sum(item.size for item in workspaces)
-    rep.info(
-        f"{pool}: {len(workspaces)} workspace(s), {human(total)} of {human(max_size)} ceiling"
-    )
+    ceiling = f"of {human(max_size)} ceiling" if max_size is not None else "no ceiling"
+    rep.info(f"{pool}: {len(workspaces)} workspace(s), {human(total)} {ceiling}")
 
     stale = [item for item in workspaces if item.age_days > max_age_days]
     for item in stale:
@@ -397,21 +615,24 @@ def prune_pool(
 
     remaining = [item for item in workspaces if item not in stale]
 
-    if total <= max_size:
-        rep.info(f"under the ceiling at {human(total)}")
-        return total
-
     # Oldest first: the least-recently-built workspace is the cheapest to lose.
     for item in sorted(remaining, key=lambda entry: entry.mtime):
-        if total <= max_size:
+        over_ceiling = max_size is not None and total > max_size
+        short_of_space = target is not None and target.short()
+        if not over_ceiling and not short_of_space:
             break
-        if remove(item, f"over ceiling, {human(total)} used", dry_run, rep):
+        reason = (
+            f"over ceiling, {human(total)} used" if over_ceiling else "below the free-space target"
+        )
+        if remove(item, reason, dry_run, rep):
             total -= item.size
 
-    if total > max_size:
+    if max_size is not None and total > max_size:
         rep.warn(f"still {human(total)} after pruning everything eligible")
-    else:
+    elif max_size is not None:
         rep.info(f"under the ceiling at {human(total)}")
+    if rep.busy:
+        rep.info(f"{len(rep.busy)} workspace(s) kept because a build is using them")
 
     if not dry_run:
         drop_empty_shards(pool)
@@ -430,6 +651,91 @@ def drop_empty_shards(pool: Path) -> None:
             shard.rmdir()
         except OSError:
             continue
+
+
+def docker_root_dir(docker: str, rep: Reporter) -> Path | None:
+    """Where the daemon keeps its data, or None when this user cannot reach it without sudo."""
+    try:
+        proc = subprocess.run(
+            [docker, "info", "--format", "{{.DockerRootDir}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        rep.warn(f"docker: could not ask the daemon where it keeps its data ({exc})")
+        return None
+    root = proc.stdout.strip()
+    if proc.returncode != 0 or not root:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        reason = detail[-1] if detail else f"exit {proc.returncode}"
+        rep.info(f"docker: daemon not reachable as this user, leaving it alone ({reason})")
+        return None
+    return Path(root)
+
+
+def run_docker_prune(label: str, argv: list[str], rep: Reporter) -> None:
+    """Run one of Docker's own prunes, reporting what it reclaimed and warning on any failure."""
+    command = " ".join(["docker", *argv[1:]])
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=DOCKER_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        rep.warn(f"docker: `{command}` did not complete ({exc})")
+        return
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        rep.warn(
+            f"docker: `{command}` exited {proc.returncode}" + (f": {detail[-1]}" if detail else "")
+        )
+        return
+    totals = [line.strip() for line in proc.stdout.splitlines() if line.strip().startswith("Total")]
+    rep.change(f"docker {label}: {totals[-1] if totals else 'pruned'}")
+
+
+def docker_fallback(pool: Path, target: FreeSpaceTarget, dry_run: bool, rep: Reporter) -> None:
+    """Have Docker prune its own caches when they share the pool's filesystem.
+
+    Only as the invoking user and only through Docker's own commands: a user who
+    cannot reach the daemon without sudo gets nothing done here, by design.
+    """
+    docker = shutil.which("docker")
+    if docker is None:
+        rep.info("docker: not on PATH")
+        return
+    root = docker_root_dir(docker, rep)
+    if root is None:
+        return
+    shared = same_filesystem(root, pool)
+    if shared is None:
+        rep.info(f"docker: data root {root} is not visible from this host, leaving it alone")
+        return
+    if not shared:
+        rep.info(
+            f"docker: data root {root} is on another filesystem, so pruning it frees nothing here"
+        )
+        return
+
+    commands = [(label, [docker, *args]) for label, args in DOCKER_PRUNES]
+    if dry_run:
+        for index, (_, argv) in enumerate(commands):
+            when = "would run" if index == 0 else "then, if still short, would run"
+            rep.info(f"[check] {when}: docker {' '.join(argv[1:])}")
+        return
+    for label, argv in commands:
+        if not target.short():
+            return
+        run_docker_prune(label, argv, rep)
 
 
 def report_self_capping_caches(rep: Reporter) -> None:
@@ -500,7 +806,7 @@ def report_self_capping_caches(rep: Reporter) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="hyperi-rust-cache-prune",
-        description="Keep the pooled Rust build cache under a fixed ceiling.",
+        description="Keep the pooled Rust build cache, and the disk under it, inside their bounds.",
     )
     parser.add_argument("--check", action="store_true", help="report only, delete nothing")
     parser.add_argument("--yes", action="store_true", help="do not prompt before deleting")
@@ -510,8 +816,9 @@ def main() -> int:
         default=DEFAULT_MAX_SIZE,
         metavar="SIZE",
         help=(
-            f"ceiling for the pool, or `auto` to take a {AUTO_FRACTION}th of the "
-            f"filesystem with a {AUTO_FLOOR} floor (default: {DEFAULT_MAX_SIZE})"
+            f"ceiling for the pool, or `auto`: a {AUTO_FRACTION}th of the filesystem "
+            f"with a {AUTO_FLOOR} floor, or no ceiling when the pool has a filesystem "
+            f"of its own (default: {DEFAULT_MAX_SIZE})"
         ),
     )
     parser.add_argument(
@@ -528,7 +835,27 @@ def main() -> int:
         metavar="SIZE|PERCENT",
         help=(
             "do nothing unless the filesystem holding the pool has less than this "
-            "free (e.g. 20%% or 80G) -- how the hourly guard invokes it"
+            "free (e.g. 15%% or 80G) -- how the guard invokes it"
+        ),
+    )
+    parser.add_argument(
+        "--free-target",
+        type=parse_size_or_percent,
+        default=None,
+        metavar="SIZE|PERCENT",
+        help=(
+            "keep dropping the least-recently-built workspace, past the ceiling if "
+            "need be, until the filesystem has this much free (default with "
+            "--if-free-below: the floor)"
+        ),
+    )
+    parser.add_argument(
+        "--docker",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "when the pool alone cannot reach the free-space target, prune Docker's "
+            "build cache and old unused images if they share its filesystem"
         ),
     )
     parser.add_argument(
@@ -585,10 +912,18 @@ def main() -> int:
         return 0
 
     max_size = resolve_max_size(args.max_size, pool, rep)
+    free_target = resolve_free_target(args.free_target, args.if_free_below, pool, rep)
 
     if not args.check and not args.yes:
-        print(f"\nThis deletes pooled build artefacts over {human(max_size)} "
-              f"or idle more than {args.max_age_days} days.")
+        bounds = f"idle more than {args.max_age_days} days"
+        if max_size is not None:
+            bounds += f", over the {human(max_size)} ceiling"
+        if free_target is not None:
+            bounds += f", and oldest first until {human(free_target)} is free"
+        print(f"\nThis deletes pooled build artefacts {bounds}.")
+        if free_target is not None and args.docker:
+            print("If the pool alone is not enough, it also has Docker prune old build")
+            print("cache and unused images on the same disk.")
         print("Projects rebuild them on demand. Re-run with --check to see the detail first.")
         try:
             if input("Proceed? [y/N] ").strip().lower() not in {"y", "yes"}:
@@ -598,25 +933,36 @@ def main() -> int:
             print("\nNothing done.")
             return 0
 
+    target = (
+        FreeSpaceTarget(pool, free_target, args.check, rep) if free_target is not None else None
+    )
+
     rep.step("Pooled build artefacts")
-    remaining = prune_pool(
+    prune_pool(
         pool,
         args.check,
         rep,
         max_size=max_size,
         max_age_days=args.max_age_days,
+        target=target,
     )
 
-    # A guarded run ending inside the ceiling means the pool is not what filled
-    # the disk. Tested on what the pool still holds, not on what was freed -- a
-    # failed eviction also frees nothing.
-    if guarded and remaining <= max_size:
-        rep.warn(
-            "below the free floor with the pool already inside its ceiling -- "
-            "nothing here to reclaim. Whatever filled the disk is outside what "
-            "this tool bounds, and the caches reported below are the only other "
-            "ones it can see."
-        )
+    if target is not None and target.short():
+        rep.step("Docker (the pool alone did not reach the free-space target)")
+        if args.docker:
+            docker_fallback(pool, target, args.check, rep)
+        else:
+            rep.info("switched off (--no-docker)")
+        free = target.free()
+        # A dry run cannot credit what Docker would free, so only a real run can say the
+        # target was missed.
+        if not args.check and free is not None and free < target.target:
+            rep.warn(
+                f"{human(free)} free, still below the {human(target.target)} target "
+                "after everything this tool may reclaim. Whatever filled the disk is "
+                "outside what it bounds, and the caches reported below are the only "
+                "other ones it can see."
+            )
 
     rep.step("Self-capping caches (reported, not pruned)")
     try:
@@ -625,7 +971,7 @@ def main() -> int:
         rep.warn(f"could not report the other caches: {exc}")
 
     verb = "would free" if args.check else "freed"
-    print(f"\n{verb} {human(rep.freed)}")
+    print(f"\n{verb} {human(rep.freed)} of pooled build artefacts")
     if rep.warnings:
         print(f"Finished with {len(rep.warnings)} warning(s):")
         for warning in rep.warnings:

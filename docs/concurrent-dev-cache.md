@@ -91,9 +91,16 @@ Pooled build artefacts have a ceiling of their own, derived from the filesystem
 rather than fixed. `rust_cache_build_dir_max: auto` is a sixth of the
 filesystem's total size with a 40G floor, so one default suits a laptop and a
 build box. A daily unit prunes to that ceiling - by age first at 14 days, then
-oldest by build time until under it - and an hourly guard runs the same prune
-gated on `rust_cache_prune_free_floor` (20%), costing one `statvfs` and exiting
-before walking anything while the disk has room.
+oldest by build time until under it - and a guard runs every five minutes,
+costing one `statvfs` and exiting before walking anything while the disk has
+room. Below `rust_cache_prune_free_floor` (15%) the guard evicts the oldest
+workspaces, past the ceiling if need be, until `rust_cache_prune_free_target`
+(25%) is free. Neither run evicts a workspace whose cargo build lock is held.
+
+On a pool with a filesystem of its own, `auto` sets no ceiling and the floor and
+target are the only bound. With several agent sessions building concurrently, a
+sixth of a 512G volume sat under the day's working set, so each nightly prune
+evicted live workspaces and the rebuild refilled the volume.
 
 A share works here because it is one tool, one pool, and a ceiling that scales
 with the disk. What does not compose is every suite claiming one: "a sixth of the
@@ -107,10 +114,8 @@ at 4G.
 Two properties of the pruner let it compose with tools it knows nothing about.
 Unless a pool is named explicitly on the command line, it refuses to prune one
 outside the cache root, so a mis-set `build-dir` cannot walk a home directory.
-And a guarded run that finds the pool already inside its ceiling says so and
-stops rather than hunting for more to delete - the space went somewhere it does
-not own, and naming that is more use than evicting artefacts that were not the
-cause.
+And a guarded run that cannot reach the target says so and names the
+self-capping caches it can see, rather than hunting for more to delete.
 
 `rust_cache_root` selects the volume, empty meaning the platform cache directory.
 A host-specific value needs somewhere to live: passed on a command line it is
@@ -170,9 +175,16 @@ to compiling. Which hosts want it on is in
   `rust_cache_sccache_max` (20G) and `rust_cache_ccache_max` (10G) are fixed byte
   ceilings the tools enforce for themselves, so they sit outside the free-space
   model and the pruner reports them rather than touching them.
-- **Docker, Go and Python have nothing here.** No cache-root variable and no
-  watermark pruning. The free-space decision applies to them; the implementation
-  is not built.
+- **Docker is pruned only as the guard's fallback.** When the pool alone cannot
+  reach the free-space target and Docker's data root is on the same filesystem,
+  the guard runs `docker builder prune` (unused for 3 days) and then
+  `docker image prune -a` (created over a week ago), as the user and never with
+  sudo (`rust_cache_prune_docker`). Docker's own builder GC settings in
+  `daemon.json` are deliberately untouched: they need root and a daemon restart,
+  and their keys have changed across Docker versions.
+- **Go and Python have nothing here.** No cache-root variable and no watermark
+  pruning. The free-space decision applies to them, but the implementation is
+  not built.
 - **There is no universal ceiling for ungoverned tools.** The shim is kept for
   Rust. systemd prefix drop-ins on the scopes a desktop session already creates
   would cap everything else without a shim per tool, and are not built. Docker is

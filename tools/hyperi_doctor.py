@@ -261,7 +261,8 @@ def report_stamp(stamp_path: Path, reporter: Reporter) -> list[str]:
 
 def _report_head_comparison(applied_sha: str, reporter: Reporter) -> None:
     """Compare the stamp's SHA against this checkout's HEAD, via git."""
-    if not (REPO_ROOT / ".git").is_dir() or shutil.which("git") is None:
+    # A worktree or a submodule checkout has a .git file rather than a directory.
+    if not (REPO_ROOT / ".git").exists() or shutil.which("git") is None:
         reporter.note("Checkout HEAD: unavailable (not a git checkout)")
         return
 

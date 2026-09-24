@@ -19,6 +19,11 @@
 {% endif %}
         <string>--if-free-below</string>
         <string>{{ rust_cache_prune_free_floor }}</string>
+        <string>--free-target</string>
+        <string>{{ rust_cache_prune_free_target }}</string>
+{% if not rust_cache_prune_docker | bool %}
+        <string>--no-docker</string>
+{% endif %}
     </array>
 
     <!-- A launchd agent inherits no shell profile, and the pruner reads

@@ -85,9 +85,9 @@ binaries, so `cargo run`, IDEs and anything globbing for a built artefact are
 unaffected.
 
 `hyperi-rust-cache-prune` then bounds that pool on a schedule -- a systemd timer
-on Linux, a launchd agent on macOS, daily and at idle IO priority. It drops
-workspaces not built for `rust_cache_max_age_days`, then evicts the oldest by
-build time until the pool is under `rust_cache_build_dir_max`.
+on Linux, a launchd agent on macOS, daily and at idle IO priority, as the user.
+It drops workspaces not built for `rust_cache_max_age_days`, then evicts the
+oldest by build time until the pool is under `rust_cache_build_dir_max`.
 It touches no project `target/`, and reports the self-capping caches without
 pruning them.
 
@@ -97,16 +97,28 @@ derived from it chases itself downward. That puts a 692G build box at 115G and a
 256G laptop at the floor, so one default suits both. Set
 `rust_cache_build_dir_max` to an explicit size to override it.
 
-**The ceiling binds while the tool runs, not between runs.** A pool that grows
-faster than the schedule spends the gap above it, so the prune runs daily and an
-hourly guard backs it up -- one statvfs while the disk has room, a prune to the
-same ceiling once free space falls below `rust_cache_prune_free_floor` (20%).
+On a filesystem of its own (`rust_cache_root` on a dedicated volume), `auto`
+means no ceiling. A sixth of a 512G cache volume sat under the working set of
+several concurrent build sessions, so every nightly prune evicted live
+workspaces and the rebuild refilled the volume. The guard bounds it there.
 
-A guard run that finds the pool already under its ceiling stops and says so. The
-space went somewhere the prune does not own, and naming that is more use than
-evicting artefacts that were not the cause. Set
-`rust_cache_prune_guard_enabled: false` to drop the guard, or
-`rust_cache_prune_schedule_weekday` to go back to weekly.
+## The free-space guard
+
+**The ceiling binds while the tool runs, not between runs.** So a guard runs
+every five minutes -- one statvfs while the disk has room. Below
+`rust_cache_prune_free_floor` (15%) it evicts the oldest workspaces, past the
+ceiling if need be, until `rust_cache_prune_free_target` (25%) is free.
+
+**No run evicts a workspace a build is using.** Cargo holds an exclusive flock
+on a lock file in each profile directory of the build-dir for the whole build
+(`.cargo-build-lock`, or `.cargo-lock` in 1.91). The prune takes it without
+waiting, skips the workspace if it is held, and holds it through the delete.
+
+If the pool runs out first and Docker's data root is on the same filesystem,
+the guard has Docker prune its build cache unused for 3 days, then unused images
+created over a week ago. Docker's own commands, as the user, never sudo, and
+never `daemon.json`. `rust_cache_prune_docker: false` switches that off, and
+`rust_cache_prune_guard_enabled: false` drops the guard.
 
 ## Which sccache builds actually use
 
