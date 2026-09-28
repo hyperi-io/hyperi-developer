@@ -14,18 +14,17 @@ quality:
     - windows
 
   typescript:
-    # Warn rather than block. Both open advisories are in `tar` and
-    # `brace-expansion`, bundled inside the `npm` that @semantic-release/npm
-    # vendors -- npm cannot patch a bundled dependency, and the only offered
-    # remedy downgrades semantic-release.
-    #
-    # The release workflow installs semantic-release globally at @latest and
-    # never installs from this tree, so nothing CI runs is built from the
-    # audited dependency graph.
-    #
     # Kept visible rather than disabled, and `hyperi-ci check --strict`
     # promotes it back to blocking.
-    audit: warn
+    audit:
+      mode: warn
+      reason: >-
+        Both open advisories are in tar and brace-expansion, bundled inside the
+        npm that @semantic-release/npm vendors. npm cannot patch a bundled
+        dependency, and the only offered remedy downgrades semantic-release.
+        The release workflow installs semantic-release globally at @latest and
+        never installs from this tree, so nothing CI runs is built from the
+        audited dependency graph.
 
 build:
   # Nothing to build. The TypeScript handler runs `npm run build`, and there is
