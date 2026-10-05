@@ -84,7 +84,7 @@ flowchart TD
 | `winlike` / `maclike` | GNOME taskbar (winlike) or dock (maclike), winlike wins if both |
 | `rdp-server` | GNOME Remote Login on port 3389 (inbound). NOT Desktop Sharing -- see the note below the table |
 | `rdp-client` | RDP client: Remmina (Linux) / Thincast (macOS) |
-| `vpn-clients` | OpenVPN 3, WireGuard, Tunnelblick (macOS) |
+| `vpn-clients` | OpenVPN 3, WireGuard, Tunnelblick (macOS). On macOS this is the WireGuard CLI only -- install the WireGuard app from the App Store |
 | `vm` | VM guest optimisations (QEMU/SPICE agents) |
 | `power-profile` | Sleep/idle/lid policy. `always-on` (default) or `vm`, via `-e power_profile=<name>` |
 | `zram` | Compressed-RAM swap so cgroup memory limits throttle instead of stalling. Pairs with the Rust build governor |
