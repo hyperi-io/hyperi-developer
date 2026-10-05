@@ -225,33 +225,83 @@
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
-# HELM (Linux - official baltocdn vendor repo)
+# HELM (Linux - Helm's apt repo on Ubuntu, Fedora's own package on Fedora)
 # ============================================================================
-# Was a GitHub-release binary (no update path). baltocdn is Helm's own package
-# host: an apt repo on Ubuntu and a yum/dnf repo on Fedora, both OS-swept so the
-# host updater keeps Helm current. Same armored signing key for both.
-- name: Install Helm via the baltocdn repository (Linux)
+# Ubuntu takes Helm's apt repo on packages.buildkite.com and Fedora the helm
+# package in its own repos, so the host updater keeps Helm current on both.
+- name: Install Helm from its package repositories (Linux)
   block:
-    - name: Add the Helm signing key (Ubuntu)
-      ansible.builtin.get_url:
-        url: https://baltocdn.com/helm/signing.asc
-        dest: /etc/apt/keyrings/helm.asc
-        mode: '0644'
+    # Runs before any apt call: a leftover .list naming a different Signed-By
+    # for the same URI as helm.sources stops apt reading any source list.
+    - name: Remove the superseded Helm apt sources and key (Ubuntu)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/helm.list
+        - /etc/apt/sources.list.d/helm-stable-debian.list
+        - /etc/apt/keyrings/helm.asc
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Remove the legacy Helm .list
-      ansible.builtin.file:
-        path: /etc/apt/sources.list.d/helm.list
-        state: absent
+    # Downloaded under a name no apt source trusts and copied to the trusted path
+    # only once its fingerprint matches; forced, so a rejected download is
+    # replaced on the next run instead of kept by an If-Modified-Since 304.
+    - name: Download the Helm apt signing key (Ubuntu)
+      ansible.builtin.get_url:
+        url: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
+        dest: /etc/apt/keyrings/helm-buildkite.asc.unverified
+        mode: '0644'
+        force: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # A minimal Ubuntu ships gpgv but not gpg, which the fingerprint read needs.
+    - name: Ensure gpg is present for the fingerprint check (Ubuntu)
+      ansible.builtin.apt:
+        name: gpg
+        state: present
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Read the Helm apt signing key fingerprint (Ubuntu)
+      ansible.builtin.command:
+        argv: [gpg, --show-keys, --with-colons, /etc/apt/keyrings/helm-buildkite.asc.unverified]
+      register: infrastructure_helm_key
+      changed_when: false
+      check_mode: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # Fails closed: neither the trusted key nor the repo is written unless the
+    # key matches Helm's published fingerprint.
+    - name: Verify the Helm apt signing key fingerprint (Ubuntu)
+      ansible.builtin.assert:
+        that: infrastructure_helm_key_fpr == infrastructure_helm_apt_key_fingerprint
+        fail_msg: >-
+          Helm apt key fingerprint {{ infrastructure_helm_key_fpr or 'missing' }}
+          does not match {{ infrastructure_helm_apt_key_fingerprint }}
+        quiet: true
+      vars:
+        infrastructure_helm_key_fpr: >-
+          {{ (infrastructure_helm_key.stdout_lines | select('match', '^fpr:')
+              | first | default('')).split(':')[9] | default('') }}
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Install the verified Helm apt signing key (Ubuntu)
+      ansible.builtin.copy:
+        src: /etc/apt/keyrings/helm-buildkite.asc.unverified
+        dest: /etc/apt/keyrings/helm-buildkite.asc
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0644'
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
     - name: Add the Helm APT repository (Ubuntu)
       ansible.builtin.deb822_repository:
         name: helm
         types: deb
-        uris: "https://baltocdn.com/helm/stable/debian/"
-        suites: all
+        uris: "https://packages.buildkite.com/helm-linux/helm-debian/any/"
+        suites: any
         components: main
-        signed_by: /etc/apt/keyrings/helm.asc
+        signed_by: /etc/apt/keyrings/helm-buildkite.asc
         state: present
       when: ansible_facts['distribution'] == 'Ubuntu'
 
@@ -262,14 +312,10 @@
         update_cache: true
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Add the Helm YUM repository (Fedora)
+    - name: Remove the baltocdn Helm repository (Fedora)
       ansible.builtin.yum_repository:
         name: helm
-        description: Helm
-        baseurl: https://baltocdn.com/helm/stable/rpm
-        enabled: true
-        gpgcheck: true
-        gpgkey: https://baltocdn.com/helm/signing.asc
+        state: absent
       when: ansible_facts['distribution'] == 'Fedora'
 
     - name: Install Helm (Fedora)
