@@ -301,7 +301,7 @@ table used to say the opposite.
 | Tool(s) | Platforms | Method |
 |---|---|---|
 | kubectl | all | vendor-repo (pkgs.k8s.io) / brew |
-| helm | all | vendor-repo (baltocdn apt/dnf) / brew |
+| helm | all | Ubuntu vendor-repo (packages.buildkite.com) / Fedora dnf / brew |
 | kubectx, kubens | all | distro (apt universe / dnf) / brew |
 | k9s | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
 | kind, argocd (Tier 3: re-fetch) | all | github-binary / brew |

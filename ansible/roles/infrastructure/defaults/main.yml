@@ -4,6 +4,10 @@
 # OpenBao comes from its signed APT repo on Ubuntu, dnf on Fedora and brew on
 # macOS, so no version is carried here -- each repo keeps the box current.
 
+# Primary key fingerprint Helm publishes for its apt repo at
+# https://helm.sh/docs/intro/install/, checked before the key is trusted.
+infrastructure_helm_apt_key_fingerprint: DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC6  # gitleaks:allow -- public key fingerprint
+
 # Microsoft publishes the Azure CLI repo per Ubuntu codename and has no resolute
 # suite, so a resolute host takes the noble build deliberately.
 # Tracks the supported window (min_ubuntu_version), oldest first; the last entry
