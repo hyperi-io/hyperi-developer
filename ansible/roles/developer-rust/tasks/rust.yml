@@ -65,7 +65,7 @@
   # Must run in check mode too: the facts below are undefined without it, and
   # every later task then templates an empty path.
   check_mode: false
-  tags: ['rust-cache', 'rust-governor']
+  tags: ['rust-cache', 'rust-governor', 'rust-llvm']
 
 # An explicit role variable, else what the host said, else the upstream default
 # so nothing downstream is ever templated blank. Trailing slashes are stripped
@@ -87,7 +87,7 @@
     _probed_rustup: >-
       {{ _lines | select('match', '^HYPERI_RUSTUP_HOME ') | list | last
          | default('') | regex_replace('^\S+ ', '') }}
-  tags: ['rust-cache', 'rust-governor']
+  tags: ['rust-cache', 'rust-governor', 'rust-llvm']
 
 # Absolute, and free of the two characters that would break the root-owned
 # unit file this value is templated into: `%` is a systemd specifier and `"`
@@ -104,7 +104,7 @@
       RUSTUP_HOME={{ developer_rust_rustup_home }} -- not an absolute path, or
       contains % or ". Set rust_cargo_home/rust_rustup_home explicitly.
     quiet: true
-  tags: ['rust-cache', 'rust-governor']
+  tags: ['rust-cache', 'rust-governor', 'rust-llvm']
 
 - name: Report where the toolchain was resolved to
   ansible.builtin.debug:
@@ -112,7 +112,7 @@
       CARGO_HOME={{ developer_rust_cargo_home }}
       RUSTUP_HOME={{ developer_rust_rustup_home }}
     verbosity: 1
-  tags: ['rust-cache', 'rust-governor']
+  tags: ['rust-cache', 'rust-governor', 'rust-llvm']
 
 # ============================================================
 # Rust Installation (Linux -- one path for both distros)
@@ -634,8 +634,9 @@
 # Cargo tools installation
 # ============================================================
 
-# Tagged rust-cache too: the setup script below runs under this environment,
-# and an untagged set_fact leaves it undefined when only the cap tag is selected.
+# Tagged rust-cache and rust-llvm too: the setup script and the rustc probe in
+# llvm.yml run under this environment, and an untagged set_fact leaves it
+# undefined when only one of those tags is selected.
 - name: Set cargo environment (Linux)
   ansible.builtin.set_fact:
     cargo_env:
@@ -643,7 +644,7 @@
       CARGO_HOME: "{{ developer_rust_cargo_home }}"
       RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
 
 # /opt/homebrew/opt/rustup/bin leads: brew's rustup never links its shims
 # into /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac.
@@ -659,7 +660,7 @@
       # relocates it is not the one platform still hard-coded.
       RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
   when: ansible_facts['distribution'] == 'MacOSX'
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
 
 # cargo-binstall is installed for the developer to reach for by hand. The tasks
 # below deliberately do NOT go through it: binstall fetches a publisher's
@@ -711,15 +712,23 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
-- name: Install the llvm-tools component (cargo-llvm-cov dependency)
+# llvm-profdata and llvm-cov matched to rustc's own LLVM, which cargo-llvm-cov
+# and cargo-pgo both need. A brew-rust Mac has no rustup and no component to
+# add. On macOS rustup is resolved through cargo_env's PATH, because brew's
+# rustup lives outside the cargo bin directory.
+- name: Install the llvm-tools component (cargo-llvm-cov and cargo-pgo dependency)
   ansible.builtin.command:
-    cmd: "{{ developer_rust_cargo_home }}/bin/rustup component add llvm-tools-preview"
+    cmd: >-
+      {{ 'rustup' if ansible_facts['distribution'] == 'MacOSX'
+         else developer_rust_cargo_home ~ '/bin/rustup' }} component add llvm-tools-preview
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   environment: "{{ cargo_env }}"
   register: developer_rust_llvm_tools
   changed_when: "'is up to date' not in developer_rust_llvm_tools.stderr"
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  when: >-
+    ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    or developer_rust_macos_rustup.rc | default(1) == 0
 
 # hyperi-ci prefers tarpaulin over llvm-cov when both are present, so leaving a
 # stale copy behind would keep Linux on the tool macOS cannot run.
@@ -816,6 +825,20 @@
     | list | length > 0
 
 # ============================================================
+# LLVM, PGO and BOLT
+# ============================================================
+# Before hyperi-rust-setup, which names whatever `clang` resolves to as the
+# cargo linker: on Ubuntu that has to be the /usr/local/bin link this installs.
+
+- name: Install LLVM, PGO and BOLT tooling
+  ansible.builtin.include_tasks:
+    file: llvm.yml
+    apply:
+      tags: ['developer-rust', 'rust', 'rust-llvm']
+  when: rust_llvm_enabled | default(true) | bool
+  tags: ['developer-rust', 'rust', 'rust-llvm']
+
+# ============================================================
 # Build acceleration: sccache + mold
 # ============================================================
 # Delegated to `hyperi-rust-setup`, a standalone script a developer can also
@@ -895,9 +918,11 @@
 # good config back, and pass, while cargo went on reading a stale file
 # somewhere else. A leftover config in the location that is NOT in effect is
 # exactly the trap this whole change exists to close.
-- name: Verify no cargo config names an unusable rustc-wrapper
+# The linker gets the same check: it is the /usr/local/bin/clang link on Ubuntu,
+# so a link left pointing at a removed LLVM major breaks every build the same way.
+- name: Verify no cargo config names an unusable rustc-wrapper or linker
   when: rust_verify_wrapper | default(true) | bool
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
   block:
     - name: Read every candidate cargo config
       ansible.builtin.slurp:
@@ -977,6 +1002,43 @@
              if developer_rust_retired is changed
              else 'Check that is where you expect, then re-run /usr/local/bin/hyperi-rust-setup with that CARGO_HOME set.' }}
       when: developer_rust_wrapper_checks.results | default([])
+            | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+            | list | length > 0
+
+    # Plain and dotted keys, both quote styles, one line each -- the same
+    # reasoning as the rustc-wrapper extraction above.
+    - name: Extract the linker each config names
+      ansible.builtin.set_fact:
+        developer_rust_linkers: >-
+          {{ developer_rust_cargo_configs.results
+             | selectattr('content', 'defined') | map(attribute='content')
+             | map('b64decode') | join('\n')
+             | regex_findall('(?m)^[ \t]*(?:target\.[^=\n]+\.)?linker[ \t]*=[ \t]*["\x27]([^"\x27\n]+)["\x27]')
+             | unique }}
+
+    - name: Check that each configured linker resolves
+      ansible.builtin.command:
+        argv: [bash, -lc, '[ -x "$(command -v -- "$1")" ]', bash, "{{ item }}"]
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_rust_linker_checks
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      loop: "{{ developer_rust_linkers }}"
+
+    - name: Fail when a cargo config names a linker that does not exist
+      ansible.builtin.fail:
+        msg: >-
+          A cargo config on this host sets linker =
+          "{{ developer_rust_linker_checks.results
+              | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
+              | map(attribute='item') | join('", "') }}",
+          which does not resolve for {{ actual_user }}, so every cargo build
+          fails at the link step. The effective CARGO_HOME here is
+          {{ developer_rust_cargo_home }}. Re-run /usr/local/bin/hyperi-rust-setup
+          to rewrite it from the tools actually installed.
+      when: developer_rust_linker_checks.results | default([])
             | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
             | list | length > 0
 

@@ -1,0 +1,441 @@
+---
+# LLVM, PGO and BOLT tooling for Rust builds.
+#
+# What rustup does not ship: clang and lld for cross-language LTO and bindgen,
+# the LLVM development files, and BOLT. rustup's llvm-tools component keeps
+# supplying llvm-profdata and llvm-cov, which must match rustc's LLVM major
+# exactly because the raw profile format changes between majors.
+#
+# Ubuntu takes apt.llvm.org's VERSIONED suite only. The unversioned suite is
+# the development snapshot, and its unversioned packages replace the archive's
+# clang, llvm and lld box-wide.
+#
+# Optional: any failure here lands in deploy_warnings and the run carries on.
+
+- name: Install the LLVM toolchain
+  vars:
+    developer_rust_llvm_request: "{{ rust_llvm_version | string | trim | lower }}"
+    developer_rust_llvm_linux: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  block:
+    # ========================================================================
+    # Which major
+    # ========================================================================
+
+    # Release tags only: `-rc` and `-init` tags would otherwise name a major
+    # that apt.llvm.org has no stable suite for yet.
+    - name: List the LLVM release tags
+      ansible.builtin.command:
+        argv: [git, ls-remote, --tags, --refs, 'https://github.com/llvm/llvm-project.git', 'refs/tags/llvmorg-*']
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: developer_rust_llvm_tags
+      changed_when: false
+      check_mode: false
+      when: developer_rust_llvm_request == 'latest'
+
+    # Read whatever the mode, because the drift check below needs it too. A host
+    # with no rustc yet answers nothing, which only `rustc` mode treats as fatal.
+    - name: Read the LLVM major rustc was built with
+      ansible.builtin.command:
+        argv: [rustc, -vV]
+      environment: "{{ cargo_env }}"
+      become: "{{ developer_rust_llvm_linux }}"
+      become_user: "{{ actual_user if developer_rust_llvm_linux else omit }}"
+      register: developer_rust_llvm_rustc
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Resolve the LLVM major to install
+      ansible.builtin.set_fact:
+        developer_rust_llvm_rustc_major: "{{ _rustc_major }}"
+        developer_rust_llvm_major: >-
+          {{ (_latest_major if developer_rust_llvm_request == 'latest'
+              else _rustc_major if developer_rust_llvm_request == 'rustc'
+              else developer_rust_llvm_request) | string }}
+      vars:
+        _rustc_major: >-
+          {{ developer_rust_llvm_rustc.stdout | default('')
+             | regex_search('(?m)^LLVM version: (\d+)', '\1') | default([''], true) | first }}
+        _latest_major: >-
+          {{ (developer_rust_llvm_tags.stdout | default('')
+              | regex_findall('(?m)refs/tags/llvmorg-(\d+)\.\d+\.\d+$')
+              | map('int') | list or [0]) | max }}
+
+    # Fails here, before any source line or package name is templated from it.
+    - name: Check the resolved LLVM major is usable
+      ansible.builtin.assert:
+        that:
+          - developer_rust_llvm_major | string is match('^[0-9]+$')
+          - developer_rust_llvm_major | int >= 18
+        fail_msg: >-
+          rust_llvm_version={{ developer_rust_llvm_request }} resolved to
+          '{{ developer_rust_llvm_major }}', which is not an LLVM major of 18 or
+          later. `rustc` needs a working rustc; `latest` needs git and GitHub.
+        quiet: true
+
+    # ========================================================================
+    # Ubuntu: apt.llvm.org versioned suite
+    # ========================================================================
+
+    - name: Install LLVM from apt.llvm.org (Ubuntu)
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      vars:
+        developer_rust_llvm_codename: "{{ ansible_facts['distribution_release'] }}"
+        developer_rust_llvm_suite: >-
+          llvm-toolchain-{{ ansible_facts['distribution_release'] }}-{{ developer_rust_llvm_major }}
+        developer_rust_llvm_sources: /etc/apt/sources.list.d/apt-llvm-org.sources
+        developer_rust_llvm_key_staged: /etc/apt/keyrings/llvm-snapshot.asc.unverified
+        developer_rust_llvm_key_dearmored: /etc/apt/keyrings/llvm-snapshot.gpg.verified
+      block:
+        # A major that is tagged upstream is not always built for this release
+        # yet, and apt would otherwise fail later with a less useful message.
+        - name: Check apt.llvm.org publishes this major for this release (Ubuntu)
+          ansible.builtin.uri:
+            url: "https://apt.llvm.org/{{ developer_rust_llvm_codename }}/dists/{{ developer_rust_llvm_suite }}/Release"
+            method: HEAD
+            status_code: 200
+          check_mode: false
+
+        # A minimal Ubuntu ships gpgv but not gpg, and deb822_repository needs
+        # python3-debian; both are normally there from the developer role.
+        - name: Ensure gpg and python3-debian are present (Ubuntu)
+          ansible.builtin.apt:
+            name: [gpg, python3-debian]
+            state: present
+
+        # hyperi-ci writes this file for the same repository. The same suite
+        # listed twice makes apt warn on every update, so only that suite's
+        # line goes; its other suites stay.
+        - name: Remove this suite from hyperi-ci's LLVM source list (Ubuntu)
+          ansible.builtin.lineinfile:
+            path: /etc/apt/sources.list.d/llvm.list
+            regexp: '^\s*deb(-src)?\s.*\s{{ developer_rust_llvm_suite | regex_escape }}(\s|$)'
+            state: absent
+
+        - name: Read the previously configured LLVM suite (Ubuntu)
+          ansible.builtin.slurp:
+            src: "{{ developer_rust_llvm_sources }}"
+          register: developer_rust_llvm_old_sources
+          failed_when: false
+          check_mode: false
+          when: rust_llvm_remove_previous | bool
+
+        - name: Ensure the apt keyring directory exists (Ubuntu)
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            owner: root
+            group: root
+            mode: '0755'
+
+        # Downloaded under a name no apt source trusts and installed only once
+        # its fingerprint matches; forced, so a rejected download is replaced on
+        # the next run instead of kept by an If-Modified-Since 304.
+        - name: Download the apt.llvm.org signing key (Ubuntu)
+          ansible.builtin.get_url:
+            url: https://apt.llvm.org/llvm-snapshot.gpg.key
+            dest: "{{ developer_rust_llvm_key_staged }}"
+            mode: '0644'
+            force: true
+
+        - name: Read the apt.llvm.org signing key fingerprint (Ubuntu)
+          ansible.builtin.command:
+            argv: [gpg, --show-keys, --with-colons, "{{ developer_rust_llvm_key_staged }}"]
+          register: developer_rust_llvm_key
+          changed_when: false
+          check_mode: false
+
+        # Fails closed: neither the trusted keyring nor the source is written
+        # unless the key matches apt.llvm.org's published fingerprint.
+        - name: Verify the apt.llvm.org signing key fingerprint (Ubuntu)
+          ansible.builtin.assert:
+            that: developer_rust_llvm_key_fpr == rust_llvm_apt_key_fingerprint
+            fail_msg: >-
+              apt.llvm.org key fingerprint {{ developer_rust_llvm_key_fpr or 'missing' }}
+              does not match {{ rust_llvm_apt_key_fingerprint }}
+            quiet: true
+          vars:
+            developer_rust_llvm_key_fpr: >-
+              {{ (developer_rust_llvm_key.stdout_lines | select('match', '^fpr:')
+                  | first | default('')).split(':')[9] | default('') }}
+
+        # Binary keyring, matching what hyperi-ci installs at the same path.
+        # Written to a staging name and copied, so an unchanged key reports ok.
+        - name: Dearmor the verified apt.llvm.org signing key (Ubuntu)
+          ansible.builtin.command:
+            argv:
+              - gpg
+              - --batch
+              - --yes
+              - --output
+              - "{{ developer_rust_llvm_key_dearmored }}"
+              - --dearmor
+              - "{{ developer_rust_llvm_key_staged }}"
+          changed_when: false
+
+        - name: Install the verified apt.llvm.org keyring (Ubuntu)
+          ansible.builtin.copy:
+            src: "{{ developer_rust_llvm_key_dearmored }}"
+            dest: "{{ rust_llvm_apt_keyring }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0644'
+
+        - name: Add the apt.llvm.org versioned suite (Ubuntu)
+          ansible.builtin.deb822_repository:
+            name: apt-llvm-org
+            types: deb
+            uris: "https://apt.llvm.org/{{ developer_rust_llvm_codename }}/"
+            suites: "{{ developer_rust_llvm_suite }}"
+            components: main
+            architectures: "{{ hyperi_arch_deb }}"
+            signed_by: "{{ rust_llvm_apt_keyring }}"
+            state: present
+
+        # Every package is versioned. Unversioned `bolt` is the Thunderbolt
+        # daemon, not LLVM's BOLT.
+        - name: Install the LLVM toolchain packages (Ubuntu)
+          ansible.builtin.apt:
+            name:
+              - "clang-{{ developer_rust_llvm_major }}"
+              - "clang-tools-{{ developer_rust_llvm_major }}"
+              - "clangd-{{ developer_rust_llvm_major }}"
+              - "lld-{{ developer_rust_llvm_major }}"
+              - "llvm-{{ developer_rust_llvm_major }}"
+              - "llvm-{{ developer_rust_llvm_major }}-dev"
+              - "llvm-{{ developer_rust_llvm_major }}-tools"
+              - "libclang-{{ developer_rust_llvm_major }}-dev"
+              - "libclang-rt-{{ developer_rust_llvm_major }}-dev"
+              - "bolt-{{ developer_rust_llvm_major }}"
+            state: present
+            update_cache: true
+
+        - name: Remove the previous LLVM major's packages (Ubuntu)
+          ansible.builtin.apt:
+            name:
+              - "clang-{{ developer_rust_llvm_previous }}"
+              - "clang-tools-{{ developer_rust_llvm_previous }}"
+              - "clangd-{{ developer_rust_llvm_previous }}"
+              - "lld-{{ developer_rust_llvm_previous }}"
+              - "llvm-{{ developer_rust_llvm_previous }}"
+              - "llvm-{{ developer_rust_llvm_previous }}-dev"
+              - "llvm-{{ developer_rust_llvm_previous }}-tools"
+              - "libclang-{{ developer_rust_llvm_previous }}-dev"
+              - "libclang-rt-{{ developer_rust_llvm_previous }}-dev"
+              - "bolt-{{ developer_rust_llvm_previous }}"
+            state: absent
+          vars:
+            developer_rust_llvm_previous: >-
+              {{ developer_rust_llvm_old_sources.content | default('') | b64decode
+                 | regex_search('(?m)^Suites:\s*llvm-toolchain-\S+-(\d+)\s*$', '\1')
+                 | default([''], true) | first }}
+          when:
+            - rust_llvm_remove_previous | bool
+            - developer_rust_llvm_previous | length > 0
+            - developer_rust_llvm_previous != developer_rust_llvm_major
+
+        - name: Inspect the unversioned LLVM link paths (Ubuntu)
+          ansible.builtin.stat:
+            path: "/usr/local/bin/{{ item }}"
+            follow: false
+          loop: "{{ rust_llvm_links }}"
+          register: developer_rust_llvm_link_paths
+
+        # Only an absent path or a link to some /usr/bin/<tool>-<major> is ours
+        # to repoint; anything else at that path belongs to someone else.
+        - name: Point the unversioned LLVM names at this major (Ubuntu)
+          ansible.builtin.file:
+            src: "/usr/bin/{{ item.item }}-{{ developer_rust_llvm_major }}"
+            dest: "/usr/local/bin/{{ item.item }}"
+            state: link
+          loop: "{{ developer_rust_llvm_link_paths.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when: >-
+            not item.stat.exists
+            or (item.stat.islnk and item.stat.lnk_target is match('^/usr/bin/\S+-[0-9]+$'))
+
+        # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+        # accumulator the playbook reports at the end of the run.
+        - name: Report LLVM link paths held by something else (Ubuntu)
+          ansible.builtin.set_fact:
+            deploy_warnings: >-
+              {{ (deploy_warnings | default([])
+                  + ['LLVM toolchain: /usr/local/bin/' ~ item.item ~ ' is not a link this role'
+                     ~ ' manages, so it was left alone and does not point at LLVM '
+                     ~ developer_rust_llvm_major ~ '.']) | unique }}
+          loop: "{{ developer_rust_llvm_link_paths.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+          when:
+            - item.stat.exists
+            - not (item.stat.islnk and item.stat.lnk_target is match('^/usr/bin/\S+-[0-9]+$'))
+
+        - name: Record the installed LLVM major (Ubuntu)
+          ansible.builtin.set_fact:
+            developer_rust_llvm_system_major: "{{ developer_rust_llvm_major }}"
+
+    # ========================================================================
+    # Fedora: the distro's LLVM
+    # ========================================================================
+    # Fedora carries one current LLVM plus compat packages (llvm21, clang21, ...)
+    # for older majors, and no third-party repository. So a newer major than
+    # the distro's is a warning, and an older pinned one takes the compat set.
+
+    - name: Install LLVM from the Fedora repositories (Fedora)
+      when: ansible_facts['distribution'] == 'Fedora'
+      block:
+        - name: Look up the Fedora LLVM version and compat packages (Fedora)
+          ansible.builtin.command:
+            argv:
+              - dnf
+              - repoquery
+              - --latest-limit=1
+              - --queryformat=%{name} %{version}\n
+              - llvm
+              - "llvm{{ developer_rust_llvm_major }}"
+          register: developer_rust_llvm_dnf
+          changed_when: false
+          check_mode: false
+
+        - name: Decide between the distro and compat LLVM packages (Fedora)
+          ansible.builtin.set_fact:
+            developer_rust_llvm_compat: >-
+              {{ developer_rust_llvm_request is match('^[0-9]+$')
+                 and _distro_major | int > developer_rust_llvm_major | int
+                 and ('llvm' ~ developer_rust_llvm_major) in _available }}
+          vars:
+            _lines: "{{ developer_rust_llvm_dnf.stdout_lines | select('match', '^\\S+ [0-9][0-9.]*$') | list }}"
+            _available: "{{ _lines | map('split', ' ') | map('first') | list }}"
+            _distro_major: >-
+              {{ (_lines | select('match', '^llvm ') | first | default('llvm 0')).split(' ')[1].split('.')[0] }}
+
+        # llvm-bolt has no compat package; BOLT from any recent major serves.
+        - name: Install the LLVM toolchain packages (Fedora)
+          ansible.builtin.dnf:
+            name: "{{ _compat if developer_rust_llvm_compat | bool else _distro }}"
+            state: present
+          vars:
+            _distro: [llvm, clang, lld, clang-tools-extra, compiler-rt, llvm-devel, clang-devel, llvm-bolt]
+            _compat:
+              - "llvm{{ developer_rust_llvm_major }}"
+              - "clang{{ developer_rust_llvm_major }}"
+              - "lld{{ developer_rust_llvm_major }}"
+              - "clang{{ developer_rust_llvm_major }}-tools-extra"
+              - "compiler-rt{{ developer_rust_llvm_major }}"
+              - "llvm{{ developer_rust_llvm_major }}-devel"
+              - "clang{{ developer_rust_llvm_major }}-devel"
+              - llvm-bolt
+
+        - name: Read the installed Fedora LLVM version (Fedora)
+          ansible.builtin.command:
+            argv:
+              - rpm
+              - -q
+              - --queryformat=%{VERSION}
+              - "{{ ('llvm' ~ developer_rust_llvm_major) if developer_rust_llvm_compat else 'llvm' }}"
+          register: developer_rust_llvm_rpm
+          changed_when: false
+          check_mode: false
+
+        - name: Record the installed LLVM major (Fedora)
+          ansible.builtin.set_fact:
+            developer_rust_llvm_system_major: "{{ developer_rust_llvm_rpm.stdout | trim | split('.') | first }}"
+
+    # ========================================================================
+    # macOS: Homebrew
+    # ========================================================================
+    # Keg-only, so nothing is linked onto PATH and Apple's clang stays the
+    # default; a build reaches it through $(brew --prefix llvm)/bin. Homebrew
+    # builds no BOLT for macOS.
+
+    - name: Install LLVM from Homebrew (macOS)
+      when: ansible_facts['distribution'] == 'MacOSX'
+      become: false
+      environment: "{{ homebrew_env }}"
+      block:
+        - name: Read Homebrew's current LLVM version (macOS)
+          ansible.builtin.command:
+            argv: [brew, info, --json=v2, llvm]
+          register: developer_rust_llvm_brew_info
+          changed_when: false
+          check_mode: false
+
+        - name: Choose the Homebrew LLVM formulae (macOS)
+          ansible.builtin.set_fact:
+            developer_rust_llvm_brew_formulae: >-
+              {{ ['llvm@' ~ developer_rust_llvm_major, 'lld@' ~ developer_rust_llvm_major]
+                 if (developer_rust_llvm_request is match('^[0-9]+$')
+                     and developer_rust_llvm_major | int < _brew_major | int)
+                 else ['llvm', 'lld'] }}
+          vars:
+            _brew_major: >-
+              {{ (developer_rust_llvm_brew_info.stdout | from_json).formulae[0].versions.stable.split('.')[0] }}
+
+        - name: Install the LLVM toolchain formulae (macOS)
+          community.general.homebrew:
+            name: "{{ developer_rust_llvm_brew_formulae }}"
+            state: present
+
+        - name: Read the installed Homebrew LLVM version (macOS)
+          ansible.builtin.command:
+            argv: [brew, list, --versions, "{{ developer_rust_llvm_brew_formulae | first }}"]
+          register: developer_rust_llvm_brew_list
+          changed_when: false
+          check_mode: false
+
+        - name: Record the installed LLVM major (macOS)
+          ansible.builtin.set_fact:
+            developer_rust_llvm_system_major: >-
+              {{ developer_rust_llvm_brew_list.stdout | regex_search('\s(\d+)\.', '\1') | default(['0'], true) | first }}
+
+    # ========================================================================
+    # Drift against rustc
+    # ========================================================================
+    # Nothing is exported (no LLVM_PROFDATA, LLVM_COV or LIBCLANG_PATH): each
+    # tool finds its own match, and a pinned path goes stale on the next
+    # `rustup update`.
+
+    # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+    # accumulator the playbook reports at the end of the run.
+    - name: Warn when the system LLVM is older than wanted
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ (deploy_warnings | default([])
+              + ['LLVM toolchain: the system LLVM is ' ~ _system ~ ', older than '
+                 ~ ((_wanted ~ ' (rust_llvm_version=' ~ developer_rust_llvm_request ~ ')')
+                    if _system | int < _wanted | int
+                    else (_rustc ~ ', the LLVM this rustc was built with'))
+                 ~ ". Cross-language LTO against a rustc built on a newer LLVM fails;"
+                 ~ " PGO and coverage still work through rustup's llvm-tools."]) | unique }}
+      vars:
+        _system: "{{ developer_rust_llvm_system_major | default('0') }}"
+        _wanted: "{{ developer_rust_llvm_major }}"
+        _rustc: "{{ developer_rust_llvm_rustc_major | default('', true) }}"
+      when: >-
+        _system | int < _wanted | int
+        or (_rustc | length > 0 and _system | int < _rustc | int)
+
+    - name: Note which llvm-profdata merges Rust profiles
+      ansible.builtin.debug:
+        msg: >-
+          The system LLVM ({{ developer_rust_llvm_system_major }}) is newer than
+          rustc's ({{ developer_rust_llvm_rustc_major }}). Merge Rust profiles with
+          rustup's llvm-profdata (cargo pgo does), not the system one: raw
+          profile formats differ between majors.
+      when:
+        - developer_rust_llvm_rustc_major | default('', true) | length > 0
+        - developer_rust_llvm_system_major | default('0') | int > developer_rust_llvm_rustc_major | int
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+    # accumulator the playbook reports at the end of the run.
+    - name: Record that the LLVM toolchain did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ (deploy_warnings | default([])
+              + ['LLVM toolchain: ' ~ (ansible_failed_task.name | default('unknown task'))
+                 ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))]) | unique }}

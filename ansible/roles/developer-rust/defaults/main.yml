@@ -35,6 +35,43 @@ rust_verify_wrapper: true
 rust_retire_superseded_config: true
 
 # ---------------------------------------------------------------------------
+# LLVM, PGO and BOLT
+# ---------------------------------------------------------------------------
+# clang, lld, BOLT and the LLVM development files, for cross-language LTO,
+# bindgen, PGO and post-link optimisation. rustup's llvm-tools component still
+# supplies llvm-profdata and llvm-cov, because those must match rustc's own
+# LLVM major exactly and the system copy need not.
+rust_llvm_enabled: true
+
+# latest | rustc | <major>. `latest` is the newest LLVM release tag upstream,
+# `rustc` is the major the installed rustc was built with, and an integer pins
+# one. Cross-language LTO needs a system LLVM at least as new as rustc's, which
+# is why the default leans new. Fedora installs its distro LLVM and warns when
+# that is below the major asked for.
+rust_llvm_version: latest
+
+# apt.llvm.org's published signing key. The keyring path is the one hyperi-ci
+# uses for the same repository: two different Signed-By values for one suite
+# stop apt reading any source list.
+rust_llvm_apt_key_fingerprint: 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421  # gitleaks:allow -- public key fingerprint
+rust_llvm_apt_keyring: /usr/share/keyrings/llvm.gpg
+
+# Unversioned names in /usr/local/bin pointing at the installed major (Ubuntu
+# only; Fedora and macOS already have their own unversioned names). A real file
+# or a link we did not make at one of these paths is left alone and reported.
+rust_llvm_links:
+  - clang
+  - clang++
+  - ld.lld
+  - llvm-bolt
+  - merge-fdata
+  - perf2bolt
+
+# Remove the previous major's packages when the resolved major moves (Ubuntu
+# only). Off, because a project may still pin the older clang by name.
+rust_llvm_remove_previous: false
+
+# ---------------------------------------------------------------------------
 # Build cache caps
 # ---------------------------------------------------------------------------
 # Build artefacts have no upstream cap (rust-lang/cargo#13136), so build-dir
