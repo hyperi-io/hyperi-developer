@@ -36,8 +36,7 @@
         apply:
           tags: ['always']
       vars:
-        system_cleanup_apt_source_match: 'launchpad(content)?\.net/git-core/ppa'
-        system_cleanup_apt_source_file: /etc/apt/sources.list.d/git-core-ppa.sources
+        system_cleanup_apt_source_name: git
 
     # A minimal Ubuntu ships none of these: gpg reads the key fingerprint below,
     # hyperi-update shells out to curl, and deb822_repository needs python3-debian.

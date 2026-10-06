@@ -6,15 +6,20 @@
 # own install instructions leave beside the .sources a role writes.
 #
 # Inputs:
-#   system_cleanup_apt_source_match       regex naming the repository's host and
-#                                         path, e.g. 'launchpadcontent\.net/git-core/ppa'
-#   system_cleanup_apt_source_file        the .sources file the calling role owns
+#   system_cleanup_apt_source_name        key into hyperi_exclusive_apt_sources
+#                                         (group_vars/all.yml), which holds the
+#                                         repository regex and our .sources file
 #   system_cleanup_apt_source_if_present  (optional) act only while that file
 #                                         exists, for a pass that runs before the
 #                                         owning role decides whether to write it
 #   system_cleanup_apt_source_failed      (optional) the failed result from a
 #                                         rescue; when apt reported the conflict,
 #                                         the role's own file goes instead
+
+- name: Look up the apt source entry, {{ system_cleanup_apt_source_name }}
+  ansible.builtin.set_fact:
+    system_cleanup_apt_source_match: "{{ hyperi_exclusive_apt_sources[system_cleanup_apt_source_name].match }}"
+    system_cleanup_apt_source_file: "{{ hyperi_exclusive_apt_sources[system_cleanup_apt_source_name].file }}"
 
 - name: Check for the role's own source, {{ system_cleanup_apt_source_file | basename }}
   ansible.builtin.stat:

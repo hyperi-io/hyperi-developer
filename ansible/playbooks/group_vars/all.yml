@@ -66,3 +66,21 @@ hyperi_core_versions:
   # 26 and 24.
   node_major: 24
   node_major_previous: 22
+
+# ============================================================================
+# apt sources the roles own outright
+# ============================================================================
+# Any other source naming one of these repositories is removed before ours is
+# written (system_cleanup/tasks/apt_source_exclusive.yml): apt stops reading
+# every source once two entries for one repository carry different keys.
+# match is a regex over the repository's host and path; file is our .sources.
+hyperi_exclusive_apt_sources:
+  git:
+    match: 'launchpad(content)?\.net/git-core/ppa'
+    file: /etc/apt/sources.list.d/git-core-ppa.sources
+  ghostty:
+    match: 'launchpad(content)?\.net/mkasberg/ghostty-ubuntu'
+    file: /etc/apt/sources.list.d/ghostty-ppa.sources
+  claude:
+    match: 'downloads\.claude\.ai/claude-code/apt'
+    file: /etc/apt/sources.list.d/claude-code.sources

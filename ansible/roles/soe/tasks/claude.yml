@@ -66,8 +66,7 @@
         apply:
           tags: ['always']
       vars:
-        system_cleanup_apt_source_match: 'downloads\.claude\.ai/claude-code/apt'
-        system_cleanup_apt_source_file: /etc/apt/sources.list.d/claude-code.sources
+        system_cleanup_apt_source_name: claude
       when: ansible_facts['distribution'] == 'Ubuntu'
 
     # A minimal Ubuntu ships gpgv but not gpg, which the key check needs, and
@@ -225,7 +224,7 @@
     # Deleted as a file on a key mismatch, leaving the trusted key: deb822_repository state=absent would delete that keyring too.
     - name: Remove the Claude Code apt repository after a key mismatch (Ubuntu)
       ansible.builtin.file:
-        path: /etc/apt/sources.list.d/claude-code.sources
+        path: "{{ hyperi_exclusive_apt_sources.claude.file }}"
         state: absent
       when:
         - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
@@ -246,8 +245,7 @@
         apply:
           tags: ['always']
       vars:
-        system_cleanup_apt_source_match: 'downloads\.claude\.ai/claude-code/apt'
-        system_cleanup_apt_source_file: /etc/apt/sources.list.d/claude-code.sources
+        system_cleanup_apt_source_name: claude
         system_cleanup_apt_source_failed: "{{ ansible_failed_result }}"
       when: ansible_facts['distribution'] == 'Ubuntu'
 

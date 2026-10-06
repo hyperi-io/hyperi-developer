@@ -77,8 +77,7 @@
         apply:
           tags: ['always']
       vars:
-        system_cleanup_apt_source_match: 'launchpad(content)?\.net/mkasberg/ghostty-ubuntu'
-        system_cleanup_apt_source_file: /etc/apt/sources.list.d/ghostty-ppa.sources
+        system_cleanup_apt_source_name: ghostty
 
     # A minimal Ubuntu ships neither: gpg reads the key fingerprint, and
     # deb822_repository needs python3-debian.
@@ -227,7 +226,7 @@
     # Deleted as a file on a key mismatch, leaving the trusted key: deb822_repository state=absent would delete that keyring too.
     - name: Remove the Ghostty PPA repository after a key mismatch
       ansible.builtin.file:
-        path: /etc/apt/sources.list.d/ghostty-ppa.sources
+        path: "{{ hyperi_exclusive_apt_sources.ghostty.file }}"
         state: absent
       when: ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
 
@@ -238,8 +237,7 @@
         apply:
           tags: ['always']
       vars:
-        system_cleanup_apt_source_match: 'launchpad(content)?\.net/mkasberg/ghostty-ubuntu'
-        system_cleanup_apt_source_file: /etc/apt/sources.list.d/ghostty-ppa.sources
+        system_cleanup_apt_source_name: ghostty
         system_cleanup_apt_source_failed: "{{ ansible_failed_result }}"
 
     # unique: a persona can pull this role into the play a second time.
