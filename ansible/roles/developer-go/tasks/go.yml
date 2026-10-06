@@ -104,6 +104,54 @@
         group: root
         mode: '0644'
 
+    # The profile drop-in reaches login shells only. systemd units and any
+    # shell started on the default PATH find go through these links.
+    - name: Check for go and gofmt in /usr/local/bin
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+        follow: false
+      loop: [go, gofmt]
+      register: developer_go_bin_links
+
+    - name: Check whether those links resolve
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+        follow: true
+      loop: [go, gofmt]
+      register: developer_go_bin_targets
+
+    # Only a missing entry, a dangling link, or a link already into
+    # /usr/local/go is this role's to point at the toolchain.
+    - name: Link go and gofmt into /usr/local/bin
+      ansible.builtin.file:
+        src: "/usr/local/go/bin/{{ item.0.item }}"
+        dest: "/usr/local/bin/{{ item.0.item }}"
+        state: link
+        force: true
+      loop: "{{ developer_go_bin_links.results | zip(developer_go_bin_targets.results) | list }}"
+      loop_control:
+        label: "{{ item.0.item }}"
+      when: >-
+        not item.0.stat.exists
+        or (item.0.stat.islnk
+            and (not item.1.stat.exists or item.0.stat.lnk_target is match('^/usr/local/go/')))
+
+    # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+    # accumulator the playbook reports at the end of the run.
+    - name: Report go and gofmt paths held by something else
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ (deploy_warnings | default([])
+              + ['Go toolchain: /usr/local/bin/' ~ item.0.item ~ ' is not a link this role'
+                 ~ ' manages, so it was left alone and does not point at /usr/local/go.']) | unique }}
+      loop: "{{ developer_go_bin_links.results | zip(developer_go_bin_targets.results) | list }}"
+      loop_control:
+        label: "{{ item.0.item }}"
+      when:
+        - item.0.stat.exists
+        - not item.0.stat.islnk
+          or (item.1.stat.exists and item.0.stat.lnk_target is not match('^/usr/local/go/'))
+
     - name: Install delve (Fedora)
       ansible.builtin.dnf:
         name: delve

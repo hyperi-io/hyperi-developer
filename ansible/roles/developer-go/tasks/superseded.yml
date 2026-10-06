@@ -1,0 +1,111 @@
+---
+# The distro Go beside the upstream toolchain this role installs in /usr/local/go.
+# /usr/bin/go answers wherever /etc/profile.d has not run -- a cron job, a
+# systemd unit, an IDE launched outside a login shell -- so a build there gets
+# the distro's Go instead of the managed one.
+#
+# Removed only when the managed Go is provably this role's and works: the
+# profile drop-in go.yml writes exists, /usr/local/go/bin/go resolves under
+# /usr/local to a different file than /usr/bin/go, `go version` runs, and its
+# standard library (src/runtime) resolves under /usr/local too -- a tree copied
+# from Ubuntu's keeps src as a link into /usr/share and breaks with the purge. A
+# /usr/local/go linked into the distro tree is the distro Go, and it stays.
+# Only packages named golang* are candidates, so gccgo is never touched.
+#
+# Linux only: Homebrew is the managed Go on macOS.
+
+- name: Resolve the managed and the distro Go
+  ansible.builtin.command:
+    argv: [readlink, -e, "{{ item }}"]
+  loop:
+    - /usr/local/go/bin/go
+    - /usr/bin/go
+    - /usr/local/go/src/runtime
+  register: developer_go_resolved
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check that the managed Go runs
+  ansible.builtin.command:
+    argv: [/usr/local/go/bin/go, version]
+  register: developer_go_managed_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check for the managed Go's profile drop-in
+  ansible.builtin.stat:
+    path: /etc/profile.d/hyperi-go.sh
+  register: developer_go_profile
+
+- name: Find the packages behind the distro Go
+  when:
+    - developer_go_profile.stat.exists
+    - developer_go_managed_version.rc == 0
+    - developer_go_resolved.results[0].rc == 0
+    - developer_go_resolved.results[1].rc == 0
+    - developer_go_resolved.results[0].stdout.startswith('/usr/local/')
+    - not developer_go_resolved.results[1].stdout.startswith('/usr/local/')
+    - developer_go_resolved.results[0].stdout != developer_go_resolved.results[1].stdout
+    - developer_go_resolved.results[2].rc == 0
+    - developer_go_resolved.results[2].stdout.startswith('/usr/local/')
+  block:
+    # The package that ships the resolved binary (golang-1.26-go on Ubuntu,
+    # golang-bin on Fedora), plus the metapackages that pull it in.
+    - name: Find the package that ships the distro Go
+      ansible.builtin.command:
+        argv: >-
+          {{ (['dpkg-query', '-S'] if ansible_facts['distribution'] == 'Ubuntu'
+              else ['rpm', '-qf', '--qf', '%{NAME}\n']) + [developer_go_resolved.results[1].stdout] }}
+      register: developer_go_owner
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: List the installed distro Go packages
+      ansible.builtin.command:
+        argv: >-
+          {{ (['dpkg-query', '-W', '-f', '${db:Status-Abbrev} ${Package}\n']
+              if ansible_facts['distribution'] == 'Ubuntu'
+              else ['rpm', '-q', '--qf', '%{NAME}\n'])
+             + developer_go_candidates }}
+      register: developer_go_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - developer_go_owner.rc == 0
+        - developer_go_owned is match('^golang')
+      vars:
+        developer_go_owned: "{{ developer_go_owner.stdout_lines | first | default('') | regex_replace(':.*$', '') }}"
+        # golang-1.26-go -> golang-1.26-src beside it; Fedora splits bin and src.
+        developer_go_candidates: >-
+          {{ (['golang', 'golang-go', 'golang-src', 'golang-doc', developer_go_owned,
+               developer_go_owned | regex_replace('-go$', '-src'),
+               developer_go_owned | regex_replace('-go$', '-doc')]
+              if ansible_facts['distribution'] == 'Ubuntu'
+              else ['golang', 'golang-src', developer_go_owned]) | unique }}
+
+    # dpkg-query reports `ii ` for an installed package; rpm prints the name of
+    # each installed one and `package X is not installed` for the rest.
+    - name: Collect the distro Go packages to remove
+      ansible.builtin.set_fact:
+        developer_go_distro_pkgs: >-
+          {{ ((developer_go_installed.stdout_lines | default([]) | select('match', '^ii ')
+               | map('regex_replace', '^ii +', '') | list)
+              if ansible_facts['distribution'] == 'Ubuntu'
+              else (developer_go_installed.stdout_lines | default([]) | reject('search', ' ') | list))
+             | select('match', '^golang') | list }}
+
+    - name: Remove the distro Go superseded by /usr/local/go
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: purge_packages.yml
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_purge_packages: "{{ developer_go_distro_pkgs }}"
+        system_cleanup_purge_reason: the distro Go superseded by /usr/local/go
+      when: developer_go_distro_pkgs | length > 0

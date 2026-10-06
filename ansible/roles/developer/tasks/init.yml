@@ -68,6 +68,53 @@
   ansible.builtin.debug:
     msg: "Installing for user: {{ actual_user }} (home: {{ user_home }})"
 
+# Where the target user's own login environment puts cargo and rustup, read
+# here so every role that installs or sweeps cargo tools agrees on it.
+#
+# The target user's login shell sees /etc/environment (pam_env under become),
+# /etc/profile.d and ~/.profile, which is where a relocation is declared.
+# `ansible_facts['env']` is the connecting user's environment and cannot see them.
+# `printenv` reports only what is exported, which is what cargo, hyperi-update
+# and a systemd unit actually inherit -- an unexported shell variable is not.
+#
+# Sentinel lines, and `last`, because a profile can print ahead of the answer.
+# `timeout` on Linux because a blocking profile would otherwise hang the
+# converge. A stock macOS has no `timeout`, so the Mac branch runs without one.
+- name: Probe the target user's exported cargo and rustup homes
+  ansible.builtin.command:
+    cmd: >-
+      {{ 'zsh' if ansible_facts['distribution'] == 'MacOSX' else 'timeout 30 bash' }}
+      -lc 'printf "HYPERI_CARGO_HOME %s\nHYPERI_RUSTUP_HOME %s\n" "$(printenv CARGO_HOME)" "$(printenv RUSTUP_HOME)"'
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_env_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Empty when the host exports nothing. Trailing slashes are stripped so the
+# value compares cleanly with paths built from it.
+- name: Record the target user's exported cargo and rustup homes
+  # noqa: var-naming[no-role-prefix] -- consumed by developer-rust and
+  # contributor, so it is deliberately play-scoped, not role-scoped.
+  ansible.builtin.set_fact:
+    hyperi_host_cargo_home: >-
+      {{ developer_env_probe_lines | select('match', '^HYPERI_CARGO_HOME ') | list | last
+         | default('') | regex_replace('^\S+ ?', '') | regex_replace('/+$', '') }}
+    hyperi_host_rustup_home: >-
+      {{ developer_env_probe_lines | select('match', '^HYPERI_RUSTUP_HOME ') | list | last
+         | default('') | regex_replace('^\S+ ?', '') | regex_replace('/+$', '') }}
+  vars:
+    developer_env_probe_lines: "{{ developer_env_probe.stdout_lines | default([], true) }}"
+
+# The cargo home a role that installs cargo tools uses when developer-rust is
+# not in the run to resolve its own.
+- name: Record the cargo home the host's cargo uses
+  # noqa: var-naming[no-role-prefix] -- consumed by contributor, so it is
+  # deliberately play-scoped, not role-scoped.
+  ansible.builtin.set_fact:
+    hyperi_cargo_home: "{{ hyperi_host_cargo_home or (user_home ~ '/.cargo') }}"
+
 # Here rather than beside the pnpm install because tag selection can reach a
 # consumer without its producer -- `--tags typescript` picks the TypeScript task
 # and not the Node one. This file carries `tags: ['always']`.

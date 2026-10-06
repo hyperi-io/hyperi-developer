@@ -103,19 +103,25 @@
 # of THIS repo (see CONTRIBUTING), not something hyperi-ci calls.
 #
 # Not packaged anywhere, so cargo it is -- the bottom rung, and the only rung.
+#
+# Into the effective CARGO_HOME developer-rust resolved, else the one the host
+# exports, where `cargo install-update` finds it.
 - name: Install alint (repository-structure linter, NOT ansible-lint)
   ansible.builtin.command:
     cmd: cargo install alint
-    creates: "{{ user_home }}/.cargo/bin/alint"
+    creates: "{{ contributor_cargo_home }}/bin/alint"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-  environment:
-    # /opt/homebrew/opt/rustup/bin: brew's rustup never links its shims into
-    # /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac. This
-    # task has no distribution gate, so it runs there too.
-    PATH: >-
-      {{ user_home }}/.cargo/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:{{
-      ansible_facts['env'].PATH }}
+  # /opt/homebrew/opt/rustup/bin: brew's rustup never links its shims into
+  # /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac. This
+  # task has no distribution gate, so it runs there too.
+  environment: >-
+    {{ cargo_env | default({'PATH': contributor_cargo_home ~ '/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:'
+                                    ~ ansible_facts['env'].PATH,
+                            'CARGO_HOME': contributor_cargo_home}
+                           | combine({'RUSTUP_HOME': hyperi_host_rustup_home} if hyperi_host_rustup_home | default('') else {})) }}
+  vars:
+    contributor_cargo_home: "{{ developer_rust_cargo_home | default(hyperi_cargo_home | default(user_home ~ '/.cargo')) }}"
   register: contributor_alint
   changed_when: "'Installed package' in contributor_alint.stdout | default('')"
   failed_when: false
