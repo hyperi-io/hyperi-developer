@@ -64,7 +64,7 @@
 
 # macOS. Untap only after the formulae are gone, or brew refuses.
 #
-# NOT touched: `aws-vault`. It is 99designs/aws-vault, nothing to do with
+# NOT touched: `aws-vault`. It is the ByteNess aws-vault, nothing to do with
 # HashiCorp Vault despite the name, and it is still installed on purpose.
 - name: Remove Terraform and Vault (macOS)
   community.general.homebrew:

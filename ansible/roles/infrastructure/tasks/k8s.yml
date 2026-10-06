@@ -74,33 +74,106 @@
 
 
 # ============================================================================
-# kubectx + kubens - distro packages (Tier 1, OS-swept)
+# kubectx + kubens - Ubuntu universe package; Fedora GitHub release (Tier 3)
 # ============================================================================
-# Were GitHub-release binaries. Ubuntu ships kubectx in universe, Fedora in its
-# repos; both bundle kubens in the SAME package, so one install covers both.
-- name: Install kubectx and kubens (Linux)
+# Ubuntu ships kubectx in universe, and that one package bundles kubens too.
+# Fedora packages neither (none in the Fedora 44 repos), so it takes upstream's
+# release binaries into /usr/local/bin.
+- name: Install kubectx and kubens (Ubuntu)
+  when: ansible_facts['distribution'] == 'Ubuntu'
   block:
-    - name: Install kubectx (Fedora)
-      ansible.builtin.dnf:
-        name: kubectx
-        state: present
-      when: ansible_facts['distribution'] == 'Fedora'
-
     - name: Install kubectx (Ubuntu)
       ansible.builtin.apt:
         name: kubectx
         state: present
         update_cache: true
-      when: ansible_facts['distribution'] == 'Ubuntu'
 
   rescue:
-    - name: Record that kubectx/kubens did not install
+    - name: Record that kubectx/kubens did not install (Ubuntu)
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
              + ['kubectx/kubens: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
 
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+- name: Install kubectx and kubens (Fedora)
+  when: ansible_facts['distribution'] == 'Fedora'
+  block:
+    - name: List the kubectx releases
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ infrastructure_kubectx_repo }}/releases?per_page=30"
+        return_content: true
+        headers: "{{ hyperi_github_headers }}"
+      register: infrastructure_kubectx_releases
+      check_mode: false
+
+    # Sorted rather than trusting the API's order, then cut to the releases past
+    # the cooldown (infrastructure_release_cutoff).
+    - name: List the kubectx releases past the cooldown
+      ansible.builtin.set_fact:
+        infrastructure_kubectx_candidates: >-
+          {{ infrastructure_kubectx_releases.json
+             | rejectattr('draft') | rejectattr('prerelease')
+             | selectattr('published_at', 'le', infrastructure_release_cutoff)
+             | sort(attribute='published_at', reverse=true)
+             | map(attribute='tag_name') | list }}
+
+    - name: Check a kubectx release is past the cooldown
+      ansible.builtin.assert:
+        that: infrastructure_kubectx_candidates | length > 0
+        fail_msg: >-
+          no {{ infrastructure_kubectx_repo }} release among the newest 30 is at
+          least {{ infrastructure_min_release_age_days }} days old
+        quiet: true
+
+    # Assets carry the tag verbatim (kubectx_v0.11.0_linux_x86_64.tar.gz) and
+    # name the arches x86_64 and arm64; `--version` prints the bare version.
+    - name: Pick the newest kubectx release past the cooldown
+      ansible.builtin.set_fact:
+        infrastructure_kubectx_tag: "{{ infrastructure_kubectx_candidates | first }}"
+        infrastructure_kubectx_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
+
+    # The bash scripts older revisions installed have no --version and treat it
+    # as a context or namespace name, so they run against an empty kubeconfig.
+    - name: Read the installed kubectx and kubens versions
+      ansible.builtin.command:
+        argv: ["/usr/local/bin/{{ item }}", --version]
+      environment:
+        KUBECONFIG: /dev/null
+      loop:
+        - kubectx
+        - kubens
+      register: infrastructure_kubectx_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # The version match is what skips the download on a current host and what
+    # replaces both once a new release clears the cooldown, the old bash scripts
+    # included.
+    - name: Download and extract kubectx and kubens (Fedora)
+      ansible.builtin.unarchive:
+        src: >-
+          https://github.com/{{ infrastructure_kubectx_repo }}/releases/download/{{ infrastructure_kubectx_tag
+          }}/{{ item.item }}_{{ infrastructure_kubectx_tag }}_linux_{{ infrastructure_kubectx_arch }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: ["{{ item.item }}"]
+        owner: root
+        group: root
+        mode: '0755'
+      loop: "{{ infrastructure_kubectx_installed.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when:
+        - not ansible_check_mode
+        - (item.stdout | default('') | trim) != (infrastructure_kubectx_tag | regex_replace('^v', ''))
+
+  rescue:
+    - name: Record that kubectx/kubens did not install (Fedora)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kubectx/kubens: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
 # ============================================================================
 # k9s - Fedora dnf (Tier 1); Ubuntu keeps the GitHub binary (Tier 3) below
@@ -227,15 +300,6 @@
       ansible.builtin.dnf:
         name: kustomize
         state: present
-      when: ansible_facts['distribution'] == 'Fedora'
-
-    # Fedora installed kustomize to /usr/local/bin before it moved to dnf
-    # (/usr/bin). /usr/local/bin precedes /usr/bin on the default PATH, so the
-    # old copy would keep winning and nothing would ever update it.
-    - name: Remove the superseded /usr/local/bin/kustomize (Fedora)
-      ansible.builtin.file:
-        path: /usr/local/bin/kustomize
-        state: absent
       when: ansible_facts['distribution'] == 'Fedora'
 
     - name: Get kustomize releases (Ubuntu)

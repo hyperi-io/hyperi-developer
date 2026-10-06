@@ -29,6 +29,7 @@
     name: gitleaks
     state: present
   become: false
+  environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================

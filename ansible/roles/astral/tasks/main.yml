@@ -75,31 +75,31 @@
         owner: "{{ actual_user }}"
         group: "{{ actual_user }}"
 
-    - name: Download uv tarball
-      ansible.builtin.get_url:
-        url: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ uv_arch }}.tar.gz"
-        dest: "/tmp/uv-{{ uv_arch }}.tar.gz"
-        mode: '0644'
+    # `uv --version` prints `uv <version> (...)`; the release tag is the bare
+    # version.
+    - name: Read the installed uv version
+      ansible.builtin.command:
+        argv: ["{{ user_home }}/.local/bin/uv", --version]
+      register: astral_uv_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
 
-    # Check mode only previews the directory and the download above, so on a
-    # host that has never had uv this fails the whole run instead of
-    # previewing it.
-    - name: Extract uv
+    # The version match is what skips the download on a current host and what
+    # replaces uv and uvx once a new release ships. Straight from the URL, so no
+    # root-written file sits at a fixed path under /tmp.
+    - name: Download and extract uv
       ansible.builtin.unarchive:
-        src: "/tmp/uv-{{ uv_arch }}.tar.gz"
+        src: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-{{ uv_arch }}.tar.gz"
         dest: "{{ user_home }}/.local/bin"
         remote_src: true
-        creates: "{{ user_home }}/.local/bin/uv"
         owner: "{{ actual_user }}"
         group: "{{ actual_user }}"
         extra_opts:
           - --strip-components=1
-      when: not ansible_check_mode
-
-    - name: Remove uv tarball
-      ansible.builtin.file:
-        path: "/tmp/uv-{{ uv_arch }}.tar.gz"
-        state: absent
+      when:
+        - not ansible_check_mode
+        - ((astral_uv_installed.stdout | default('')).split() + ['', ''])[1] != uv_version
 
 # No rescue: ruff and ty below are installed by `uv tool install`, so warning
 # past a missing uv only moves the abort to a task that reports it as a missing

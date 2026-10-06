@@ -1,18 +1,18 @@
 #!/usr/bin/env zsh
 #
-# hyperi-update (macOS) — update everything the hyperi-developer installer set
+# hyperi-update (macOS) -- update everything the hyperi-developer installer set
 # up on this machine, in one command.
 #
 #   * Homebrew         (formulae + casks: aws, gh, az, kubectl, helm,
 #                       opentofu, openbao, gcloud-cli, ...)
-#   * macOS updates    (softwareupdate)                  — needs sudo
-#   * uv tools         (gnome-extensions-cli, ...)       — user
-#   * rustup           (Rust toolchains)                 — user
-#   * cargo tools      (nextest, deny, cargo-audit, ...) — user
-#   * go tools         (gopls, govulncheck)              — user
-#   * npm globals      (maid, semantic-release, pnpm)    — user
-#   * Claude Code CLI  (self-installed under ~/.local)   — user
-#   * Codex plugin     (claude plugin update)            - user
+#   * macOS updates    (softwareupdate)                  -- needs sudo
+#   * uv tools         (gnome-extensions-cli, ...)       -- user
+#   * rustup           (Rust toolchains)                 -- user
+#   * cargo tools      (nextest, deny, cargo-audit, ...) -- user
+#   * go tools         (gopls)                           -- user
+#   * npm globals      (maid, semantic-release, pnpm)    -- user
+#   * Claude Code CLI  (self-installed under ~/.local)   -- user
+#   * Codex plugin     (claude plugin update)            -- user
 #
 # Tier 3 static binaries (kind, argocd, kubeconform, ...) come from Homebrew
 # formulae on macOS, so the Homebrew section already refreshes them -- the
@@ -162,7 +162,7 @@ if (( ! ASSUME_YES )); then
     have uv     && printf '  - uv tools\n'
     have rustup && printf '  - rust toolchains\n'
     have cargo-install-update && printf '  - cargo-installed tools\n'
-    have go     && printf '  - go-installed tools (gopls, govulncheck)\n'
+    have go     && printf '  - go-installed tools (gopls)\n'
     have npm    && printf '  - npm global tools + pnpm\n'
     have claude && printf '  - Claude Code CLI\n'
     have claude && printf '  - the Codex plugin for Claude Code, if installed\n'
@@ -260,11 +260,12 @@ fi
 # --- go-installed tools ----------------------------------------------------
 # No bulk updater for `go install` tools, so re-install @latest the ones that
 # are already present (this adds nothing that was not there before).
+# govulncheck is the brew formula on macOS, so Homebrew above refreshes it, and
+# a `go install` here would put a second copy in ~/go/bin.
 section "go tools"
 if have go; then
     for gt in \
-        "gopls:golang.org/x/tools/gopls@latest" \
-        "govulncheck:golang.org/x/vuln/cmd/govulncheck@latest"; do
+        "gopls:golang.org/x/tools/gopls@latest"; do
         bin="${gt%%:*}"; mod="${gt#*:}"
         have "$bin" && run "go install $bin" go install "$mod"
     done

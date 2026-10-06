@@ -126,6 +126,97 @@
             deb: /root/helm-fixture.deb
 
     # ------------------------------------------------------------------
+    # SUPERSEDED BY A PACKAGE -- a /usr/local/bin copy left beside the package
+    # that now supplies the tool. Each must go only where its package is in.
+    #
+    # The Fedora branches below are not run by molecule.yml, which is Ubuntu
+    # only; they let the same playbooks exercise the Fedora tombstones against
+    # a fedora container by hand.
+    # ------------------------------------------------------------------
+    # Observed on the reference workstation 2026-10-06: root-owned kubectx and
+    # kubens beside the kubectx 0.9.5 package. DERIVED too: until ca841da every
+    # Linux host took both from GitHub releases into /usr/local/bin.
+    - name: Plant the retired kubectx and kubens binaries
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "retired GitHub-release fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - kubectx
+        - kubens
+
+    # Observed on the reference workstation 2026-10-06: k9s and gitleaks in
+    # /usr/local/bin with no package. On Ubuntu that IS the current install, so
+    # both must survive. DERIVED for Fedora: the same pre-ca841da paths, which
+    # dnf now supplies, so there both must go.
+    - name: Plant the k9s and gitleaks release binaries
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "GitHub-release fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - k9s
+        - gitleaks
+
+    - name: Install the kubectx package (Ubuntu)
+      ansible.builtin.apt:
+        name: kubectx
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # Fedora 44 carries no kubectx package, so there /usr/local/bin is the
+    # kubectx and kubens install and both must stay.
+    - name: Install the packages that supersede the binaries (Fedora)
+      ansible.builtin.dnf:
+        name:
+          - k9s
+          - gitleaks
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # DERIVED: Fedora installed kustomize to /usr/local/bin before it moved to
+    # dnf. Planted with no package behind it -- like helm and kubectx on Fedora
+    # -- so verify can assert a copy stays wherever nothing has replaced it.
+    - name: Plant the pre-dnf kustomize binary (Fedora)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "GitHub-release fixture: kustomize"
+        dest: /usr/local/bin/kustomize
+        owner: root
+        group: root
+        mode: '0755'
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # CONSTRUCTED, not observed: a /usr/bin entry that exists but is not a
+    # packaged copy -- a symlink back to the /usr/local/bin one, and a dangling
+    # link. Removing the /usr/local/bin copy behind either leaves no working
+    # tool, so both copies must stay.
+    - name: Link /usr/bin/helm back to the /usr/local/bin copy (Fedora)
+      ansible.builtin.file:
+        src: /usr/local/bin/helm
+        dest: /usr/bin/helm
+        state: link
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Plant a dangling /usr/bin/kustomize (Fedora)
+      ansible.builtin.file:
+        src: /nonexistent/kustomize
+        dest: /usr/bin/kustomize
+        state: link
+        force: true
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # ------------------------------------------------------------------
     # RETIRED PACKAGES -- all nine were still installed on the reference host.
     # `tree` matters most: pass depends on it, and docker-desktop depends on
     # pass, so removing tree cascades. The fixture must reproduce that chain
@@ -194,9 +285,9 @@
     # PATH /usr/local/bin and /snap/bin both precede /usr/bin. Same shadowing
     # class as the stale uv above, reached by a different route.
     # ------------------------------------------------------------------
-    # The Fedora binaries superseded by dnf (yq, kustomize) are NOT planted.
-    # This scenario is Ubuntu only, because remediation targets hosts that have
-    # drifted in the field and there are no deployed Fedora clients.
+    # The Fedora yq superseded by dnf is NOT planted: its removal sits in the
+    # install path of utilities.yml, which a removals-only run never reaches.
+    # kustomize is planted above, in the superseded-by-a-package section.
     # The HashiCorp repo is the half that matters: left behind it keeps serving
     # BUSL packages and updates. Removing it is a remediation, so only a
     # `--tags removals` run does it -- which is what this scenario converges.

@@ -302,7 +302,7 @@ table used to say the opposite.
 |---|---|---|
 | kubectl | all | vendor-repo (pkgs.k8s.io) / brew |
 | helm | all | Ubuntu vendor-repo (packages.buildkite.com) / Fedora dnf / brew |
-| kubectx, kubens | all | distro (apt universe / dnf) / brew |
+| kubectx, kubens | all | Ubuntu apt universe / Fedora github-binary, newest release at least 7 days old (Fedora packages neither) / brew |
 | k9s | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
 | kind, argocd (Tier 3: re-fetch) | all | github-binary / brew |
 | kustomize | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
@@ -310,7 +310,7 @@ table used to say the opposite.
 | terraform-docs (Tier 3: re-fetch) | all | github-binary / brew |
 | dive (Tier 3: re-fetch) | all | github-binary / brew |
 | aws-cli v2 | all | Fedora dnf (`awscli2`) / Ubuntu official snap / brew |
-| aws-vault (Tier 3: re-fetch) | all | github-binary / brew |
+| aws-vault (Tier 3: re-fetch) | all | github-binary from the ByteNess fork, newest release at least 7 days old / brew formula |
 | opentofu (`tofu`) | all | vendor-repo (packages.opentofu.org), apt AND dnf / brew |
 | openbao | all | vendor-repo (pkgs.openbao.org) / Fedora dnf / brew |
 | azure-cli, google-cloud-cli | all | vendor-repo / cask |
@@ -347,7 +347,7 @@ warning and continues.
 | pip-audit* | all | uv-tool (Tier 2) / brew |
 | kubeconform*, kube-linter | all | github-binary (Tier 3: re-fetch) / brew |
 | yamllint, ansible-lint, pre-commit | all | distro (apt universe / dnf) / brew |
-| actionlint | all | Ubuntu snap / Fedora re-fetch (Tier 3) / brew |
+| actionlint | all | Linux re-fetch (Tier 3) / brew |
 | vulture | all | Ubuntu apt / Fedora uv-tool (Tier 2) / brew |
 | typos | all | cargo (Tier 2) / brew |
 | maid (mermaid validator, used by `/docs`) | all | npm global (Tier 2) |
@@ -589,9 +589,10 @@ Autodesk's Automatic Component Toolkit.
 **Container format by distro: Ubuntu uses snap, Fedora uses flatpak.** Neither
 is used where a repo, brew or cask can keep the tool current instead. What
 remains on a container format, and why nothing better exists: the `aws-cli`
-snap on Ubuntu (universe's `awscli` is v2 but frozen), the `actionlint` snap on
-Ubuntu (no apt package and no vendor repo), and the DBeaver flatpak on Fedora
-(no vendor dnf repo). Ubuntu installs no flatpak app at all; the flatpak binary
+snap on Ubuntu (universe's `awscli` is v2 but frozen) and the DBeaver flatpak on
+Fedora (no vendor dnf repo). A strictly confined snap is ruled out for any tool
+that reads a repo: it sees only $HOME, so a checkout under /projects is
+invisible to it -- why actionlint and osv-scanner take the release binary. Ubuntu installs no flatpak app at all; the flatpak binary
 stays only so the tombstones in `removals.yml` can clear ones an older revision
 left behind.
 
