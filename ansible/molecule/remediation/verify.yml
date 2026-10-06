@@ -198,27 +198,26 @@
     # The Fedora yq migration is not asserted here: its removal sits in the
     # install path of utilities.yml, which a removals-only run never reaches.
     # kustomize is covered in the superseded-by-a-package section above.
-    # The repo is the half that keeps serving BUSL packages if it survives.
+    # Packer installs from the HashiCorp repo, so removing terraform and vault
+    # must leave the repo and its keys where they are.
     - name: Stat the HashiCorp repository artefacts (Ubuntu)
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
         - /etc/apt/sources.list.d/hashicorp.sources
-        - /etc/apt/sources.list.d/hashicorp.list
         - /usr/share/keyrings/hashicorp-archive-keyring.asc
         - /usr/share/keyrings/hashicorp-archive-keyring.gpg
       register: verify_hashicorp
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Assert the HashiCorp repository was unhooked
+    - name: Assert the HashiCorp repository survived the removals
       ansible.builtin.assert:
         that:
-          - not item.stat.exists
+          - item.stat.exists
         fail_msg: >-
-          {{ item.item }} survived remediation. The HashiCorp repo goes on
-          serving BUSL packages and updates for as long as it is configured,
-          so leaving it is worse than leaving the binaries.
-        success_msg: "{{ item.item }} removed"
+          {{ item.item }} was removed. `--tags removals` takes terraform and
+          vault only; the repo and its keys are what Packer installs from.
+        success_msg: "{{ item.item }} kept"
       loop: "{{ verify_hashicorp.results | default([]) }}"
       loop_control:
         label: "{{ item.item | default('skipped') }}"

@@ -1,0 +1,195 @@
+---
+# Packer from HashiCorp's own repositories.
+#
+# Packer is the one HashiCorp tool this project installs: it is BUSL-licensed
+# and has no open-source fork, so it is opt-in (`--tags packer`) and never part
+# of a default run or a persona. terraform and vault stay replaced by OpenTofu
+# and OpenBao in the infrastructure role.
+#
+# Optional: any failure lands in deploy_warnings and the run carries on.
+
+# ============================================================================
+# LINUX - HashiCorp's apt repo on Ubuntu, its dnf repo on Fedora
+# ============================================================================
+- name: Install Packer from the HashiCorp repository (Linux)
+  vars:
+    # Check mode adds no repo, so there is nothing to install from yet.
+    packer_repo_pending: >-
+      {{ ansible_check_mode and ((packer_deb_repo | default({})) is changed
+         or (packer_rpm_repo | default({})) is changed) }}
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  block:
+    # Runs before any apt call: older setups, hyperi-infra's included, write this
+    # .list for the same URI, and apt refuses every operation when the two name
+    # different Signed-By keys.
+    - name: Remove the legacy HashiCorp .list (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/hashicorp.list
+        state: absent
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # A minimal Ubuntu ships gpgv but not gpg, which the fingerprint read needs,
+    # nor python3-debian, which deb822_repository needs. cache_valid_time,
+    # because `--tags packer` alone can land on a host whose apt lists were
+    # never fetched.
+    - name: Ensure gpg and python3-debian are present (Ubuntu)
+      ansible.builtin.apt:
+        name: [gpg, python3-debian]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Ensure gpg is present for the fingerprint check (Fedora)
+      ansible.builtin.dnf:
+        name: gnupg2
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # Staged under a name nothing trusts and forced, so a rejected download is
+    # replaced on the next run instead of kept by an If-Modified-Since 304.
+    - name: Download the HashiCorp signing key
+      ansible.builtin.get_url:
+        url: >-
+          {{ packer_hashicorp_apt_key_url if ansible_facts['distribution'] == 'Ubuntu'
+             else packer_hashicorp_rpm_key_url }}
+        dest: "{{ packer_hashicorp_key_dest }}.unverified"
+        mode: '0644'
+        force: true
+      register: packer_key_download
+
+    # Check mode downloads nothing, so there is no new key to read.
+    - name: Read the HashiCorp signing key fingerprint
+      ansible.builtin.command:
+        argv: [gpg, --show-keys, --with-colons, "{{ packer_hashicorp_key_dest }}.unverified"]
+      register: packer_key_read
+      changed_when: false
+      check_mode: false
+      when: not (ansible_check_mode and packer_key_download is changed)
+
+    # Fails closed: apt and rpm trust every key in the file, so a second key
+    # riding along with the pinned one would be trusted too.
+    - name: Verify the HashiCorp signing key fingerprint
+      ansible.builtin.assert:
+        that:
+          - packer_key_primaries | int == 1
+          - packer_key_fpr == packer_hashicorp_key_fingerprint | upper | replace(' ', '')
+        fail_msg: >-
+          HashiCorp signing key holds {{ packer_key_primaries }} key(s), first
+          {{ packer_key_fpr or 'missing' }}; expected only {{ packer_hashicorp_key_fingerprint }}
+        quiet: true
+      when: not (ansible_check_mode and packer_key_download is changed)
+      vars:
+        packer_key_primaries: "{{ packer_key_read.stdout_lines | select('match', '^pub:') | list | length }}"
+        packer_key_fpr: >-
+          {{ (packer_key_read.stdout_lines | select('match', '^fpr:') | first | default('')).split(':')[9] | default('') }}
+
+    - name: Install the verified HashiCorp signing key
+      ansible.builtin.copy:
+        src: "{{ packer_hashicorp_key_dest }}.unverified"
+        dest: "{{ packer_hashicorp_key_dest }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0644'
+      when: not (ansible_check_mode and packer_key_download is changed)
+
+    # HashiCorp publishes a suite per Ubuntu codename, 24.04 and 26.04 included.
+    - name: Add the HashiCorp APT repository (Ubuntu)
+      ansible.builtin.deb822_repository:
+        name: hashicorp
+        types: deb
+        uris: https://apt.releases.hashicorp.com
+        suites: "{{ ansible_facts['distribution_release'] }}"
+        components: main
+        signed_by: "{{ packer_hashicorp_key_dest }}"
+        state: present
+      register: packer_deb_repo
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Install Packer (Ubuntu)
+      ansible.builtin.apt:
+        name: packer
+        state: present
+        update_cache: true
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not packer_repo_pending
+
+    - name: Add the HashiCorp repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: hashicorp
+        description: HashiCorp Stable - $basearch
+        baseurl: https://rpm.releases.hashicorp.com/fedora/$releasever/$basearch/stable
+        enabled: true
+        gpgcheck: true
+        gpgkey: "file://{{ packer_hashicorp_key_dest }}"
+      register: packer_rpm_repo
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install Packer (Fedora)
+      ansible.builtin.dnf:
+        name: packer
+        state: present
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - not packer_repo_pending
+
+    - name: Check that Packer runs (Linux)
+      ansible.builtin.command:
+        argv: [packer, version]
+      changed_when: false
+      when: not packer_repo_pending
+
+  rescue:
+    # After a key rotation the repo no longer verifies against the trusted key,
+    # and the apt module fails every later cache refresh in the run on it. The
+    # previously trusted key stays.
+    - name: Remove the HashiCorp APT repository after a key mismatch (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/hashicorp.sources
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove the HashiCorp repository after a key mismatch (Fedora)
+      ansible.builtin.yum_repository:
+        name: hashicorp
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Fedora'
+
+    - name: Record that Packer did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Packer: ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
+
+# ============================================================================
+# MACOS - HashiCorp's tap; homebrew-core does not ship BUSL tools
+# ============================================================================
+- name: Install Packer from the HashiCorp tap (macOS)
+  become: false
+  environment: "{{ packer_homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  block:
+    - name: Tap hashicorp/tap (macOS)
+      community.general.homebrew_tap:
+        name: hashicorp/tap
+        state: present
+
+    - name: Install Packer (macOS)
+      community.general.homebrew:
+        name: hashicorp/tap/packer
+        state: present
+
+  rescue:
+    - name: Record that Packer did not install (macOS)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Packer: ' ~ (ansible_failed_result.msg | default('brew install failed'))] }}

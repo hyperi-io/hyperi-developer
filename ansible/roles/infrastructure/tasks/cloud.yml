@@ -13,10 +13,9 @@
 # `aws-vault` below is NOT HashiCorp Vault -- it is aws-vault (the ByteNess fork
 # of 99designs/aws-vault), an unrelated tool for keeping AWS credentials in the OS keychain. It stays.
 #
-# Packer has no viable fork (the community never produced one) and is
-# deliberately NOT installed here. hyperi-infra needs it for image builds; its
-# developers install it themselves rather than have us ship a BUSL binary to
-# every workstation.
+# Packer has no viable fork (the community never produced one), so it comes
+# from HashiCorp's repo in its own opt-in role, `packer`, rather than shipping a
+# BUSL binary to every box that asks for the IaC tools.
 
 # ============================================================================
 # OPENTOFU REPOSITORY (Ubuntu and Fedora)
@@ -27,8 +26,8 @@
 # upstream 1.12.6), which is the wrong side of "almost current" for the tool
 # that plans and applies infrastructure.
 #
-# The apt suite is literally "any" and the packages are arch-generic, so unlike
-# the HashiCorp repo this needs no LTS-codename mapping and no arch handling.
+# The apt suite is literally "any" and the packages are arch-generic, so this
+# needs no codename and no arch handling.
 #
 # The package is `tofu` on both. Fedora's own package is `opentofu`, and the two
 # conflict over /usr/bin/tofu, so the distro one is removed below.

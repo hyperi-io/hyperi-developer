@@ -288,9 +288,8 @@
     # The Fedora yq superseded by dnf is NOT planted: its removal sits in the
     # install path of utilities.yml, which a removals-only run never reaches.
     # kustomize is planted above, in the superseded-by-a-package section.
-    # The HashiCorp repo is the half that matters: left behind it keeps serving
-    # BUSL packages and updates. Removing it is a remediation, so only a
-    # `--tags removals` run does it -- which is what this scenario converges.
+    # The HashiCorp repo serves Packer, so a `--tags removals` run must leave it
+    # and its keys in place while it takes terraform and vault away.
     - name: Plant the HashiCorp apt repository (Ubuntu)
       ansible.builtin.copy:
         content: |
@@ -307,9 +306,10 @@
 
     # An older revision used apt_repository, which wrote .list, so a host
     # provisioned before that migration carries both.
-    # A parseable line, because apt refuses EVERY operation when any source list
-    # is malformed -- including the removal that is supposed to clear it.
-    # `trusted=yes` keeps the fixture off the network and off the keyring.
+    # A parseable line with the same options as the .sources above, because apt
+    # refuses EVERY operation when a source list is malformed or one repo is
+    # configured with conflicting options.
+    # `trusted=yes` keeps the fixture off the keyring.
     - name: Plant the legacy HashiCorp .list (Ubuntu)
       ansible.builtin.copy:
         content: "deb [trusted=yes] https://apt.releases.hashicorp.com noble main\n"

@@ -182,6 +182,10 @@ Infrastructure (infrastructure):
     cloudflare        cloudflare group: flarectl, wrangler (flarectl builds
                       from source; Linux needs developer-go)
 
+Packer (packer) - opt-in, in no persona:
+    packer            HashiCorp Packer from HashiCorp's repo / tap (BUSL,
+                      no open-source fork)
+
 Contributor (contributor) - to work ON a HyperI product, no org policy:
     hyperi-ci         hyperi-ci + semgrep, alint
     gitleaks          Secret scanner
