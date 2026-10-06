@@ -198,30 +198,49 @@
     # The Fedora yq migration is not asserted here: its removal sits in the
     # install path of utilities.yml, which a removals-only run never reaches.
     # kustomize is covered in the superseded-by-a-package section above.
-    # Packer installs from the HashiCorp repo, so removing terraform and vault
-    # must leave the repo and its keys where they are.
+    # Without Packer the repo is unhooked, because one left trusting a superseded
+    # key fails every apt refresh. With Packer (the gosrc host) it stays.
     - name: Stat the HashiCorp repository artefacts (Ubuntu)
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
         - /etc/apt/sources.list.d/hashicorp.sources
+        - /etc/apt/sources.list.d/hashicorp.list
         - /usr/share/keyrings/hashicorp-archive-keyring.asc
         - /usr/share/keyrings/hashicorp-archive-keyring.gpg
       register: verify_hashicorp
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Assert the HashiCorp repository survived the removals
+    - name: Assert the HashiCorp repository was unhooked where Packer is absent
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          {{ item.item }} survived remediation on a host without Packer. A
+          HashiCorp repo whose key the host no longer trusts fails every apt
+          refresh, and nothing else here removes it.
+        success_msg: "{{ item.item }} removed"
+      loop: "{{ verify_hashicorp.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('skipped') }}"
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' not in inventory_hostname"
+
+    - name: Assert the HashiCorp repository was kept where Packer is installed
       ansible.builtin.assert:
         that:
           - item.stat.exists
         fail_msg: >-
-          {{ item.item }} was removed. `--tags removals` takes terraform and
-          vault only; the repo and its keys are what Packer installs from.
+          {{ item.item }} was removed from a host with Packer installed, which
+          leaves Packer with no update source.
         success_msg: "{{ item.item }} kept"
       loop: "{{ verify_hashicorp.results | default([]) }}"
       loop_control:
         label: "{{ item.item | default('skipped') }}"
-      when: ansible_facts['distribution'] == 'Ubuntu'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
 
     - name: Stat the retired vendor repository artefacts (Ubuntu)
       ansible.builtin.stat:

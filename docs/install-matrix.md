@@ -340,7 +340,7 @@ warning and continues.
 |---|---|---|
 | packer | all | vendor-repo (apt.releases.hashicorp.com, rpm.releases.hashicorp.com), signing key fingerprint-pinned / brew (`hashicorp/tap`) |
 
-The one HashiCorp tool installed: BUSL, with no open-source fork, so it is its own opt-in role rather than part of `infrastructure`. `--tags removals` takes terraform and vault and leaves this repo in place.
+The one HashiCorp tool installed: BUSL, with no open-source fork, so it is its own opt-in role rather than part of `infrastructure`. `--tags removals` takes terraform and vault, and removes this repo only where Packer is not installed.
 
 ### contributor (CI toolchain - what `hyperi-ci check` drives)
 

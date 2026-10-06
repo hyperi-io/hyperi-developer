@@ -3,8 +3,7 @@
 packer_homebrew_env:
   PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
 
-# Ubuntu keeps the key where hyperi-infra puts it, so a host it configured
-# converges onto one trusted file.
+# Ubuntu shares this key path with other tooling, so a host it configured converges onto one trusted file.
 packer_hashicorp_key_dest: >-
   {{ '/usr/share/keyrings/hashicorp-archive-keyring.asc' if ansible_facts['distribution'] == 'Ubuntu'
      else '/etc/pki/rpm-gpg/RPM-GPG-KEY-hashicorp' }}

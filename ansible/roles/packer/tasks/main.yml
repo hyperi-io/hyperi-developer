@@ -1,12 +1,5 @@
 ---
-# Packer from HashiCorp's own repositories.
-#
-# Packer is the one HashiCorp tool this project installs: it is BUSL-licensed
-# and has no open-source fork, so it is opt-in (`--tags packer`) and never part
-# of a default run or a persona. terraform and vault stay replaced by OpenTofu
-# and OpenBao in the infrastructure role.
-#
-# Optional: any failure lands in deploy_warnings and the run carries on.
+# Packer is BUSL with no open-source fork, so it installs only on `--tags packer`, and a failure lands in deploy_warnings rather than ending the run.
 
 # ============================================================================
 # LINUX - HashiCorp's apt repo on Ubuntu, its dnf repo on Fedora
@@ -19,26 +12,39 @@
          or (packer_rpm_repo | default({})) is changed) }}
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   block:
-    # Runs before any apt call: older setups, hyperi-infra's included, write this
-    # .list for the same URI, and apt refuses every operation when the two name
-    # different Signed-By keys.
+    # Runs before any apt call, so apt does not read this repo twice as a duplicate source.
     - name: Remove the legacy HashiCorp .list (Ubuntu)
       ansible.builtin.file:
         path: /etc/apt/sources.list.d/hashicorp.list
         state: absent
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    # A minimal Ubuntu ships gpgv but not gpg, which the fingerprint read needs,
-    # nor python3-debian, which deb822_repository needs. cache_valid_time,
-    # because `--tags packer` alone can land on a host whose apt lists were
-    # never fetched.
-    - name: Ensure gpg and python3-debian are present (Ubuntu)
-      ansible.builtin.apt:
-        name: [gpg, python3-debian]
-        state: present
-        update_cache: true
-        cache_valid_time: 3600
+    # A minimal Ubuntu lacks gpg and python3-debian, which the fingerprint read and deb822_repository need.
+    - name: Install the key-check prerequisites (Ubuntu)
       when: ansible_facts['distribution'] == 'Ubuntu'
+      block:
+        - name: Ensure gpg and python3-debian are present (Ubuntu)
+          ansible.builtin.apt:
+            name: [gpg, python3-debian]
+            state: present
+            update_cache: true
+            cache_valid_time: 3600
+
+      rescue:
+        # A HashiCorp source signed by a key the host no longer trusts fails every cache refresh, and the verified repo is written again below.
+        - name: Remove the HashiCorp sources apt cannot verify (Ubuntu)
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/apt/sources.list.d/hashicorp.sources
+            - /etc/apt/sources.list.d/hashicorp.list
+
+        - name: Retry gpg and python3-debian without the HashiCorp sources (Ubuntu)
+          ansible.builtin.apt:
+            name: [gpg, python3-debian]
+            state: present
+            update_cache: true
 
     - name: Ensure gpg is present for the fingerprint check (Fedora)
       ansible.builtin.dnf:
@@ -123,6 +129,7 @@
         baseurl: https://rpm.releases.hashicorp.com/fedora/$releasever/$basearch/stable
         enabled: true
         gpgcheck: true
+        repo_gpgcheck: true
         gpgkey: "file://{{ packer_hashicorp_key_dest }}"
       register: packer_rpm_repo
       when: ansible_facts['distribution'] == 'Fedora'
@@ -142,9 +149,7 @@
       when: not packer_repo_pending
 
   rescue:
-    # After a key rotation the repo no longer verifies against the trusted key,
-    # and the apt module fails every later cache refresh in the run on it. The
-    # previously trusted key stays.
+    # A repo the trusted key cannot verify fails every later cache refresh in the run, so it goes and the trusted key stays.
     - name: Remove the HashiCorp APT repository after a key mismatch (Ubuntu)
       ansible.builtin.file:
         path: /etc/apt/sources.list.d/hashicorp.sources

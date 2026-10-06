@@ -26,6 +26,7 @@
         - {name: git, cmd: git --version}
         - {name: tmux, cmd: tmux -V}
         - {name: age, cmd: age --version}
+        - {name: packer, cmd: packer version}
       loop_control:
         label: "{{ item.name }}"
       register: matrix_tools

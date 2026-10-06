@@ -288,8 +288,8 @@
     # The Fedora yq superseded by dnf is NOT planted: its removal sits in the
     # install path of utilities.yml, which a removals-only run never reaches.
     # kustomize is planted above, in the superseded-by-a-package section.
-    # The HashiCorp repo serves Packer, so a `--tags removals` run must leave it
-    # and its keys in place while it takes terraform and vault away.
+    # The HashiCorp repo goes on a removals run unless Packer is installed, which
+    # the gosrc host fakes below so both branches are exercised.
     - name: Plant the HashiCorp apt repository (Ubuntu)
       ansible.builtin.copy:
         content: |
@@ -306,9 +306,8 @@
 
     # An older revision used apt_repository, which wrote .list, so a host
     # provisioned before that migration carries both.
-    # A parseable line with the same options as the .sources above, because apt
-    # refuses EVERY operation when a source list is malformed or one repo is
-    # configured with conflicting options.
+    # A parseable line, because apt refuses EVERY operation when any source list
+    # is malformed -- including the removal that is supposed to clear it.
     # `trusted=yes` keeps the fixture off the keyring.
     - name: Plant the legacy HashiCorp .list (Ubuntu)
       ansible.builtin.copy:
@@ -330,6 +329,50 @@
         - /usr/share/keyrings/hashicorp-archive-keyring.asc
         - /usr/share/keyrings/hashicorp-archive-keyring.gpg
       when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # An empty package named packer is all the removals check reads, and it
+    # keeps the fixture off HashiCorp's BUSL binary.
+    - name: Create the stand-in packer package tree (gosrc host)
+      ansible.builtin.file:
+        path: /root/packer-fixture/DEBIAN
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
+
+    - name: Write the control file for a stand-in packer package (gosrc host)
+      ansible.builtin.copy:
+        content: |
+          Package: packer
+          Version: 0.0.0-fixture
+          Architecture: all
+          Maintainer: fixture <fixture@example.invalid>
+          Description: Stand-in for HashiCorp Packer in the remediation fixture
+        dest: /root/packer-fixture/DEBIAN/control
+        owner: root
+        group: root
+        mode: '0644'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
+
+    - name: Build the stand-in packer package (gosrc host)
+      ansible.builtin.command:
+        argv: [dpkg-deb, --build, /root/packer-fixture, /root/packer-fixture.deb]
+        creates: /root/packer-fixture.deb
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
+
+    - name: Install the stand-in packer package (gosrc host)
+      ansible.builtin.apt:
+        deb: /root/packer-fixture.deb
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
 
     - name: Install the DBeaver flatpak superseded by the vendor apt repo (Ubuntu)
       community.general.flatpak:
