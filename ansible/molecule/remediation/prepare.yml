@@ -70,7 +70,7 @@
         - linear      # Linear CLI — removed by decision 2026-05-01
         - minikube    # superseded by kind
 
-    # Observed on desktop-derek 2026-10-06: helm v4.1.1, unowned, left by the
+    # Observed on the reference workstation 2026-10-06: helm v4.1.1, unowned, left by the
     # get.helm.sh download an older revision did. It shadows packaged helm.
     - name: Plant the stale root-owned helm (observed v4.1.1)
       ansible.builtin.copy:
@@ -248,7 +248,7 @@
       when: ansible_facts['distribution'] == 'Ubuntu'
       failed_when: false
 
-    # Observed on desktop-derek 2026-08-25, still configured months after the
+    # Observed on the reference workstation 2026-08-25, still configured months after the
     # tools themselves were retired. A repository outlives the tool it served:
     # nothing prunes it, and every apt update pays to fetch it.
     #
