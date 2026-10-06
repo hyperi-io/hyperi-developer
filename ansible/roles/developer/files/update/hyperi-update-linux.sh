@@ -16,7 +16,6 @@
 #   * Go toolchain     (/usr/local/go, no upstream repo) -- needs sudo
 #   * fnm Node majors  (the n-1 Node, per user)         -- user
 #   * Release binaries (/usr/local/bin, no repo/snap)   -- needs sudo
-#   * Claude Code CLI  (self-installed under ~/.local)  -- user
 #   * Codex CLI        (re-run of the installer)        -- user
 #   * Codex plugin     (claude plugin update)           -- user
 #
@@ -60,7 +59,7 @@ CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
 
 # Make user-level tools reachable even when launched from a GUI/.desktop entry
 # or the systemd unit, neither of which sources the login shell (rustup and the
-# cargo tools live in the cargo home, uv and claude in ~/.local/bin, Go in
+# cargo tools live in the cargo home, uv in ~/.local/bin, Go in
 # /usr/local/go/bin, the go-installed tools in ~/go/bin and the pnpm globals in
 # PNPM_HOME).
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
@@ -165,7 +164,6 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     have npm      && printf '  - npm global tools + pnpm\n'
     have pnpm     && printf '  - pnpm global tools\n'
     printf '  - release binaries in /usr/local/bin that no package covers, and uv in ~/.local/bin on Ubuntu\n'
-    have claude   && printf '  - Claude Code CLI\n'
     have codex    && printf '  - Codex CLI (re-run of the official installer)\n'
     have claude   && printf '  - the Codex plugin for Claude Code, if installed\n'
     [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
@@ -948,16 +946,6 @@ else
     skip "unknown CPU architecture ($(uname -m)) -- skipping release binaries"
 fi
 
-# --- Claude Code -----------------------------------------------------------
-# The role installs the native build under ~/.local, whose own updater this is.
-# Run as the normal user (NOT under sudo) so it updates ~/.local, not root's.
-section "Claude Code"
-if have claude; then
-    run "claude update" claude update
-else
-    skip "claude not found in PATH"
-fi
-
 # --- Codex CLI -------------------------------------------------------------
 # No apt/dnf repo, no snap, no language manager -- and not a release binary
 # either, because the release asset is a package TREE that has to be staged and
@@ -989,8 +977,7 @@ else
 fi
 
 # --- Codex plugin for Claude Code ------------------------------------------
-# `claude update` moves the CLI only; a marketplace plugin has its own update
-# verb. Gated on the plugin actually being installed as well as on claude, so
+# The package manager moves the CLI only; a marketplace plugin has its own update verb. Gated on the plugin actually being installed as well as on claude, so
 # a box that never opted into the AI tooling does not take an update attempt
 # for a plugin it has never had. --json because the human-readable listing is
 # not a contract; the id is, and it is plugin@marketplace.

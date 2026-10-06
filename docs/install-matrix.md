@@ -115,9 +115,7 @@ three hard dependencies - Claude Code, the codex binary, node - and declares
 none of them, because declaring them would be wrong twice over. Claude Code
 comes only from `soe`, so depending on it drags HyperI org policy onto a box
 that asked for a review tool; node comes from the `developer` base rather than
-`developer-node`, so the dependency that looks right supplies nothing. Claude
-Code is also per-USER on Linux, which no role graph can answer. The run probes
-the target for all three instead and names the tag that fixes each miss.
+`developer-node`, so the dependency that looks right supplies nothing. Whether Claude Code is there depends on what the target user's PATH reaches, which no role graph can answer. The run probes the target for all three instead and names the tag that fixes each miss.
 
 ## Groups - themed tag bundles inside a role
 
@@ -146,13 +144,7 @@ from their publisher and verify it. The rest rest on HTTPS and the release tag,
 which a publisher can in principle force-move. Extending checksum-at-download to
 the other manual binaries is the outstanding hardening (hyperi-ci #66).
 
-Four fetches verify a digest IN THIS REPO, and they are the ones whose SHA is
-held here or read from a published manifest: the Go toolchain, rustup-init, the
-Claude Code binary, and macbash (whose `.sha256` sits beside the asset on
-downloads.hyperi.io, so the fetch also re-pulls a republished binary). A fifth,
-the Codex CLI on Linux, DELEGATES the check to a vendor script this repo runs
-unverified. That is a weaker position than the other four and is counted
-separately on purpose.
+Three fetches verify a digest IN THIS REPO, and they are the ones whose SHA is held here or read from a published manifest: the Go toolchain, rustup-init, and macbash (whose `.sha256` sits beside the asset on downloads.hyperi.io, so the fetch also re-pulls a republished binary). A fourth, the Codex CLI on Linux, DELEGATES the check to a vendor script this repo runs unverified. That is a weaker position than the other three and is counted separately on purpose. Claude Code on Linux is not a fetch at all any more: it comes from Anthropic's signed apt/dnf repository, whose key is pinned by fingerprint like the other vendor repos.
 
 Codex is the one where what is verified matters. The installer script has no
 published checksum of its own; what it verifies is its payload, the
@@ -185,7 +177,7 @@ reach for instead, are not in that manifest and have no published digest at all.
 |---|---|---|
 | VS Code | all | vendor-repo / cask |
 | Ghostty | Fedora (COPR) / macOS (cask) | vendor-repo / cask |
-| Ghostty | Ubuntu | github-binary (.deb) |
+| Ghostty | Ubuntu | PPA (`ppa:mkasberg/ghostty-ubuntu`, key pinned by fingerprint) |
 | DBeaver | all | Ubuntu vendor-repo (dbeaver.io/debs) / Fedora flatpak / cask |
 | VS Code privacy profile (opt-in: `-e vscode_privacy_enabled=true`) | all | bundled script (`hyperi-vscode-privacy`) |
 
@@ -374,7 +366,7 @@ hyperi-ci.
 
 | Tool(s) | Platforms | Method |
 |---|---|---|
-| Claude Code CLI (binary, tag `claude`) | Linux github-binary (SHA-verified) / macOS cask | github-binary / cask |
+| Claude Code CLI (binary, tag `claude`) | Linux Anthropic apt/dnf repo, stable channel (key pinned by fingerprint) / macOS cask | vendor-repo / cask |
 | Claude Code managed settings (tag `claude-policy`, soe only) | all | role file -> `/etc/claude-code/` |
 | tea (Forgejo/Gitea CLI, `forgejo` / `codeberg` tags; `gh` is GitHub-only) | Linux github-binary / macOS brew | github-binary / brew |
 | openvpn3 client (-> vpn-clients group) | Fedora COPR / Ubuntu vendor-repo / macOS brew | vendor-repo / brew |
@@ -654,9 +646,7 @@ resolves the current release, verifies the payload digest and short-circuits
 when what is staged is already current. `hyperi-update` does exactly that,
 guarded on codex being present.
 
-The Codex plugin is a channel of its own again: `claude plugin update
-codex@openai-codex`, which `claude update` does not reach because that moves the
-CLI and not its marketplace plugins.
+The Codex plugin is a channel of its own again: `claude plugin update codex@openai-codex`, which the package manager does not reach because it moves the CLI and not its marketplace plugins.
 
 `hyperi-update` (the "update my system" command) runs all three tiers and the
 two out-of-tier channels above, plus the OS / snap / flatpak sweep, so one

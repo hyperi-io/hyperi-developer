@@ -3,10 +3,9 @@
 #
 # WHY PROBE RATHER THAN DECLARE. Two of the three dependencies cannot be
 # expressed in the role graph at all (see meta/main.yml), and the one that
-# could -- Claude Code -- is installed PER USER on Linux, to
-# ~/.local/bin/claude. A role graph answers "was this role selected", not "does
-# this user have the binary", and on a host of unknown state those are
-# different questions. A converge that assumed the first would report success
+# could -- Claude Code -- may also be a user's own copy in ~/.local/bin. A role
+# graph answers "was this role selected", not "does this user have the binary",
+# and on a host of unknown state those are different questions. A converge that assumed the first would report success
 # while installing a plugin that throws on every invocation.
 #
 # Every probe below therefore runs AS THE TARGET USER, not as whoever Ansible

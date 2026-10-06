@@ -30,6 +30,6 @@ galaxy_info:
 #
 # The dependencies are therefore PROBED on the target and reported by name --
 # see tasks/init.yml. That is also the honest shape for a host of unknown
-# state: the answer to "is Claude Code here" is per-USER on Linux (it installs
-# to ~/.local/bin/claude), so no role graph could answer it anyway.
+# state: "is Claude Code here" depends on what that user's PATH reaches, so no
+# role graph could answer it anyway.
 dependencies: []

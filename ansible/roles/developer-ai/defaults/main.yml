@@ -5,9 +5,9 @@
 # One PATH for every probe and every install in this role, covering both
 # platforms so the tasks do not each carry their own copy.
 #
-# `{{ user_home }}/.local/bin` is the load-bearing entry and the reason this is
-# not just the inherited PATH: claude, codex and uv-installed tools all land
-# there, PER USER. `ansible_facts['env'].PATH` is the CONNECTING user's, which
+# `{{ user_home }}/.local/bin` is the reason this is not just the inherited
+# PATH: codex and uv-installed tools land there, PER
+# USER. `ansible_facts['env'].PATH` is the CONNECTING user's, which
 # on a fleet machine is a service account that has none of them -- it is
 # appended for the system binaries, never relied on for the agent CLIs.
 developer_ai_env:
