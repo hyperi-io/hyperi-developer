@@ -24,7 +24,7 @@
 - name: Load macOS variables
   ansible.builtin.include_vars: macos.yml
   when: ansible_facts['distribution'] == 'MacOSX'
-  tags: ['astral', 'uv', 'ruff', 'ty']
+  tags: ['astral', 'uv', 'ruff', 'ty', 'python']
 
 # ============================================================================
 # uv - must be first: ruff/ty on Ubuntu install THROUGH uv
@@ -149,6 +149,74 @@
   changed_when: "'already installed' not in (astral_uv_tool_install.stderr | default(''))"
   when: ansible_facts['distribution'] == 'Ubuntu'
   tags: ['astral', 'ruff', 'ty']
+
+# ============================================================================
+# Python - uv's default interpreter, without touching the system python3
+# ============================================================================
+# Where the system python3 is already new enough (Fedora 43+, Ubuntu 26.04) uv
+# uses it, and Fedora's packaged uv prefers it regardless. Elsewhere (Ubuntu
+# 24.04, macOS) uv installs its own build, adding only a versioned python3.14 to
+# ~/.local/bin. No `--default`: it also puts python3 there, ahead of the system
+# python3 that distro tools and Ansible run on.
+
+# /usr/bin/python3 rather than ansible_facts['python']: the interpreter Ansible
+# runs with is not necessarily the system one.
+- name: Read the system python3 version
+  ansible.builtin.command:
+    argv: [/usr/bin/python3, -c, "import sys; print('%d.%d' % sys.version_info[:2])"]
+  register: astral_system_python
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ['astral', 'uv', 'python']
+
+# A download that cannot complete (offline, an upstream outage) is a warning,
+# not a failed base converge.
+- name: Set uv's default Python
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  environment: "{{ astral_uv_env }}"
+  tags: ['astral', 'uv', 'python']
+  block:
+    - name: Install the default Python for uv
+      ansible.builtin.command:
+        argv: [uv, python, install, "{{ astral_python_version }}"]
+      register: astral_python_install
+      changed_when: "'already installed' not in (astral_python_install.stderr | default(''))"
+      when: >-
+        astral_system_python.rc != 0
+        or not (astral_system_python.stdout | trim is version(astral_python_version, '>='))
+
+    # Read first because `uv python pin` reports "Pinned" whether or not it
+    # changed anything. With no global pin it exits 2 and stdout is empty.
+    - name: Read uv's global Python pin
+      ansible.builtin.command:
+        argv: [uv, python, pin, --global]
+      register: astral_python_pin
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # Global, so it applies wherever no project names its own version, and it
+    # replaces any global pin the user set: astral_python_version is the override.
+    # Skipped when the install fails, since a pin to a missing Python breaks uv.
+    - name: Pin uv's global default Python
+      ansible.builtin.command:
+        argv: [uv, python, pin, --global, "{{ astral_python_version }}"]
+      when: astral_python_pin.stdout | trim != astral_python_version
+      changed_when: true
+
+  rescue:
+    - name: Record that uv's default Python was not set
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ (deploy_warnings | default([])
+              + ['uv python ' ~ astral_python_version ~ ': '
+                 ~ ((ansible_failed_result.stderr | default('', true)
+                     or ansible_failed_result.msg | default('failed')) | trim | truncate(120))])
+             | unique }}
 
 - name: Display the Astral suite info
   ansible.builtin.debug:

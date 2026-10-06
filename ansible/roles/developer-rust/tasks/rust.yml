@@ -776,11 +776,24 @@
   when: ansible_facts['distribution'] == 'MacOSX'
   tags: ['rust-cache']
 
+# The script needs Python 3.11+ for tomllib, and macOS's /usr/bin/python3 is
+# 3.9. The astral role's uv-managed python3.14 is used wherever it exists, on
+# every OS, and python3 otherwise.
+- name: Look for the uv-managed Python
+  ansible.builtin.stat:
+    path: "{{ user_home }}/.local/bin/python3.14"
+    follow: true
+  register: developer_rust_uv_python
+  tags: ['rust-cache']
+
 # --yes because Ansible is the unattended caller; a human running it by hand
 # gets the confirmation prompt instead.
 - name: Configure the Rust build environment
   ansible.builtin.command:
     cmd: >-
+      {{ developer_rust_uv_python.stat.path
+         if developer_rust_uv_python.stat.exists and developer_rust_uv_python.stat.executable
+         else 'python3' }}
       /usr/local/bin/hyperi-rust-setup --yes
       --sccache-size {{ rust_cache_sccache_max }}
       --ccache-size {{ rust_cache_ccache_max }}
@@ -798,9 +811,27 @@
   failed_when: false
   tags: ['rust-cache']
 
+# stderr as well: a missing cargo and a Python traceback both land there.
 - name: Report Rust build environment setup
   ansible.builtin.debug:
-    msg: "{{ developer_rust_setup.stdout_lines | default(['(no output)']) }}"
+    msg: >-
+      {{ (developer_rust_setup.stdout_lines | default([]))
+         + (developer_rust_setup.stderr_lines | default([])) or ['(no output)'] }}
+  when: developer_rust_setup.rc | default(0) != 0
+  tags: ['rust-cache']
+
+# The script exits 0 on warnings, so non-zero is a real failure. It goes in the
+# end-of-run summary rather than aborting, for the reason above.
+- name: Warn if hyperi-rust-setup failed
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the play-wide list
+  # the playbook's post_tasks report from.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ (deploy_warnings | default([])
+          + ['hyperi-rust-setup: exited ' ~ developer_rust_setup.rc | string ~ ' -- '
+             ~ ((developer_rust_setup.stderr_lines | default([], true) | last | default('', true)
+                 or developer_rust_setup.msg | default('no output')) | trim | truncate(120))])
+         | unique }}
   when: developer_rust_setup.rc | default(0) != 0
   tags: ['rust-cache']
 

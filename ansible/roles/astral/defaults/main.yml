@@ -1,0 +1,8 @@
+---
+# The Python uv uses by default, pinned as each user's global uv pin. uv
+# installs it only where the system python3 is older. Follows the HyperI floor.
+#
+# The role rewrites that global pin on every converge, so a user's own
+# `uv python pin --global` does not survive. Set this instead, in
+# local-config/vars.yml, to keep a different version.
+astral_python_version: "3.14"

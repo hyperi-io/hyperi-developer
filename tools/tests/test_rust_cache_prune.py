@@ -89,6 +89,55 @@ def test_malformed_config_does_not_raise(prune, tmp_path, monkeypatch):
     assert prune.configured_pool() is None
 
 
+SETUP_SHAPED_CONFIG = """\
+# Managed by hyperi-rust-setup.
+[build]
+rustc-wrapper = "/usr/local/bin/sccache"
+# Intermediate artefacts only; final binaries stay in the project's target/.
+build-dir = '/home/someone/.cache/pool/{workspace-path-hash}'  # trailing comment
+
+[target.x86_64-unknown-linux-gnu]
+linker = "/usr/bin/clang"
+rustflags = [
+    "-C", "link-arg=-fuse-ld=/usr/bin/mold",
+]
+
+[env]
+build-dir = "/not/the/build/table"
+"""
+
+
+def test_the_fallback_reads_the_build_table_as_tomllib_does(prune):
+    """macOS ships Python 3.9, which has no tomllib, and launchd runs the tool there."""
+    import tomllib
+
+    expected = tomllib.loads(SETUP_SHAPED_CONFIG)["build"]
+    assert prune.build_table_without_tomllib(SETUP_SHAPED_CONFIG) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A multi-line string whose content looks like a [build] table.
+        "[env]\nNOTE = '''\n[build]\nbuild-dir = \"/home/u/.cache/victim\"\n'''\n",
+        '[build]\nbuild-dir = """/home/u/.cache/x"""\n',
+        # Invalid TOML that a line reader would otherwise resolve to one value.
+        '[build]\nbuild-dir = "/home/u/.cache/a"\nbuild-dir = "/home/u/.cache/b"\n',
+        '[build]\nbuild-dir = "/home/u/.cache/a"\n[env]\nX = "1"\n[build]\njobs = "2"\n',
+    ],
+)
+def test_the_fallback_reads_nothing_from_a_file_it_could_misread(prune, text):
+    assert prune.build_table_without_tomllib(text) == {}
+
+
+def test_a_python_without_tomllib_still_finds_the_pool(prune, tmp_path, monkeypatch):
+    cargo_home = write_cargo_config(tmp_path, SETUP_SHAPED_CONFIG)
+    monkeypatch.setenv("CARGO_HOME", str(cargo_home))
+    monkeypatch.setitem(sys.modules, "tomllib", None)
+    assert prune.configured_pool() == Path("/home/someone/.cache/pool")
+    assert prune.configured_wrapper() == Path("/usr/local/bin/sccache")
+
+
 def test_auto_size_is_a_share_of_the_disk_with_a_floor(prune, tmp_path, monkeypatch):
     """`auto` derives from the filesystem total, and never drops below the floor."""
     monkeypatch.setenv("HOME", str(tmp_path))

@@ -13,8 +13,6 @@ the machine's footprint.
 Licensed under the Apache License, Version 2.0
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

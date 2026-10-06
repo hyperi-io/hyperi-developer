@@ -64,11 +64,26 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
+
+# tomllib is 3.11+, and `python3` on macOS is the Command Line Tools' 3.9. Hand
+# over to the astral role's uv-managed Python when there is one.
+try:
+    import tomllib
+except ModuleNotFoundError:
+    _UV_PYTHON = os.path.expanduser("~/.local/bin/python3.14")
+    if os.access(_UV_PYTHON, os.X_OK):
+        os.execv(_UV_PYTHON, [_UV_PYTHON, *sys.argv])
+    print(
+        f"hyperi-rust-setup: needs Python 3.11 or later, and this is "
+        f"{platform.python_version()}. Run it with a newer python3, or install "
+        "one with `uv python install 3.14`.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 MANAGED_HEADER = "# MANAGED BY hyperi-rust-setup"
 MANAGED_ENV_BEGIN = "# BEGIN hyperi-rust-setup cache caps"

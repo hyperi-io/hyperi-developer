@@ -168,6 +168,7 @@ reach for instead, are not in that manifest and have no published digest at all.
 | Tool(s) | Platforms | Method |
 |---|---|---|
 | astral suite: uv, ruff, ty (uv bundles `uv audit` + `uv check`) | all | Fedora dnf / macOS brew; Ubuntu has no apt package (see Auto-update) |
+| Python 3.14 for uv (`astral_python_version`), pinned as uv's global default; system `python3` untouched | all | system python3 where it is 3.14+ (Fedora, Ubuntu 26.04), else `uv python install`; `uv python pin --global` per user |
 | CLI utils (jq, gron, bat, fzf, ripgrep, fd, git-delta, moreutils, miller, rsync, tmux, htop, wget, shellcheck, age, parallel, ...) | all | distro repo / brew |
 | sd | all | distro (apt/dnf) / brew |
 | yq (mikefarah; apt `yq` is kislyuk/yq, a different tool) | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
