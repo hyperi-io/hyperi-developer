@@ -9,6 +9,18 @@
 infrastructure_helm_apt_key_fingerprint: DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC6  # gitleaks:allow -- public key fingerprint
 infrastructure_helm_apt_key_url: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
 
+# Redpanda, Confluent and ClickHouse publish no fingerprint for their repo keys,
+# so these pin the key each serves at the URL in data_tools.yml, checked to sign
+# that repo's current metadata. A rotation then fails the install loudly.
+#
+# Redpanda's repos sit on Google Artifact Registry: its key signs the apt
+# metadata, Redpanda's own key signs the rpms.
+infrastructure_redpanda_repo_key_fingerprint: 35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3  # gitleaks:allow -- public key fingerprint
+infrastructure_redpanda_rpm_key_fingerprint: 16C58F679A886A0A8468225BC45B532A7981C4D8  # gitleaks:allow -- public key fingerprint
+infrastructure_confluent_cli_deb_key_fingerprint: BF154723E8BB4B969BA7BAE1F00BDC5567B31D07  # gitleaks:allow -- public key fingerprint
+infrastructure_confluent_cli_rpm_key_fingerprint: 62B65702E8AA3A70B538C8D1E0ECCDAE9610976F  # gitleaks:allow -- public key fingerprint
+infrastructure_clickhouse_key_fingerprint: 3A9EA1193A97B548BE1457D48919F6BD2B48D754  # gitleaks:allow -- public key fingerprint
+
 # Microsoft publishes the Azure CLI repo per Ubuntu codename and has no resolute
 # suite, so a resolute host takes the noble build deliberately.
 # Tracks the supported window (min_ubuntu_version), oldest first; the last entry

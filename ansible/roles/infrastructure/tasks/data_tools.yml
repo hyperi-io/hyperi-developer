@@ -1,5 +1,5 @@
 ---
-# Data platform tools (Vector, ClickHouse, Confluent CLI)
+# Data platform tools (Vector, ClickHouse, Confluent CLI, rpk, valkey-cli)
 #
 # macOS notes:
 # - Vector: skipped — removed from homebrew-core; would need an unofficial
@@ -10,7 +10,6 @@
 #   run via container.
 # - Confluent CLI: INSTALLED on macOS — needs the confluentinc/tap added
 #   first (which is done below).
-# Linux branches below are unchanged.
 
 - name: Skipped data platform tools notice (macOS)
   ansible.builtin.debug:
@@ -19,6 +18,13 @@
       (no clean homebrew formula). Install manually if needed.
       Confluent CLI IS installed below via the confluentinc/tap.
   when: ansible_facts['distribution'] == 'MacOSX'
+
+# A minimal Ubuntu ships gpgv but not gpg, which the vendor key checks need.
+- name: Ensure gpg is present for the vendor key checks (Linux)
+  ansible.builtin.package:
+    name: "{{ 'gpg' if ansible_facts['distribution'] == 'Ubuntu' else 'gnupg2' }}"
+    state: present
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
 # VECTOR - Log aggregation and routing
@@ -100,37 +106,84 @@
 # CLICKHOUSE - Analytics database client
 # ============================================================================
 
-- name: Install ClickHouse client (Fedora)
+- name: Install ClickHouse client (Linux)
+  vars:
+    infrastructure_clickhouse_key:
+      url: https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key
+      dest: >-
+        {{ '/etc/apt/keyrings/clickhouse.asc' if ansible_facts['distribution'] == 'Ubuntu'
+           else '/etc/pki/rpm-gpg/RPM-GPG-KEY-clickhouse' }}
+      fingerprint: "{{ infrastructure_clickhouse_key_fingerprint }}"
   block:
-    - name: Add ClickHouse repository
+    # Runs before any apt call: apt reads a leftover .list beside the .sources
+    # written below as a second copy of the repo.
+    - name: Remove the legacy ClickHouse .list (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/clickhouse.list
+        state: absent
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # Staged under a name nothing trusts and forced, so a rejected download is
+    # replaced on the next run instead of kept by an If-Modified-Since 304.
+    - name: Download the ClickHouse signing key
+      ansible.builtin.get_url:
+        url: "{{ infrastructure_clickhouse_key.url }}"
+        dest: "{{ infrastructure_clickhouse_key.dest }}.unverified"
+        mode: '0644'
+        force: true
+
+    - name: Read the ClickHouse signing key fingerprint
+      ansible.builtin.command:
+        argv: [gpg, --show-keys, --with-colons, "{{ infrastructure_clickhouse_key.dest }}.unverified"]
+      register: infrastructure_clickhouse_key_read
+      changed_when: false
+      check_mode: false
+
+    # Fails closed: one primary key, and the pinned one, or nothing is trusted.
+    - name: Verify the ClickHouse signing key fingerprint
+      ansible.builtin.assert:
+        that:
+          - infrastructure_key_primaries | int == 1
+          - infrastructure_key_fpr == infrastructure_clickhouse_key.fingerprint
+        fail_msg: >-
+          {{ infrastructure_clickhouse_key.url }} holds {{ infrastructure_key_primaries }} key(s), first
+          {{ infrastructure_key_fpr or 'missing' }}; expected only {{ infrastructure_clickhouse_key.fingerprint }}
+        quiet: true
+      vars:
+        infrastructure_key_primaries: "{{ infrastructure_clickhouse_key_read.stdout_lines | select('match', '^pub:') | list | length }}"
+        infrastructure_key_fpr: >-
+          {{ (infrastructure_clickhouse_key_read.stdout_lines | select('match', '^fpr:') | first | default('')).split(':')[9] | default('') }}
+
+    - name: Install the verified ClickHouse signing key
+      ansible.builtin.copy:
+        src: "{{ infrastructure_clickhouse_key.dest }}.unverified"
+        dest: "{{ infrastructure_clickhouse_key.dest }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0644'
+
+    # ClickHouse signs its repo metadata but not its rpms, so gpgcheck stays off
+    # and the signed repomd, with the package checksums it lists, vouches for
+    # each package.
+    - name: Add ClickHouse repository (Fedora)
       ansible.builtin.yum_repository:
         name: clickhouse-stable
         description: ClickHouse - Stable Repository
         baseurl: https://packages.clickhouse.com/rpm/stable/
         enabled: true
         gpgcheck: false
+        repo_gpgcheck: true
+        gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-clickhouse
+      when: ansible_facts['distribution'] == 'Fedora'
 
-    - name: Install ClickHouse client
+    - name: Install ClickHouse client (Fedora)
       ansible.builtin.dnf:
         name: clickhouse-client
         state: present
+      when: ansible_facts['distribution'] == 'Fedora'
 
-  when: ansible_facts['distribution'] == 'Fedora'
-
-- name: Install ClickHouse client (Ubuntu)
-  block:
-    - name: Add ClickHouse GPG key
-      ansible.builtin.get_url:
-        url: https://packages.clickhouse.com/rpm/lts/repodata/repomd.xml.key
-        dest: /etc/apt/keyrings/clickhouse.asc
-        mode: '0644'
-
-    - name: Remove the legacy ClickHouse .list
-      ansible.builtin.file:
-        path: /etc/apt/sources.list.d/clickhouse.list
-        state: absent
-
-    - name: Add ClickHouse APT repository
+    - name: Add ClickHouse APT repository (Ubuntu)
       ansible.builtin.deb822_repository:
         name: clickhouse
         types: deb
@@ -139,14 +192,24 @@
         components: main
         signed_by: /etc/apt/keyrings/clickhouse.asc
         state: present
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Install ClickHouse client
+    - name: Install ClickHouse client (Ubuntu)
       ansible.builtin.apt:
         name: clickhouse-client
         state: present
         update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-  when: ansible_facts['distribution'] == 'Ubuntu'
+  rescue:
+    - name: Record that the ClickHouse client did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['ClickHouse client: ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ClickHouse intentionally not installed on macOS — see header comment.
 
@@ -154,80 +217,167 @@
 # CONFLUENT CLI - Kafka client tools
 # ============================================================================
 
-- name: Install Confluent CLI (Fedora)
+# The CLI has its own unversioned repo. Confluent Platform's per-release repos
+# also carry a confluent-cli, numbered by the platform release (8.x) rather than
+# the CLI's own (4.x), so it outranks the real CLI on version.
+- name: Install Confluent CLI from its package repository (Linux)
+  vars:
+    infrastructure_confluent_cli_key:
+      url: >-
+        https://packages.confluent.io/confluent-cli/{{ 'deb' if ansible_facts['distribution'] == 'Ubuntu' else 'rpm' }}/archive.key
+      dest: >-
+        {{ '/etc/apt/keyrings/confluent-cli.asc' if ansible_facts['distribution'] == 'Ubuntu'
+           else '/etc/pki/rpm-gpg/RPM-GPG-KEY-confluent-cli' }}
+      fingerprint: >-
+        {{ infrastructure_confluent_cli_deb_key_fingerprint if ansible_facts['distribution'] == 'Ubuntu'
+           else infrastructure_confluent_cli_rpm_key_fingerprint }}
   block:
-    - name: Detect latest Confluent version
-      ansible.builtin.uri:
-        url: https://packages.confluent.io/rpm/
-        return_content: true
-      register: confluent_page
+    # The Confluent Platform repo an older revision configured. Runs before any
+    # apt or dnf call so neither reads it again.
+    - name: Remove the Confluent Platform apt repo and key (Ubuntu)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/sources.list.d/confluent.sources
+        - /etc/apt/sources.list.d/confluent.list
+        - /etc/apt/keyrings/confluent.asc
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Extract Confluent version
-      ansible.builtin.set_fact:
-        confluent_version: "{{ confluent_page.content | regex_findall('[0-9]+\\.[0-9]+') | sort | last | default('8.1') }}"
-
-    - name: Import Confluent GPG key
-      ansible.builtin.rpm_key:
-        key: "https://packages.confluent.io/rpm/{{ confluent_version }}/archive.key"
-        state: present
-
-    - name: Add Confluent repository
+    - name: Remove the Confluent Platform repository (Fedora)
       ansible.builtin.yum_repository:
         name: Confluent
-        description: Confluent repository
-        baseurl: "https://packages.confluent.io/rpm/{{ confluent_version }}"
-        enabled: true
-        gpgcheck: true
-        gpgkey: "https://packages.confluent.io/rpm/{{ confluent_version }}/archive.key"
+        state: absent
+      when: ansible_facts['distribution'] == 'Fedora'
 
-    - name: Install Confluent CLI
-      ansible.builtin.dnf:
-        name: confluent-cli
-        state: present
+    # Staged under a name nothing trusts and forced, so a rejected download is
+    # replaced on the next run instead of kept by an If-Modified-Since 304.
+    - name: Download the Confluent CLI signing key
+      ansible.builtin.get_url:
+        url: "{{ infrastructure_confluent_cli_key.url }}"
+        dest: "{{ infrastructure_confluent_cli_key.dest }}.unverified"
+        mode: '0644'
+        force: true
 
-  when: ansible_facts['distribution'] == 'Fedora'
-
-- name: Install Confluent CLI (Ubuntu)
-  block:
-    - name: Detect latest Confluent version
-      ansible.builtin.uri:
-        url: https://packages.confluent.io/deb/
-        return_content: true
-      register: confluent_page_ubuntu
+    - name: Read the Confluent CLI signing key fingerprint
+      ansible.builtin.command:
+        argv: [gpg, --show-keys, --with-colons, "{{ infrastructure_confluent_cli_key.dest }}.unverified"]
+      register: infrastructure_confluent_cli_key_read
+      changed_when: false
       check_mode: false
 
-    - name: Extract Confluent version
-      ansible.builtin.set_fact:
-        confluent_version_ubuntu: "{{ confluent_page_ubuntu.content | regex_findall('[0-9]+\\.[0-9]+') | sort | last | default('8.1') }}"
+    # Fails closed: one primary key, and the pinned one, or nothing is trusted.
+    - name: Verify the Confluent CLI signing key fingerprint
+      ansible.builtin.assert:
+        that:
+          - infrastructure_key_primaries | int == 1
+          - infrastructure_key_fpr == infrastructure_confluent_cli_key.fingerprint
+        fail_msg: >-
+          {{ infrastructure_confluent_cli_key.url }} holds {{ infrastructure_key_primaries }} key(s), first
+          {{ infrastructure_key_fpr or 'missing' }}; expected only {{ infrastructure_confluent_cli_key.fingerprint }}
+        quiet: true
+      vars:
+        infrastructure_key_primaries: "{{ infrastructure_confluent_cli_key_read.stdout_lines | select('match', '^pub:') | list | length }}"
+        infrastructure_key_fpr: >-
+          {{ (infrastructure_confluent_cli_key_read.stdout_lines | select('match', '^fpr:') | first | default('')).split(':')[9] | default('') }}
 
-    - name: Add Confluent GPG key
-      ansible.builtin.get_url:
-        url: "https://packages.confluent.io/deb/{{ confluent_version_ubuntu }}/archive.key"
-        dest: /etc/apt/keyrings/confluent.asc
+    - name: Install the verified Confluent CLI signing key
+      ansible.builtin.copy:
+        src: "{{ infrastructure_confluent_cli_key.dest }}.unverified"
+        dest: "{{ infrastructure_confluent_cli_key.dest }}"
+        remote_src: true
+        owner: root
+        group: root
         mode: '0644'
 
-    - name: Remove the legacy Confluent .list
-      ansible.builtin.file:
-        path: /etc/apt/sources.list.d/confluent.list
-        state: absent
-
-    - name: Add Confluent APT repository
+    - name: Add the Confluent CLI APT repository (Ubuntu)
       ansible.builtin.deb822_repository:
-        name: confluent
+        name: confluent-cli
         types: deb
-        uris: "https://packages.confluent.io/deb/{{ confluent_version_ubuntu }}"
+        uris: https://packages.confluent.io/confluent-cli/deb
         suites: stable
         components: main
-        signed_by: /etc/apt/keyrings/confluent.asc
+        signed_by: /etc/apt/keyrings/confluent-cli.asc
         state: present
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # Both the packages and the repo metadata are signed with the same key.
+    - name: Add the Confluent CLI repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: confluent-cli
+        description: Confluent CLI
+        baseurl: https://packages.confluent.io/confluent-cli/rpm
+        enabled: true
+        gpgcheck: true
+        repo_gpgcheck: true
+        gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-confluent-cli
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # Also drops the Platform repo's lists, so the version read below sees only
+    # what the CLI repo offers.
+    - name: Refresh the apt cache (Ubuntu)
+      ansible.builtin.apt:
+        update_cache: true
+      changed_when: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Read the confluent-cli versions the CLI repo offers (Ubuntu)
+      ansible.builtin.command:
+        argv: [apt-cache, madison, confluent-cli]
+      register: infrastructure_confluent_cli_madison
+      changed_when: false
+      check_mode: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Read the confluent-cli versions the CLI repo offers (Fedora)
+      ansible.builtin.command:
+        argv: [dnf, -q, repoquery, --available, --qf, "%{evr}\n", confluent-cli]
+      register: infrastructure_confluent_cli_repoquery
+      changed_when: false
+      check_mode: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # Empty when confluent-cli is not installed.
+    - name: Read the installed confluent-cli version
+      ansible.builtin.command:
+        argv: >-
+          {{ ['dpkg-query', '-W', '-f=${Version}', 'confluent-cli']
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else ['rpm', '-q', '--qf', '%{VERSION}-%{RELEASE}', 'confluent-cli'] }}
+      register: infrastructure_confluent_cli_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # A Platform-repo build outranks every CLI-repo version, so the package
+    # manager never replaces it; removing it lets the CLI repo's build in.
+    - name: Remove a confluent-cli the CLI repo does not carry
+      ansible.builtin.package:
+        name: confluent-cli
+        state: absent
+      when:
+        - infrastructure_confluent_cli_installed.rc == 0
+        - infrastructure_confluent_cli_installed.stdout not in infrastructure_confluent_cli_offered
+      vars:
+        infrastructure_confluent_cli_offered: >-
+          {{ infrastructure_confluent_cli_madison.stdout_lines | map('split', '|') | map(attribute=1) | map('trim') | list
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else infrastructure_confluent_cli_repoquery.stdout_lines }}
 
     - name: Install Confluent CLI
-      ansible.builtin.apt:
+      ansible.builtin.package:
         name: confluent-cli
         state: present
-        update_cache: true
 
-  when: ansible_facts['distribution'] == 'Ubuntu'
+  rescue:
+    - name: Record that the Confluent CLI did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Confluent CLI: ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 - name: Tap Confluent formulae (macOS)
   community.general.homebrew_tap:
@@ -248,41 +398,115 @@
 # ============================================================================
 # RPK - Redpanda / Kafka CLI (data group)
 # ============================================================================
-# The Redpanda vendor repo (linux.pkg.redpanda.com) is OS-swept BUT its
-# `redpanda` package installs the FULL broker to get rpk -- the wrong footprint
-# for a dev workstation. We take the standalone rpk zip from GitHub releases
-# instead (Tier 3: hyperi-update re-fetches it). If you want the OS-swept vendor
-# repo, it is `redpanda` from https://linux.pkg.redpanda.com (broker included).
-- name: Install rpk (Linux)
+# redpanda-rpk from Redpanda's package repo is rpk alone; the `redpanda` broker
+# package depends on it rather than the other way round. Taking it from the repo
+# puts rpk under the host's normal package updates.
+- name: Install rpk from the Redpanda package repository (Linux)
+  vars:
+    infrastructure_redpanda_key:
+      url: >-
+        {{ 'https://linux.pkg.redpanda.com/redpanda-deb-signing-public.gpg'
+           if ansible_facts['distribution'] == 'Ubuntu'
+           else 'https://linux.pkg.redpanda.com/redpanda-rpm-signing-public.key' }}
+      dest: >-
+        {{ '/etc/apt/keyrings/redpanda.asc' if ansible_facts['distribution'] == 'Ubuntu'
+           else '/etc/pki/rpm-gpg/RPM-GPG-KEY-redpanda' }}
+      fingerprint: >-
+        {{ infrastructure_redpanda_repo_key_fingerprint if ansible_facts['distribution'] == 'Ubuntu'
+           else infrastructure_redpanda_rpm_key_fingerprint }}
   block:
-    - name: Ensure unzip is present for rpk
-      ansible.builtin.package:
-        name: unzip
-        state: present
+    # Staged under a name nothing trusts and forced, so a rejected download is
+    # replaced on the next run instead of kept by an If-Modified-Since 304.
+    - name: Download the Redpanda signing key
+      ansible.builtin.get_url:
+        url: "{{ infrastructure_redpanda_key.url }}"
+        dest: "{{ infrastructure_redpanda_key.dest }}.unverified"
+        mode: '0644'
+        force: true
 
-    - name: Get latest Redpanda release (carries the rpk asset)
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/redpanda-data/redpanda/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: rpk_latest
+    - name: Read the Redpanda signing key fingerprint
+      ansible.builtin.command:
+        argv: [gpg, --show-keys, --with-colons, "{{ infrastructure_redpanda_key.dest }}.unverified"]
+      register: infrastructure_redpanda_key_read
+      changed_when: false
       check_mode: false
 
-    - name: Download and extract rpk
-      ansible.builtin.unarchive:
-        src: "https://github.com/redpanda-data/redpanda/releases/download/{{ rpk_latest.json.tag_name }}/rpk-linux-{{ hyperi_arch_deb }}.zip"
-        dest: /usr/local/bin
+    # Fails closed: one primary key, and the pinned one, or nothing is trusted.
+    - name: Verify the Redpanda signing key fingerprint
+      ansible.builtin.assert:
+        that:
+          - infrastructure_key_primaries | int == 1
+          - infrastructure_key_fpr == infrastructure_redpanda_key.fingerprint
+        fail_msg: >-
+          {{ infrastructure_redpanda_key.url }} holds {{ infrastructure_key_primaries }} key(s), first
+          {{ infrastructure_key_fpr or 'missing' }}; expected only {{ infrastructure_redpanda_key.fingerprint }}
+        quiet: true
+      vars:
+        infrastructure_key_primaries: "{{ infrastructure_redpanda_key_read.stdout_lines | select('match', '^pub:') | list | length }}"
+        infrastructure_key_fpr: >-
+          {{ (infrastructure_redpanda_key_read.stdout_lines | select('match', '^fpr:') | first | default('')).split(':')[9] | default('') }}
+
+    - name: Install the verified Redpanda signing key
+      ansible.builtin.copy:
+        src: "{{ infrastructure_redpanda_key.dest }}.unverified"
+        dest: "{{ infrastructure_redpanda_key.dest }}"
         remote_src: true
-        include: rpk
-        mode: '0755'
-      when: not ansible_check_mode
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Add the Redpanda APT repository (Ubuntu)
+      ansible.builtin.deb822_repository:
+        name: redpanda
+        types: deb
+        uris: https://linux.pkg.redpanda.com/apt
+        suites: redpanda-apt
+        components: main
+        signed_by: /etc/apt/keyrings/redpanda.asc
+        state: present
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # dnf rejects the signature Artifact Registry puts on the yum metadata as
+    # bad, so only the rpms' own signatures are checked.
+    - name: Add the Redpanda repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: redpanda
+        description: Redpanda
+        baseurl: https://linux.pkg.redpanda.com/yum/redpanda-yum
+        enabled: true
+        gpgcheck: true
+        repo_gpgcheck: false
+        gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redpanda
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install rpk (Ubuntu)
+      ansible.builtin.apt:
+        name: redpanda-rpk
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Install rpk (Fedora)
+      ansible.builtin.dnf:
+        name: redpanda-rpk
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # The GitHub zip an older revision unpacked here shadows the packaged rpk on
+    # PATH. Reached only once the package above is in, since a failed install
+    # leaves the block for the rescue.
+    - name: Remove the superseded /usr/local/bin/rpk
+      ansible.builtin.file:
+        path: /usr/local/bin/rpk
+        state: absent
 
   rescue:
     - name: Record that rpk did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['rpk: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+             + ['rpk: ' ~ (ansible_failed_result.msg | default('repo/install failed'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 

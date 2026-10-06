@@ -169,3 +169,20 @@ rust_governor_cpu_weight: 30
 developer_rust_uid: "{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
 developer_rust_user_env:
   XDG_RUNTIME_DIR: "/run/user/{{ developer_rust_uid }}"
+
+# ---------------------------------------------------------------------------
+# librdkafka from Confluent's clients repository
+# ---------------------------------------------------------------------------
+# Confluent publishes no fingerprint for this key. This pins the key served at
+# packages.confluent.io/clients/{deb,rpm}/archive.key, which signs that repo's
+# metadata -- the same pin scalo-rs's generated images assert.
+developer_rust_confluent_clients_key_fingerprint: CBBB821E8FAF364F79835C438B1DA6120C2BF624  # gitleaks:allow -- public key fingerprint
+
+# Clients-repo apt suites, oldest first; the last entry is the fallback for an
+# Ubuntu release Confluent has not published yet.
+developer_rust_confluent_clients_suites:
+  - noble
+  - resolute
+
+# Confluent builds the clients rpms for RHEL only; Fedora takes this EL release.
+developer_rust_confluent_clients_el_release: 10
