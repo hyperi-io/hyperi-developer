@@ -52,7 +52,7 @@ quota get rate-limited -- a hard assertion would fail on GitHub's limiter rather
 than on the playbook. The rescue path turns those into `deploy_warnings`, which
 is the designed behaviour.
 
-`../vars.yml` is the SSoT for WHICH releases are supported. Two files
+`vars.yml` is the SSoT for WHICH releases are supported. Two files
 necessarily restate it -- this scenario's platform list, because molecule cannot
 include another YAML file, and the OS gate's `min_fedora_version` /
 `min_ubuntu_version`. `tools/check_release_matrix.py` runs in the test gate and
