@@ -23,14 +23,6 @@
 # LINUX - GitHub release binary (Tier 3)
 # ============================================================================
 
-# failed_when: a host without snapd has nothing to remove.
-- name: Remove the strict-confined actionlint snap (Ubuntu)
-  community.general.snap:
-    name: actionlint
-    state: absent
-  failed_when: false
-  when: ansible_facts['distribution'] == 'Ubuntu'
-
 - name: Install actionlint (Linux)
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   block:
@@ -71,6 +63,15 @@
       when:
         - not ansible_check_mode
         - (contributor_actionlint_installed.stdout_lines | default([''], true) | first) != contributor_actionlint_version
+
+    # Last in the block, so a failed binary install keeps the snap as the only
+    # actionlint. failed_when: a host without snapd has nothing to remove.
+    - name: Remove the strict-confined actionlint snap (Ubuntu)
+      community.general.snap:
+        name: actionlint
+        state: absent
+      failed_when: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
   rescue:
     - name: Record that actionlint did not install

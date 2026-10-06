@@ -254,6 +254,39 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
+# Earlier revisions of hyperi-update ran `go install` for govulncheck on macOS
+# as well, leaving a ~/go/bin copy that nothing refreshes and that can win on
+# PATH over brew's. It goes only once brew's copy resolves.
+- name: Read the Homebrew prefix (macOS)
+  ansible.builtin.command:
+    argv: [brew, --prefix]
+  become: false
+  environment: "{{ homebrew_env }}"
+  register: developer_go_brew_prefix
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+- name: Look for the Homebrew govulncheck (macOS)
+  ansible.builtin.stat:
+    path: "{{ developer_go_brew_prefix.stdout | trim }}/bin/govulncheck"
+    follow: true
+  become: false
+  register: developer_go_brew_govulncheck
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - developer_go_brew_prefix.rc | default(1) == 0
+
+- name: Remove the go-installed govulncheck superseded by brew (macOS)
+  ansible.builtin.file:
+    path: "{{ user_home }}/go/bin/govulncheck"
+    state: absent
+  become: false
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - developer_go_brew_govulncheck.stat.exists | default(false)
+
 - name: Install govulncheck (Linux — go install)
   ansible.builtin.command:
     cmd: go install golang.org/x/vuln/cmd/govulncheck@latest

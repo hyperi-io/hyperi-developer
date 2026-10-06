@@ -302,7 +302,7 @@ table used to say the opposite.
 |---|---|---|
 | kubectl | all | vendor-repo (pkgs.k8s.io) / brew |
 | helm | all | Ubuntu vendor-repo (packages.buildkite.com) / Fedora dnf / brew |
-| kubectx, kubens | all | distro (apt universe / dnf) / brew |
+| kubectx, kubens | all | Ubuntu apt universe / Fedora github-binary, newest release at least 7 days old (Fedora packages neither) / brew |
 | k9s | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
 | kind, argocd (Tier 3: re-fetch) | all | github-binary / brew |
 | kustomize | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |

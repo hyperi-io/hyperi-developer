@@ -102,6 +102,8 @@
       loop: "{{ verify_superseded_kept[ansible_facts['distribution']] | default([]) }}"
       register: verify_superseded_kept_stat
       vars:
+        # Fedora helm and kustomize have a /usr/bin entry that is a link back
+        # into /usr/local/bin and a dangling link -- not a packaged copy.
         verify_superseded_kept:
           Ubuntu: [k9s, gitleaks]
           Fedora: [kubectx, kubens, helm, kustomize]
@@ -193,10 +195,9 @@
           uv does not resolve to the stale copy
           (resolved: '{{ verify_uv_which.stdout | default('nothing', true) }}')
 
-    # The Fedora binary-to-dnf migrations (yq, kustomize) are not asserted here.
-    # This scenario is Ubuntu only -- see molecule.yml -- and the assertion would
-    # need a full converge anyway, since a removals-only run never installs the
-    # package that is supposed to win.
+    # The Fedora yq migration is not asserted here: its removal sits in the
+    # install path of utilities.yml, which a removals-only run never reaches.
+    # kustomize is covered in the superseded-by-a-package section above.
     # The repo is the half that keeps serving BUSL packages if it survives.
     - name: Stat the HashiCorp repository artefacts (Ubuntu)
       ansible.builtin.stat:

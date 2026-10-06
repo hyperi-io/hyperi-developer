@@ -88,6 +88,7 @@ git_ppa_supported_suites:
 # Launchpad's signing key for the git-core PPA, as its archive API reports it
 # (signing_key_fingerprint on ~git-core/+archive/ubuntu/ppa).
 git_ppa_signing_fingerprint: F911AB184317630C59970973E363C90F8F1B6217  # gitleaks:allow -- public key fingerprint
+git_ppa_signing_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x{{ git_ppa_signing_fingerprint }}"
 
 # ============================================================================
 # BRANDING / CUSTOMIZATION

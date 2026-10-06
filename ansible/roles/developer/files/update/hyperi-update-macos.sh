@@ -1,18 +1,18 @@
 #!/usr/bin/env zsh
 #
-# hyperi-update (macOS) — update everything the hyperi-developer installer set
+# hyperi-update (macOS) -- update everything the hyperi-developer installer set
 # up on this machine, in one command.
 #
 #   * Homebrew         (formulae + casks: aws, gh, az, kubectl, helm,
 #                       opentofu, openbao, gcloud-cli, ...)
-#   * macOS updates    (softwareupdate)                  — needs sudo
-#   * uv tools         (gnome-extensions-cli, ...)       — user
-#   * rustup           (Rust toolchains)                 — user
-#   * cargo tools      (nextest, deny, cargo-audit, ...) — user
-#   * go tools         (gopls)                           — user
-#   * npm globals      (maid, semantic-release, pnpm)    — user
-#   * Claude Code CLI  (self-installed under ~/.local)   — user
-#   * Codex plugin     (claude plugin update)            - user
+#   * macOS updates    (softwareupdate)                  -- needs sudo
+#   * uv tools         (gnome-extensions-cli, ...)       -- user
+#   * rustup           (Rust toolchains)                 -- user
+#   * cargo tools      (nextest, deny, cargo-audit, ...) -- user
+#   * go tools         (gopls)                           -- user
+#   * npm globals      (maid, semantic-release, pnpm)    -- user
+#   * Claude Code CLI  (self-installed under ~/.local)   -- user
+#   * Codex plugin     (claude plugin update)            -- user
 #
 # Tier 3 static binaries (kind, argocd, kubeconform, ...) come from Homebrew
 # formulae on macOS, so the Homebrew section already refreshes them -- the

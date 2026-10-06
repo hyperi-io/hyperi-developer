@@ -295,22 +295,29 @@
       register: infrastructure_aws_vault_releases
       check_mode: false
 
-    # The newest release that has been out for the cooldown, so a bad release
-    # has time to be pulled before it reaches a workstation. ISO-8601 UTC
-    # timestamps compare correctly as strings.
-    - name: Pick the newest aws-vault release past the cooldown
+    # Sorted rather than trusting the API's order, then cut to the releases past
+    # the cooldown (infrastructure_release_cutoff).
+    - name: List the aws-vault releases past the cooldown
       ansible.builtin.set_fact:
-        infrastructure_aws_vault_version: >-
+        infrastructure_aws_vault_candidates: >-
           {{ infrastructure_aws_vault_releases.json
              | rejectattr('draft') | rejectattr('prerelease')
-             | selectattr('published_at', 'le', infrastructure_aws_vault_cutoff)
-             | map(attribute='tag_name') | first }}
+             | selectattr('published_at', 'le', infrastructure_release_cutoff)
+             | sort(attribute='published_at', reverse=true)
+             | map(attribute='tag_name') | list }}
+
+    - name: Check an aws-vault release is past the cooldown
+      ansible.builtin.assert:
+        that: infrastructure_aws_vault_candidates | length > 0
+        fail_msg: >-
+          no {{ infrastructure_aws_vault_repo }} release among the newest 30 is at
+          least {{ infrastructure_min_release_age_days }} days old
+        quiet: true
+
+    - name: Pick the newest aws-vault release past the cooldown
+      ansible.builtin.set_fact:
+        infrastructure_aws_vault_version: "{{ infrastructure_aws_vault_candidates | first }}"
         infrastructure_aws_vault_asset: "aws-vault-linux-{{ hyperi_arch_deb }}"
-      vars:
-        infrastructure_aws_vault_cutoff: >-
-          {{ '%Y-%m-%dT%H:%M:%SZ' | strftime(
-             (now().timestamp() | int) - (infrastructure_aws_vault_min_release_age_days | int) * 86400,
-             utc=true) }}
 
     - name: Fetch the aws-vault release checksums
       ansible.builtin.uri:
@@ -375,7 +382,7 @@
     # replaced on the next run instead of kept by an If-Modified-Since 304.
     - name: Download the Helm apt signing key (Ubuntu)
       ansible.builtin.get_url:
-        url: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
+        url: "{{ infrastructure_helm_apt_key_url }}"
         dest: /etc/apt/keyrings/helm-buildkite.asc.unverified
         mode: '0644'
         force: true
@@ -397,15 +404,21 @@
       when: ansible_facts['distribution'] == 'Ubuntu'
 
     # Fails closed: neither the trusted key nor the repo is written unless the
-    # key matches Helm's published fingerprint.
+    # file holds exactly one key and it matches Helm's published fingerprint.
+    # apt trusts every key in a Signed-By file, so a second key riding along
+    # with the right one would be trusted too.
     - name: Verify the Helm apt signing key fingerprint (Ubuntu)
       ansible.builtin.assert:
-        that: infrastructure_helm_key_fpr == infrastructure_helm_apt_key_fingerprint
+        that:
+          - infrastructure_helm_key_count | int == 1
+          - infrastructure_helm_key_fpr == infrastructure_helm_apt_key_fingerprint | upper | replace(' ', '')
         fail_msg: >-
-          Helm apt key fingerprint {{ infrastructure_helm_key_fpr or 'missing' }}
-          does not match {{ infrastructure_helm_apt_key_fingerprint }}
+          Helm apt key file holds {{ infrastructure_helm_key_count }} key(s), primary
+          {{ infrastructure_helm_key_fpr or 'missing' }}; expected exactly one,
+          {{ infrastructure_helm_apt_key_fingerprint }}
         quiet: true
       vars:
+        infrastructure_helm_key_count: "{{ infrastructure_helm_key.stdout_lines | select('match', '^pub:') | list | length }}"
         infrastructure_helm_key_fpr: >-
           {{ (infrastructure_helm_key.stdout_lines | select('match', '^fpr:')
               | first | default('')).split(':')[9] | default('') }}

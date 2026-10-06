@@ -7,6 +7,7 @@
 # Primary key fingerprint Helm publishes for its apt repo at
 # https://helm.sh/docs/intro/install/, checked before the key is trusted.
 infrastructure_helm_apt_key_fingerprint: DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC6  # gitleaks:allow -- public key fingerprint
+infrastructure_helm_apt_key_url: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
 
 # Microsoft publishes the Azure CLI repo per Ubuntu codename and has no resolute
 # suite, so a resolute host takes the noble build deliberately.
@@ -20,7 +21,18 @@ azure_cli_supported_suites:
 # and shipped in files/session-manager-plugin.asc.
 infrastructure_ssm_signing_fingerprint: 7959637124CE093AD501D47A2C4D4AFF6F6757EE  # gitleaks:allow -- public key fingerprint
 
-# aws-vault on Linux comes from the maintained fork's GitHub releases, taking
-# the newest release at least this many days old.
+# GitHub-release installs that take the newest release at least this many days
+# old (aws-vault, and kubectx/kubens on Fedora), so a bad release has time to be
+# pulled before it reaches a workstation. The cutoff is an ISO-8601 UTC
+# timestamp, which compares correctly against GitHub's published_at as a string.
+infrastructure_min_release_age_days: 7
+infrastructure_release_cutoff: >-
+  {{ '%Y-%m-%dT%H:%M:%SZ' | strftime(
+     (now().timestamp() | int) - (infrastructure_min_release_age_days | int) * 86400,
+     utc=true) }}
+
+# aws-vault on Linux comes from the maintained fork's GitHub releases.
 infrastructure_aws_vault_repo: ByteNess/aws-vault
-infrastructure_aws_vault_min_release_age_days: 7
+
+# kubectx and kubens on Fedora, which packages neither.
+infrastructure_kubectx_repo: ahmetb/kubectx

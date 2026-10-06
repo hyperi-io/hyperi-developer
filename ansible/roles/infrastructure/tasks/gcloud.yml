@@ -83,12 +83,10 @@
         signed_by: /etc/apt/keyrings/cloud.google.asc
         state: present
 
-    # The dearmored copy an older revision of this file wrote. Removed only once
-    # the repository names the .asc, so apt never points at a missing key.
-    - name: Remove the superseded dearmored Google Cloud key
-      ansible.builtin.file:
-        path: /usr/share/keyrings/cloud.google.gpg
-        state: absent
+    # /usr/share/keyrings/cloud.google.gpg, the dearmored copy an older revision
+    # wrote, is left in place: Google's own instructions for other repos (gcsfuse)
+    # name that path, and deleting a keyring a source still names stops apt for
+    # the whole box.
 
     - name: Install Google Cloud CLI
       ansible.builtin.apt:

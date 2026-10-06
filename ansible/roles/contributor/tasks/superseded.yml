@@ -3,17 +3,22 @@
 # supplies. /usr/local/bin precedes /usr/bin on the default PATH, so a leftover
 # copy shadows the package and nothing ever updates it again.
 #
-# Each copy goes only once the packaged binary is in /usr/bin: where it is not,
-# the /usr/local/bin copy is the only working one and it stays. Only the
-# /usr/local/bin path is touched, never the package's own file. A stat rather
-# than package_facts, which needs rpm Python bindings a minimal Fedora lacks.
+# Each copy goes only once /usr/bin/<bin> resolves to a real file outside
+# /usr/local: where it does not -- absent, dangling, or a symlink back into
+# /usr/local -- the /usr/local/bin copy is the only working one and it stays.
+# Only the /usr/local/bin path is touched, never the package's own file.
+# readlink -e rather than package_facts, which needs rpm Python bindings a
+# minimal Fedora lacks.
 
 # A GitHub-release binary on all Linux until ca841da. Fedora moved to dnf;
 # Ubuntu still installs gitleaks to /usr/local/bin, so it is not listed there.
-- name: Look for the packaged gitleaks (Fedora)
-  ansible.builtin.stat:
-    path: /usr/bin/gitleaks
+- name: Resolve the packaged gitleaks (Fedora)
+  ansible.builtin.command:
+    argv: [readlink, -e, /usr/bin/gitleaks]
   register: contributor_gitleaks_packaged
+  changed_when: false
+  failed_when: false
+  check_mode: false
   when: ansible_facts['distribution'] == 'Fedora'
 
 - name: Remove the /usr/local/bin gitleaks the Fedora package supplies
@@ -22,4 +27,5 @@
     state: absent
   when:
     - ansible_facts['distribution'] == 'Fedora'
-    - contributor_gitleaks_packaged.stat.exists
+    - contributor_gitleaks_packaged.rc == 0
+    - not contributor_gitleaks_packaged.stdout.startswith('/usr/local/')
