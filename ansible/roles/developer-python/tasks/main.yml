@@ -25,7 +25,7 @@
   ansible.builtin.command:
     cmd: uv tool install mypy
   environment:
-    PATH: "{{ user_home }}/.cargo/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+    PATH: "{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
   become: true
   become_user: "{{ actual_user }}"
   register: devpy_mypy_install

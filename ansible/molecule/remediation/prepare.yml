@@ -392,6 +392,8 @@
         - argocd
         - macbash
         - git-scrub
+        - yq
+        - golangci-lint
 
     - name: Create the user-level bin directories
       ansible.builtin.file:
@@ -414,26 +416,46 @@
         - go/bin/dive            # shadows /usr/local/bin/dive -- must go
         - .local/bin/kubeconform # no system copy here -- the only one, must stay
         - .local/bin/tinygo-dev  # not a tool the roles manage -- must stay
+        - .local/bin/yq          # pip/uv's yq is another program -- must stay
 
-    # CONSTRUCTED: a user-level link to the managed binary is not a duplicate.
-    - name: Link a user-level argocd to the managed copy
+    # CONSTRUCTED: a user-level link to the managed binary is not a duplicate,
+    # and a dangling one shadows nothing.
+    - name: Plant user-level links
       ansible.builtin.file:
-        src: /usr/local/bin/argocd
-        dest: "{{ ansible_facts['env']['HOME'] }}/.local/bin/argocd"
+        src: "{{ item.src }}"
+        dest: "{{ ansible_facts['env']['HOME'] }}/.local/bin/{{ item.name }}"
         state: link
+        force: true
+      loop:
+        - {name: argocd, src: /usr/local/bin/argocd}
+        - {name: dive, src: /nonexistent/dive}
+
+    # CONSTRUCTED: a directory that happens to carry a managed tool's name.
+    - name: Plant a directory named like a managed tool
+      ansible.builtin.file:
+        path: "{{ ansible_facts['env']['HOME'] }}/.local/bin/kubectx"
+        state: directory
+        mode: '0755'
 
     # Observed on the reference workstation 2026-10-06: the macbash .deb, from no
     # repository, beside the role's /usr/local/bin/macbash. CONSTRUCTED: a
-    # git-scrub package another package depends on, which must stay.
+    # git-scrub package another package depends on, a kind package that is not
+    # on the purge list, and a dive package served by a repository -- all three
+    # must stay.
     - name: Install hand-built duplicate packages (Ubuntu)
       when: ansible_facts['distribution'] == 'Ubuntu'
       block:
+        - name: Install the package-building tools
+          ansible.builtin.apt:
+            name: dpkg-dev
+            state: present
+
         - name: Create the fixture package trees
           ansible.builtin.file:
             path: "/root/dup-fixture/{{ item.0 }}/{{ item.1 }}"
             state: directory
             mode: '0755'
-          loop: "{{ ['macbash', 'git-scrub', 'git-scrub-dependant'] | product(['DEBIAN', 'usr/bin']) | list }}"
+          loop: "{{ ['macbash', 'git-scrub', 'git-scrub-dependant', 'kind', 'dive'] | product(['DEBIAN', 'usr/bin']) | list }}"
 
         - name: Write the fixture control files
           ansible.builtin.copy:
@@ -450,6 +472,8 @@
             - {name: macbash, depends: ''}
             - {name: git-scrub, depends: ''}
             - {name: git-scrub-dependant, depends: git-scrub}
+            - {name: kind, depends: ''}
+            - {name: dive, depends: ''}
 
         - name: Write the packaged binaries
           ansible.builtin.copy:
@@ -462,6 +486,8 @@
             - macbash
             - git-scrub
             - git-scrub-dependant
+            - kind
+            - dive
 
         - name: Build the fixture packages
           ansible.builtin.command:
@@ -471,39 +497,149 @@
             - macbash
             - git-scrub
             - git-scrub-dependant
+            - kind
+            - dive
 
-        - name: Install the fixture packages
+        - name: Install the hand-installed fixture packages
           ansible.builtin.apt:
             deb: "/root/dup-fixture/{{ item }}.deb"
           loop:
             - macbash
             - git-scrub
             - git-scrub-dependant
+            - kind
 
-    # Observed on the reference workstation 2026-10-06: golang-go with no reverse
-    # dependencies beside the role's /usr/local/go. A script stands in for the
-    # managed toolchain.
-    - name: Install the distro Go (Ubuntu)
-      ansible.builtin.apt:
-        name: golang-go
+        # dive comes from a local repository instead, so a repository offers it.
+        # Under /srv, not /root: apt fetches as the _apt user.
+        - name: Create the fixture repository
+          ansible.builtin.file:
+            path: /srv/fixture-repo
+            state: directory
+            mode: '0755'
+
+        - name: Place the dive package in the fixture repository
+          ansible.builtin.copy:
+            src: /root/dup-fixture/dive.deb
+            dest: /srv/fixture-repo/dive.deb
+            remote_src: true
+            mode: '0644'
+
+        - name: Index the fixture repository
+          ansible.builtin.shell:
+            cmd: dpkg-scanpackages --multiversion . > Packages
+            chdir: /srv/fixture-repo
+            creates: /srv/fixture-repo/Packages
+
+        - name: Add the fixture repository
+          ansible.builtin.copy:
+            content: "deb [trusted=yes] file:/srv/fixture-repo ./\n"
+            dest: /etc/apt/sources.list.d/hyperi-fixture.list
+            mode: '0644'
+
+        # Only this source: the planted vendor repositories above are
+        # unreachable, and a full update would fail on them.
+        - name: Read the fixture repository
+          ansible.builtin.command:
+            argv:
+              - apt-get
+              - update
+              - -o
+              - Dir::Etc::sourcelist=sources.list.d/hyperi-fixture.list
+              - -o
+              - Dir::Etc::sourceparts=-
+              - -o
+              - APT::Get::List-Cleanup=0
+          changed_when: false
+
+        - name: Install dive from the fixture repository
+          ansible.builtin.apt:
+            name: dive
+            state: present
+
+    # Fedora: the macbash rpm, from no repository, and golangci-lint from the
+    # Fedora repository -- the first must go, the second stay.
+    - name: Install hand-built and repository duplicates (Fedora)
+      when: ansible_facts['distribution'] == 'Fedora'
+      block:
+        - name: Install the package-building tools and golangci-lint
+          ansible.builtin.dnf:
+            name:
+              - rpm-build
+              - golangci-lint
+            state: present
+
+        - name: Write the macbash fixture spec
+          ansible.builtin.copy:
+            content: |
+              Name: macbash
+              Version: 1.0.0
+              Release: 1
+              Summary: Stand-in for a hand-installed macbash rpm
+              License: MIT
+              BuildArch: noarch
+              %description
+              Fixture.
+              %install
+              mkdir -p %{buildroot}/usr/bin
+              printf '#!/bin/sh\necho rpm macbash\n' > %{buildroot}/usr/bin/macbash
+              chmod 755 %{buildroot}/usr/bin/macbash
+              %files
+              /usr/bin/macbash
+            dest: /root/macbash.spec
+            mode: '0644'
+
+        - name: Build the macbash fixture rpm
+          ansible.builtin.command:
+            cmd: rpmbuild -bb /root/macbash.spec
+            creates: /root/rpmbuild/RPMS/noarch/macbash-1.0.0-1.noarch.rpm
+
+        - name: Install the macbash fixture rpm outside any repository
+          ansible.builtin.dnf:
+            name: /root/rpmbuild/RPMS/noarch/macbash-1.0.0-1.noarch.rpm
+            disable_gpg_check: true
+            state: present
+
+    # Observed on the reference workstation 2026-10-06: the distro Go with no
+    # reverse dependencies beside the role's /usr/local/go. The distro's own
+    # tree is copied into /usr/local/go, so `go version` runs as the role's
+    # would. The golink host instead links /usr/local/go INTO the distro tree,
+    # which is the distro Go and must stay.
+    - name: Install the distro Go
+      ansible.builtin.package:
+        name: "{{ 'golang-go' if ansible_facts['distribution'] == 'Ubuntu' else 'golang' }}"
         state: present
-      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Create the stand-in managed Go tree
+    - name: Resolve the distro Go tree
+      ansible.builtin.command:
+        argv: [readlink, -e, /usr/bin/go]
+      register: prepare_distro_go
+      changed_when: false
+
+    - name: Copy the distro Go tree into /usr/local/go
+      ansible.builtin.command:
+        argv: [cp, -a, "{{ prepare_distro_go.stdout | dirname | dirname }}", /usr/local/go]
+        creates: /usr/local/go
+      when: "'golink' not in inventory_hostname"
+
+    - name: Link /usr/local/go into the distro Go tree
       ansible.builtin.file:
-        path: /usr/local/go/bin
-        state: directory
-        mode: '0755'
+        src: "{{ prepare_distro_go.stdout | dirname | dirname }}"
+        dest: /usr/local/go
+        state: link
+      when: "'golink' in inventory_hostname"
 
-    - name: Plant the stand-in managed Go
+    # DERIVED: developer-go/tasks/go.yml writes this beside the toolchain.
+    - name: Plant the managed Go's profile drop-in
       ansible.builtin.copy:
         content: |
-          #!/bin/sh
-          echo "go version go0.0.0-fixture linux/amd64"
-        dest: /usr/local/go/bin/go
+          case ":$PATH:" in
+              *":/usr/local/go/bin:"*) ;;
+              *) export PATH="/usr/local/go/bin:$PATH" ;;
+          esac
+        dest: /etc/profile.d/hyperi-go.sh
         owner: root
         group: root
-        mode: '0755'
+        mode: '0644'
 
     # The unguarded ~/.bashrc PATH lines are deliberately NOT planted. The tasks
     # that remove them sit in the install path of the developer and

@@ -15,6 +15,10 @@
 # would delete their work. This is a denylist of what WE removed, never an
 # allowlist of what is permitted.
 #
+# The one exception is a second copy of a tool the roles DO manage: the
+# user-level and hand-installed duplicates below go, because whichever copy
+# wins on PATH, only the managed one is ever updated.
+#
 # RULES FOR ADDING HERE
 #   - When you drop an install, ADD the removal. Same commit.
 #   - Say WHY it was dropped, so a future reader can retire the tombstone.
@@ -79,73 +83,103 @@
 
 # Hand-installed copies of tools the roles install system-wide. ~/.local/bin and
 # ~/go/bin precede /usr/local/bin and /usr/bin on PATH, so a copy left there
-# shadows the managed install and no update ever reaches it.
+# shadows the managed install and no update ever reaches it. A deliberate pin
+# of a managed tool there (an older kubectl, golangci-lint v1) goes too.
 #
-# A copy goes only when the system copy exists and is a different file (device
-# and inode after following links): a user-level link to the managed binary is
-# not a duplicate, and with no system copy the user's is the only one. Only the
-# user-level path is removed, never what a link points at. Cargo homes are left
-# to developer-rust, which knows the effective CARGO_HOME and deregisters a
-# cargo-installed copy so `cargo install-update` does not bring it back.
+# A copy goes only when it and the system copy are both regular files after
+# following links and are different files (device and inode): a user-level
+# link to the managed binary is not a duplicate, and with no system copy the
+# user's is the only one. Only the user-level path is removed, never what a
+# link points at. A bin directory that is itself a link, or that resolves
+# outside the user's home, is not swept.
 #
-# Linux only: a Mac's ~/.local/bin is the developer's own, and brew owns the
-# system copies there.
+# Names another tool also uses are not listed: pip's yq, Ubuntu's tea, sd and
+# act are different programs, and a uv or pipx tool would be restored by its
+# own updater anyway.
 #
-# `local` names the distros where the managed copy is the /usr/local/bin
-# binary; a distro package of the same tool there is a duplicate (below).
-- name: Remove hand-installed duplicates of role-managed tools (Linux)
+# Cargo homes are left to developer-rust, which knows the effective CARGO_HOME
+# and deregisters a cargo-installed copy so `cargo install-update` does not
+# bring it back. Linux only: a Mac's ~/.local/bin is the developer's own, and
+# brew owns the system copies there.
+- name: Remove user-level copies of role-managed tools (Linux)
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   vars:
     developer_managed_tools:
-      - {bin: kind, local: [Fedora, Ubuntu]}
-      - {bin: argocd, local: [Fedora, Ubuntu]}
-      - {bin: dive, local: [Fedora, Ubuntu]}
-      - {bin: kubeconform, local: [Fedora, Ubuntu]}
-      - {bin: kube-linter, local: [Fedora, Ubuntu]}
-      - {bin: k9s, local: [Ubuntu]}
-      - {bin: kustomize, local: [Ubuntu]}
-      - {bin: kubectx, local: [Fedora]}
-      - {bin: kubens, local: [Fedora]}
-      - {bin: yq, local: [Ubuntu]}
-      - {bin: gron, local: [Fedora]}
-      - {bin: sd, local: [Fedora]}
-      - {bin: lazygit, local: [Fedora, Ubuntu]}
-      - {bin: fnm, local: [Fedora, Ubuntu]}
-      - {bin: terraform-docs, local: [Fedora, Ubuntu]}
-      - {bin: aws-vault, local: [Fedora, Ubuntu]}
-      - {bin: golangci-lint, local: [Fedora, Ubuntu]}
-      - {bin: actionlint, local: [Fedora, Ubuntu]}
-      - {bin: hadolint, local: [Ubuntu]}
-      - {bin: gitleaks, local: [Ubuntu]}
-      - {bin: act, local: [Ubuntu]}
-      - {bin: osv-scanner, local: [Fedora, Ubuntu]}
-      - {bin: git-scrub, local: [Fedora, Ubuntu]}
-      - {bin: macbash, local: [Fedora, Ubuntu]}
-      - {bin: tea, local: [Fedora, Ubuntu]}
-      - {bin: sccache, local: [Fedora, Ubuntu]}
-      # Vendor-repository packages: the managed copy is /usr/bin.
-      - {bin: kubectl, local: []}
-      - {bin: helm, local: []}
-      - {bin: rpk, local: []}
-      - {bin: tofu, local: []}
-      - {bin: bao, local: []}
+      - kind
+      - argocd
+      - dive
+      - kubeconform
+      - kube-linter
+      - k9s
+      - kustomize
+      - kubectx
+      - kubens
+      - gron
+      - lazygit
+      - fnm
+      - terraform-docs
+      - aws-vault
+      - golangci-lint
+      - actionlint
+      - hadolint
+      - gitleaks
+      - osv-scanner
+      - git-scrub
+      - macbash
+      - sccache
+      - kubectl
+      - helm
+      - rpk
+      - tofu
+      - bao
     developer_user_bin_dirs:
       - "{{ user_home }}/.local/bin"
       - "{{ user_home }}/go/bin"
-    developer_tool_names: "{{ developer_managed_tools | map(attribute='bin') | list }}"
     developer_tool_paths: >-
       {{ (['/usr/local/bin', '/usr/bin'] + developer_user_bin_dirs)
-         | product(developer_tool_names) | map('join', '/') | list }}
-    # path -> "device:inode" for every candidate that resolves to a file.
+         | product(developer_managed_tools) | map('join', '/') | list }}
+    # path -> "device:inode" for every candidate that is a regular file after
+    # following links. Directories and dangling links drop out.
     developer_tool_ids: >-
       {{ dict(developer_tool_stat.stdout_lines | default([]) | map('regex_replace', '^\S+ ', '')
               | zip(developer_tool_stat.stdout_lines | default([]) | map('regex_replace', ' .*$', ''))) }}
   block:
-    # One stat for every candidate. Missing paths make stat exit non-zero and
-    # simply drop out of the output.
+    - name: Resolve the user's home
+      ansible.builtin.command:
+        argv: [readlink, -e, "{{ user_home }}"]
+      register: developer_user_home_real
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Inspect the user-level bin directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+      loop: "{{ developer_user_bin_dirs }}"
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_user_bin_dir_stat
+
+    - name: Resolve the user-level bin directories
+      ansible.builtin.command:
+        argv: [readlink, -e, "{{ item.item }}"]
+      loop: "{{ developer_user_bin_dir_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: developer_user_bin_dir_real
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - item.stat.exists
+        - item.stat.isdir
+        - not item.stat.islnk
+
+    # Missing paths make find exit non-zero and drop out of the output.
     - name: Identify the files behind role-managed tools and their user-level copies
       ansible.builtin.command:
-        argv: "{{ ['stat', '-L', '--printf', '%d:%i %n\\n', '--'] + developer_tool_paths }}"
+        argv: "{{ ['find', '-L'] + developer_tool_paths + ['-maxdepth', '0', '-type', 'f', '-printf', '%D:%i %p\\n'] }}"
       become: true
       become_user: "{{ actual_user }}"
       register: developer_tool_stat
@@ -155,50 +189,90 @@
 
     - name: Remove user-level copies that shadow a role-managed tool
       ansible.builtin.file:
-        path: "{{ item.0 }}/{{ item.1 }}"
+        path: "{{ item.0.item.item }}/{{ item.1 }}"
         state: absent
       become: true
       become_user: "{{ actual_user }}"
-      loop: "{{ developer_user_bin_dirs | product(developer_tool_names) | list }}"
+      loop: "{{ developer_user_bin_dir_real.results | product(developer_managed_tools) | list }}"
       loop_control:
-        label: "{{ item.0 }}/{{ item.1 }}"
+        label: "{{ item.0.item.item }}/{{ item.1 }}"
       when:
-        - (item.0 ~ '/' ~ item.1) in developer_tool_ids
+        - item.0.rc | default(1) == 0
+        - developer_user_home_real.rc == 0
+        - item.0.stdout.startswith(developer_user_home_real.stdout ~ '/')
+        - (item.0.item.item ~ '/' ~ item.1) in developer_tool_ids
         - developer_tool_system_id | length > 0
-        - developer_tool_ids[item.0 ~ '/' ~ item.1] != developer_tool_system_id
+        - developer_tool_ids[item.0.item.item ~ '/' ~ item.1] != developer_tool_system_id
       vars:
         developer_tool_system_id: >-
           {{ ((['/usr/local/bin/' ~ item.1, '/usr/bin/' ~ item.1] | select('in', developer_tool_ids)
               | map('extract', developer_tool_ids) | list) + [''])[0] }}
 
-    # Where the managed copy is the /usr/local/bin binary, a package that also
-    # ships /usr/bin/<bin> is a .deb or .rpm installed by hand beside it. The
-    # /usr/local/bin copy has to resolve under /usr/local, so purging the
+# A .deb or .rpm of a tool whose managed copy is the /usr/local/bin binary,
+# installed by hand beside it. Only packages named here go: each is the
+# upstream release package of that tool, shipping /usr/bin/<name>. A package
+# of the same name that any repository offers is the distro's or a vendor's
+# and stays, and so does everything when the apt lists are empty, because then
+# no repository can be ruled out.
+- name: Purge hand-installed release packages of /usr/local/bin tools (Linux)
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  vars:
+    developer_hand_packages:
+      - {name: macbash, distros: [Fedora, Ubuntu]}
+      - {name: git-scrub, distros: [Fedora, Ubuntu]}
+      - {name: dive, distros: [Fedora, Ubuntu]}
+      - {name: golangci-lint, distros: [Fedora, Ubuntu]}
+      - {name: k9s, distros: [Ubuntu]}
+    developer_hand_names: >-
+      {{ developer_hand_packages | selectattr('distros', 'contains', ansible_facts['distribution'])
+         | map(attribute='name') | list }}
+    developer_hand_ids: >-
+      {{ dict(developer_hand_stat.stdout_lines | default([]) | map('regex_replace', '^\S+ ', '')
+              | zip(developer_hand_stat.stdout_lines | default([]) | map('regex_replace', ' .*$', ''))) }}
+  block:
+    - name: Find the cached apt package lists (Ubuntu)
+      ansible.builtin.find:
+        paths: /var/lib/apt/lists
+        patterns: '*_Packages*'
+      register: developer_apt_lists
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Identify the /usr/local/bin and /usr/bin copies of the listed tools
+      ansible.builtin.command:
+        argv: >-
+          {{ ['find', '-L']
+             + (['/usr/local/bin', '/usr/bin'] | product(developer_hand_names) | map('join', '/') | list)
+             + ['-maxdepth', '0', '-type', 'f', '-printf', '%D:%i %p\n'] }}
+      register: developer_hand_stat
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # The /usr/local/bin copy has to resolve under /usr/local, so purging the
     # package cannot take the file it points at.
     - name: Resolve the /usr/local/bin copies that have a /usr/bin twin
       ansible.builtin.command:
         argv: [readlink, -e, "/usr/local/bin/{{ item }}"]
-      loop: >-
-        {{ developer_managed_tools | selectattr('local', 'contains', ansible_facts['distribution'])
-           | map(attribute='bin') | list }}
-      register: developer_tool_local_real
+      loop: "{{ developer_hand_names }}"
+      register: developer_hand_local_real
       changed_when: false
       failed_when: false
       check_mode: false
       when:
-        - ('/usr/local/bin/' ~ item) in developer_tool_ids
-        - ('/usr/bin/' ~ item) in developer_tool_ids
-        - developer_tool_ids['/usr/local/bin/' ~ item] != developer_tool_ids['/usr/bin/' ~ item]
+        - ('/usr/local/bin/' ~ item) in developer_hand_ids
+        - ('/usr/bin/' ~ item) in developer_hand_ids
+        - developer_hand_ids['/usr/local/bin/' ~ item] != developer_hand_ids['/usr/bin/' ~ item]
 
+    # dpkg-query prints `pkg: path` or `pkg:arch: path`, rpm the bare name.
     - name: Find the package that ships each /usr/bin twin
       ansible.builtin.command:
         argv: >-
           {{ (['dpkg-query', '-S'] if ansible_facts['distribution'] == 'Ubuntu'
               else ['rpm', '-qf', '--qf', '%{NAME}\n']) + ['/usr/bin/' ~ item.item] }}
-      loop: "{{ developer_tool_local_real.results }}"
+      loop: "{{ developer_hand_local_real.results }}"
       loop_control:
         label: "{{ item.item }}"
-      register: developer_tool_owner
+      register: developer_hand_owner
       changed_when: false
       failed_when: false
       check_mode: false
@@ -206,93 +280,42 @@
         - item.rc | default(1) == 0
         - item.stdout.startswith('/usr/local/')
 
-    # dpkg-query prints `pkg: path` or `pkg:arch: path`; rpm the bare name. A
-    # diverted path adds a `diversion by` line naming no package.
-    - name: Collect the packages that duplicate a /usr/local/bin tool
-      ansible.builtin.set_fact:
-        developer_tool_dup_pkgs: >-
-          {{ developer_tool_owner.results | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0)
-             | map(attribute='stdout_lines') | flatten | reject('match', '^diversion ')
-             | map('regex_replace', ':.*$', '') | unique | list }}
-
-    # A package some repository still offers is the distro's or a vendor's,
-    # and updates arrive for it -- not a hand install. Ubuntu reads the cached
-    # lists; Fedora asks the enabled repos, and a query that fails keeps it.
-    - name: Check whether any repository offers each duplicate package
+    # Ubuntu reads the cached lists. Fedora asks the enabled repos, and a
+    # query that fails keeps the package.
+    - name: Check whether any repository offers each listed package
       ansible.builtin.command:
         argv: >-
           {{ (['apt-cache', 'madison'] if ansible_facts['distribution'] == 'Ubuntu'
-              else ['dnf', '-q', 'repoquery', '--available', '--qf', '%{name}\n']) + [item] }}
-      loop: "{{ developer_tool_dup_pkgs }}"
-      register: developer_tool_dup_origin
-      changed_when: false
-      failed_when: false
-      check_mode: false
-
-    # Simulated first, so a package something else depends on stays: apt would
-    # remove the dependants with it, dnf likewise.
-    - name: Simulate removing each hand-installed duplicate package
-      ansible.builtin.command:
-        argv: >-
-          {{ (['apt-get', '-s', 'purge'] if ansible_facts['distribution'] == 'Ubuntu'
-              else ['rpm', '-e', '--test']) + [item.item] }}
-      loop: "{{ developer_tool_dup_origin.results }}"
-      loop_control:
-        label: "{{ item.item }}"
-      register: developer_tool_dup_sim
-      changed_when: false
-      failed_when: false
-      check_mode: false
-      when:
-        - item.rc == 0
-        - item.stdout | trim | length == 0
-
-    - name: Purge hand-installed packages that duplicate a /usr/local/bin tool (Ubuntu)
-      ansible.builtin.apt:
-        name: "{{ item.item.item }}"
-        state: absent
-        purge: true
-        autoremove: false
-      loop: "{{ developer_tool_dup_sim.results }}"
+              else ['dnf', '-q', 'repoquery', '--available', '--qf', '%{name}\n']) + [item.item.item] }}
+      loop: "{{ developer_hand_owner.results }}"
       loop_control:
         label: "{{ item.item.item }}"
+      register: developer_hand_origin
+      changed_when: false
+      failed_when: false
+      check_mode: false
       when:
-        - ansible_facts['distribution'] == 'Ubuntu'
         - item.rc | default(1) == 0
-        - developer_tool_dup_also | length == 0
+        - item.stdout_lines | map('regex_replace', ':.*$', '') | list == [item.item.item]
+
+    - name: Purge each hand-installed release package
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: purge_packages.yml
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      loop: "{{ developer_hand_origin.results }}"
+      loop_control:
+        label: "{{ item.item.item.item }}"
       vars:
-        developer_tool_dup_also: >-
-          {{ item.stdout_lines | default([]) | select('match', '^(Purg|Remv) ')
-             | map('regex_replace', '^\S+ (\S+).*$', '\1') | reject('equalto', item.item.item | default('')) | list }}
-
-    - name: Remove hand-installed packages that duplicate a /usr/local/bin tool (Fedora)
-      ansible.builtin.dnf:
-        name: "{{ item.item.item }}"
-        state: absent
-        autoremove: false
-      loop: "{{ developer_tool_dup_sim.results }}"
-      loop_control:
-        label: "{{ item.item.item }}"
-      when:
-        - ansible_facts['distribution'] == 'Fedora'
-        - item.rc | default(1) == 0
-
-    - name: Report duplicate packages kept because something depends on them
-      ansible.builtin.debug:
-        msg: >-
-          Kept the hand-installed {{ item.item.item }} package beside its
-          /usr/local/bin copy: removing it would also remove
-          {{ developer_tool_dup_also | join(', ') if developer_tool_dup_also else item.stderr | trim }}.
-      loop: "{{ developer_tool_dup_sim.results }}"
-      loop_control:
-        label: "{{ item.item.item }}"
+        system_cleanup_purge_packages: ["{{ item.item.item.item }}"]
+        system_cleanup_purge_reason: "the hand-installed {{ item.item.item.item }} package"
       when:
         - item.rc is defined
-        - item.rc != 0 or developer_tool_dup_also | length > 0
-      vars:
-        developer_tool_dup_also: >-
-          {{ item.stdout_lines | default([]) | select('match', '^(Purg|Remv) ')
-             | map('regex_replace', '^\S+ (\S+).*$', '\1') | reject('equalto', item.item.item | default('')) | list }}
+        - item.rc == 0
+        - item.stdout | trim | length == 0
+        - ansible_facts['distribution'] != 'Ubuntu' or developer_apt_lists.matched | default(0) > 0
 
 # ============================================================================
 # CANNOT CO-EXIST — the old thing actively conflicts with its replacement.
@@ -333,27 +356,38 @@
 # still installed at /opt/docker-desktop (inactive) months after we stopped
 # installing it -- Ansible cannot prune what it stops declaring.
 #
-# NOT autoremove. Docker Desktop on Linux ships a VM, so its dependency tree
+# Its orphans stay. Docker Desktop on Linux ships a VM, so its dependency tree
 # pulls in the whole QEMU/OVMF stack plus uidmap -- 44 packages on a real host.
 # uidmap is the dangerous one: rootless containers call newuidmap at run time
-# with no package dependency declaring it, so apt reclaims it and rootless
-# breaks silently afterwards.
-#
-# The orphans stay. They are clutter, and `apt autoremove` remains available to
-# whoever wants to reclaim them deliberately, having read the list.
-- name: Remove Docker Desktop (Ubuntu - dropped by decision; Engine/CLI replace it)
-  ansible.builtin.apt:
-    name: docker-desktop
-    state: absent
-  when: ansible_facts['distribution'] == 'Ubuntu'
+# with no package dependency declaring it, so an autoremove reclaims it and
+# rootless breaks silently afterwards. hyperi-update autoremoves unattended, so
+# the shared purge marks every package the removal would orphan as manually
+# installed, and reclaiming them stays a deliberate act.
+- name: Check for Docker Desktop (Linux)
+  ansible.builtin.command:
+    argv: >-
+      {{ ['dpkg-query', '-W', '-f', '${db:Status-Abbrev}', 'docker-desktop']
+         if ansible_facts['distribution'] == 'Ubuntu' else ['rpm', '-q', 'docker-desktop'] }}
+  register: developer_docker_desktop_installed
+  changed_when: false
   failed_when: false
+  check_mode: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Remove Docker Desktop (Fedora - dropped by decision; Engine/CLI replace it)
-  ansible.builtin.dnf:
-    name: docker-desktop
-    state: absent
-  when: ansible_facts['distribution'] == 'Fedora'
-  failed_when: false
+- name: Remove Docker Desktop (Linux - dropped by decision; Engine/CLI replace it)
+  ansible.builtin.include_role:
+    name: system_cleanup
+    tasks_from: purge_packages.yml
+    # The include is already gated by this file's tags, and its tasks carry none.
+    apply:
+      tags: ['always']
+  vars:
+    system_cleanup_purge_packages: [docker-desktop]
+    system_cleanup_purge_reason: Docker Desktop
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - developer_docker_desktop_installed.rc == 0
+    - ansible_facts['distribution'] != 'Ubuntu' or developer_docker_desktop_installed.stdout is match('^ii')
 
 # macOS: the Docker Desktop cask is `docker`; the CLI-only install is the brew
 # FORMULA `docker` (see docker.yml), a different artefact, so removing the cask

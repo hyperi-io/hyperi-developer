@@ -34,10 +34,23 @@
 
 set -uo pipefail
 
+# A GUI launch or a timer does not run the login shell, so a CARGO_HOME or
+# RUSTUP_HOME declared there is missing here. Ask the login shell for it, or
+# every cargo step below would act on ~/.cargo instead of the real home.
+for var in CARGO_HOME RUSTUP_HOME; do
+    if [[ -z "${!var:-}" ]]; then
+        val="$(timeout 30 bash -lc "printenv $var" 2>/dev/null | tail -n 1)"
+        [[ -n "$val" ]] && export "$var=$val"
+    fi
+done
+unset var val
+CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
+
 # Make user-level tools reachable even when launched from a GUI/.desktop entry
 # that doesn't source the login shell (rustup and the cargo tools live in the
-# cargo home, uv and claude in ~/.local/bin, Go in /usr/local/go/bin).
-export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:/usr/local/go/bin:$PATH"
+# cargo home, uv and claude in ~/.local/bin, Go in /usr/local/go/bin and the
+# go-installed tools in ~/go/bin).
+export PATH="$HOME/.local/bin:$CARGO_BIN:/usr/local/go/bin:$HOME/go/bin:$PATH"
 
 ASSUME_YES=0
 
@@ -257,8 +270,12 @@ fi
 # Updates the Rust toolchains. NOTE: cargo-installed binaries (nextest, deny,
 # bacon, ...) are not refreshed by rustup; reinstall them with cargo if needed.
 section "rustup toolchains"
+# A cargo home with no rustup means the toolchain is not where the
+# environment says it is, which is a fault to report, not a tool to skip.
 if have rustup; then
     run "rustup update" rustup update
+elif [[ -d "$CARGO_BIN" ]]; then
+    fail "rustup not found in $CARGO_BIN"
 else
     skip "rustup not found"
 fi
@@ -273,6 +290,8 @@ fi
 section "cargo tools"
 if have cargo-install-update; then
     run "cargo install-update -a --locked" cargo install-update -a --locked
+elif [[ -d "$CARGO_BIN" ]]; then
+    fail "cargo-install-update not found in $CARGO_BIN (cargo tools are not being updated)"
 else
     skip "cargo-install-update not found (install the cargo-update crate)"
 fi
@@ -397,11 +416,19 @@ is_elf() {  # <file> -> 0 if it begins with the ELF magic (7f 45 4c 46)
     [[ "$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]]
 }
 
+# installed_local <name> -> 0 if /usr/local/bin/<name> is a file under
+# /usr/local. A copy found elsewhere on PATH (~/.local/bin, a package) is not
+# the one these helpers manage, and refetching for it would add a second copy.
+installed_local() {
+    local real
+    real="$(readlink -e "/usr/local/bin/$1" 2>/dev/null)" && [[ -f "$real" && "$real" == /usr/local/* ]]
+}
+
 # refetch_raw <name> <repo> <asset-template>  -- a bare executable asset.
 # Template may use {TAG} and {ARCH}.
 refetch_raw() {
     local name="$1" repo="$2" tmpl="$3" tag asset url tmp
-    have "$name" || { skip "$name not installed"; return; }
+    installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
     tag="$(gh_latest_tag "$repo")"
     [[ -n "$tag" ]] || { FAILURES+=("$name (no release tag)"); return; }
     asset="${tmpl//\{TAG\}/$tag}"; asset="${asset//\{ARCH\}/$ARCH_DEB}"
@@ -421,7 +448,7 @@ refetch_raw() {
 # leading v) and {ARCH}.
 refetch_targz() {
     local name="$1" repo="$2" tmpl="$3" member="$4" tag ver asset url tmp dir
-    have "$name" || { skip "$name not installed"; return; }
+    installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
     tag="$(gh_latest_tag "$repo")"
     [[ -n "$tag" ]] || { FAILURES+=("$name (no release tag)"); return; }
     ver="${tag#v}"
@@ -442,7 +469,7 @@ refetch_targz() {
 # the binary sits one directory deep in the tarball.
 refetch_targz_nested() {
     local name="$1" repo="$2" tmpl="$3" tag ver asset url tmp dir
-    have "$name" || { skip "$name not installed"; return; }
+    installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
     tag="$(gh_latest_tag "$repo")"
     [[ -n "$tag" ]] || { FAILURES+=("$name (no release tag)"); return; }
     ver="${tag#v}"
@@ -463,7 +490,7 @@ refetch_targz_nested() {
 # kustomize is a monorepo: /releases/latest can point at a non-CLI component, so
 # pull the newest kustomize CLI asset URL straight from the releases list.
 refetch_kustomize() {
-    have kustomize || { skip "kustomize not installed"; return; }
+    installed_local kustomize || { skip "kustomize not installed in /usr/local/bin"; return; }
     local url tmp dir
     url="$(curl -fsSL "https://api.github.com/repos/kubernetes-sigs/kustomize/releases" 2>/dev/null \
         | grep -oE "https://[^\"]*/kustomize_v[0-9.]+_linux_${ARCH_DEB}\.tar\.gz" | head -1)"

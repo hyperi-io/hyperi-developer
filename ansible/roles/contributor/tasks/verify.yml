@@ -30,7 +30,7 @@
   ansible.builtin.command: "{{ item }} --version"
   environment:
     PATH: >-
-      {{ developer_rust_cargo_home | default(user_home ~ '/.cargo') }}/bin:/opt/homebrew/bin:/usr/local/bin:{{
+      {{ developer_rust_cargo_home | default(hyperi_cargo_home | default(user_home ~ '/.cargo')) }}/bin:/opt/homebrew/bin:/usr/local/bin:{{
       user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}
   loop:
     - hyperi-ci

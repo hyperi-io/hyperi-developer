@@ -12,5 +12,9 @@ User={{ actual_user }}
 # user-scoped language tools update. Tier-1 OS packages are also covered
 # independently by unattended-upgrades / dnf-automatic (security.yml).
 ExecStart=/usr/local/bin/hyperi-update --yes
+# A unit gets no PAM session, so a CARGO_HOME or RUSTUP_HOME declared in
+# /etc/environment would otherwise never reach the cargo steps. `-`: the file
+# may be absent.
+EnvironmentFile=-/etc/environment
 # A slow mirror or a large upgrade must not be killed mid-run.
 TimeoutStartSec=3600

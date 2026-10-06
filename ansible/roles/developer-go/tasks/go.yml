@@ -104,6 +104,28 @@
         group: root
         mode: '0644'
 
+    # The profile drop-in reaches login shells only. Cron, systemd units and
+    # anything else on the default PATH find go through these links.
+    - name: Check for go and gofmt in /usr/local/bin
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+        follow: false
+      loop: [go, gofmt]
+      register: developer_go_bin_links
+
+    # A real file there is someone else's, so only a missing entry or a link
+    # is pointed at the toolchain.
+    - name: Link go and gofmt into /usr/local/bin
+      ansible.builtin.file:
+        src: "/usr/local/go/bin/{{ item.item }}"
+        dest: "/usr/local/bin/{{ item.item }}"
+        state: link
+        force: true
+      loop: "{{ developer_go_bin_links.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: not item.stat.exists or item.stat.islnk
+
     - name: Install delve (Fedora)
       ansible.builtin.dnf:
         name: delve

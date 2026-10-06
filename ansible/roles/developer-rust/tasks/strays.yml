@@ -8,9 +8,13 @@
 # next upstream release. The file itself goes afterwards for a binary cargo has
 # no record of, which is what an installer script or a copied directory leaves.
 #
-# A copy goes only when the copy it duplicates exists and is a different file
-# (device and inode after following links), so the only working copy of a tool
-# is never the one removed.
+# A copy goes only when the copy it duplicates exists and is a different regular
+# file (device and inode after following links), so the only working copy of a
+# tool is never the one removed.
+#
+# Included twice from rust.yml: the `tools` pass runs before `cargo
+# install-update`, so nothing it deregisters is rebuilt first. The `sccache`
+# pass runs after hyperi-rust-setup has put the managed sccache in place.
 
 - name: Name the cargo homes to sweep
   ansible.builtin.set_fact:
@@ -28,25 +32,27 @@
 - name: Remove cargo-home copies of managed tools (Linux)
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   vars:
-    developer_rust_managed_dupes:
-      - {bin: sccache, crate: sccache, managed: [/usr/local/bin/sccache]}
-      - {bin: sd, crate: sd, managed: [/usr/local/bin/sd, /usr/bin/sd]}
-      - {bin: fnm, crate: fnm, managed: [/usr/local/bin/fnm]}
-      - {bin: uv, managed: ["{{ user_home }}/.local/bin/uv", /usr/bin/uv]}
-      - {bin: uvx, managed: ["{{ user_home }}/.local/bin/uvx", /usr/bin/uvx]}
+    developer_rust_managed_dupes: >-
+      {{ [{'bin': 'sccache', 'crate': 'sccache', 'managed': ['/usr/local/bin/sccache']}]
+         if developer_rust_strays_pass == 'sccache' else
+         [{'bin': 'sd', 'crate': 'sd', 'managed': ['/usr/local/bin/sd', '/usr/bin/sd']},
+          {'bin': 'fnm', 'crate': 'fnm', 'managed': ['/usr/local/bin/fnm']},
+          {'bin': 'uv', 'managed': [user_home ~ '/.local/bin/uv', '/usr/bin/uv']},
+          {'bin': 'uvx', 'managed': [user_home ~ '/.local/bin/uvx', '/usr/bin/uvx']}] }}
     developer_rust_dupe_paths: >-
       {{ (developer_rust_managed_dupes | map(attribute='managed') | flatten)
          + (developer_rust_swept_homes | map('regex_replace', '$', '/bin')
             | product(developer_rust_managed_dupes | map(attribute='bin')) | map('join', '/') | list) }}
-    # path -> "device:inode" for every candidate that resolves to a file.
+    # path -> "device:inode" for every candidate that is a regular file after
+    # following links. Directories and dangling links drop out.
     developer_rust_dupe_ids: >-
       {{ dict(developer_rust_dupe_stat.stdout_lines | default([]) | map('regex_replace', '^\S+ ', '')
               | zip(developer_rust_dupe_stat.stdout_lines | default([]) | map('regex_replace', ' .*$', ''))) }}
   block:
-    # Missing paths make stat exit non-zero and drop out of the output.
+    # Missing paths make find exit non-zero and drop out of the output.
     - name: Identify the managed tools and their cargo-home copies
       ansible.builtin.command:
-        argv: "{{ ['stat', '-L', '--printf', '%d:%i %n\\n', '--'] + developer_rust_dupe_paths }}"
+        argv: "{{ ['find', '-L'] + developer_rust_dupe_paths + ['-maxdepth', '0', '-type', 'f', '-printf', '%D:%i %p\\n'] }}"
       become: true
       become_user: "{{ actual_user }}"
       register: developer_rust_dupe_stat
@@ -65,8 +71,10 @@
         label: "{{ item.0 }}/bin/{{ item.1.bin }}"
       register: developer_rust_dupe_uninstall
       changed_when: "'Removing' in developer_rust_dupe_uninstall.stderr | default('')"
-      # Not registered with cargo: the file removal below takes it.
-      failed_when: false
+      # A binary cargo has no record of is left to the file removal below.
+      failed_when: >-
+        developer_rust_dupe_uninstall.rc != 0
+        and 'did not match any packages' not in developer_rust_dupe_uninstall.stderr | default('')
       when:
         - item.1.crate is defined
         - developer_rust_dupe_path in developer_rust_dupe_ids
@@ -112,8 +120,11 @@
   loop: "{{ developer_rust_swept_homes }}"
   register: developer_rust_tarpaulin_uninstall
   changed_when: "'Removing' in developer_rust_tarpaulin_uninstall.stderr | default('')"
-  # Not registered with cargo: the file removal below takes it.
-  failed_when: false
+  # A binary cargo has no record of is left to the file removal below.
+  failed_when: >-
+    developer_rust_tarpaulin_uninstall.rc | default(0) != 0
+    and 'did not match any packages' not in developer_rust_tarpaulin_uninstall.stderr | default('')
+  when: developer_rust_strays_pass == 'tools'
 
 - name: Remove the superseded cargo-tarpaulin
   ansible.builtin.file:
@@ -122,6 +133,7 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   loop: "{{ developer_rust_swept_homes }}"
+  when: developer_rust_strays_pass == 'tools'
 
 # ============================================================
 # What a relocated CARGO_HOME left in ~/.cargo
@@ -129,18 +141,34 @@
 # ~/.cargo/bin stays on PATH wherever a profile still names it, so a tool left
 # there runs instead of the copy in the effective home, which is the one the
 # installs and `cargo install-update` keep current. Only a binary the effective
-# home also holds goes. The registry and git caches, the install record and
-# anything installed only there stay: they may be the developer's own.
+# home also holds goes, and a package whose binaries all go is deregistered from
+# ~/.cargo's install record too. The registry and git caches and anything
+# installed only there stay: they may be the developer's own.
 - name: Remove binaries the effective cargo home supersedes
-  when: developer_rust_cargo_home_stale | default(false) | bool
+  when:
+    - developer_rust_strays_pass == 'tools'
+    - developer_rust_cargo_home_stale | default(false) | bool
+  vars:
+    developer_rust_stale_names: >-
+      {{ (developer_rust_stale_files.files + developer_rust_stale_links.files)
+         | map(attribute='path') | map('basename') | unique | sort }}
   block:
-    - name: List the binaries left in ~/.cargo/bin
+    # Regular files and links only: a directory named like a tool is not one.
+    - name: List the files left in ~/.cargo/bin
       ansible.builtin.find:
         paths: "{{ user_home }}/.cargo/bin"
-        file_type: any
+        file_type: file
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-      register: developer_rust_stale_bins
+      register: developer_rust_stale_files
+
+    - name: List the links left in ~/.cargo/bin
+      ansible.builtin.find:
+        paths: "{{ user_home }}/.cargo/bin"
+        file_type: link
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_rust_stale_links
 
     # find reports a link's own inode, so both sides are stat'd through links.
     - name: Identify each ~/.cargo/bin binary and its effective-home namesake
@@ -151,24 +179,66 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
       loop: >-
-        {{ developer_rust_stale_bins.files | map(attribute='path') | sort
-           | map('regex_replace', '^.*/', developer_rust_cargo_home ~ '/bin/') | list
-           + (developer_rust_stale_bins.files | map(attribute='path') | sort | list) }}
+        {{ developer_rust_stale_names | map('regex_replace', '^', developer_rust_cargo_home ~ '/bin/') | list
+           + (developer_rust_stale_names | map('regex_replace', '^', user_home ~ '/.cargo/bin/') | list) }}
       register: developer_rust_bin_pairs
+
+    - name: Start the list of superseded ~/.cargo/bin binaries
+      ansible.builtin.set_fact:
+        developer_rust_superseded: []
+
+    # Results come effective-home namesake first, then the ~/.cargo copy, so
+    # item N pairs with item N plus the name count.
+    - name: Collect the ~/.cargo/bin binaries the effective home supersedes
+      ansible.builtin.set_fact:
+        developer_rust_superseded: "{{ developer_rust_superseded + [item.1.item | basename] }}"
+      loop: >-
+        {{ developer_rust_bin_pairs.results[:developer_rust_stale_names | length]
+           | zip(developer_rust_bin_pairs.results[developer_rust_stale_names | length:]) | list }}
+      loop_control:
+        label: "{{ item.1.item | basename }}"
+      when:
+        - item.0.stat.isreg | default(false)
+        - item.1.stat.isreg | default(false)
+        - item.0.stat.dev != item.1.stat.dev or item.0.stat.inode != item.1.stat.inode
+
+    - name: List the packages ~/.cargo's install record holds
+      ansible.builtin.command:
+        argv: [cargo, install, --list, --root, "{{ user_home }}/.cargo"]
+      environment: "{{ cargo_env }}"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      register: developer_rust_stale_record
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # `cargo install --list` prints `name vX.Y.Z:` then one indented line per
+    # binary. Each match is [name, the block of binary lines].
+    - name: Deregister ~/.cargo packages whose binaries are all superseded
+      ansible.builtin.command:
+        argv: [cargo, uninstall, --root, "{{ user_home }}/.cargo", "{{ item.0 }}"]
+      environment: "{{ cargo_env }}"
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+      loop: >-
+        {{ developer_rust_stale_record.stdout | default('')
+           | regex_findall('(?m)^(\S+) v[^\n]*:\n((?:[ \t]+\S+(?:\n|\Z))*)') }}
+      loop_control:
+        label: "{{ item.0 }}"
+      register: developer_rust_stale_uninstall
+      changed_when: "'Removing' in developer_rust_stale_uninstall.stderr | default('')"
+      failed_when: >-
+        developer_rust_stale_uninstall.rc != 0
+        and 'did not match any packages' not in developer_rust_stale_uninstall.stderr | default('')
+      when:
+        - item.1.split() | length > 0
+        - item.1.split() | difference(developer_rust_superseded) | length == 0
 
     - name: Remove ~/.cargo/bin binaries the effective home also holds
       ansible.builtin.file:
-        path: "{{ item.1.item }}"
+        path: "{{ user_home }}/.cargo/bin/{{ item }}"
         state: absent
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-      # First half of the stat results is the effective home, second half the stale one.
-      loop: >-
-        {{ developer_rust_bin_pairs.results[:developer_rust_stale_bins.matched]
-           | zip(developer_rust_bin_pairs.results[developer_rust_stale_bins.matched:]) | list }}
-      loop_control:
-        label: "{{ item.1.item }}"
-      when:
-        - item.0.stat.exists
-        - item.1.stat.exists
-        - item.0.stat.dev != item.1.stat.dev or item.0.stat.inode != item.1.stat.inode
+      loop: "{{ developer_rust_superseded }}"

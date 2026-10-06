@@ -166,15 +166,17 @@ This does not reopen the objection in the SSoT note below: crates.io stays out
 of the global `rustc-wrapper` path. The binary is the project's own release
 artefact, digest-checked, not an unpinned `cargo install`.
 
-**A cargo-installed sccache would shadow it.** `~/.cargo/bin` precedes `/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy while builds keep using the absolute path in the cargo config. That split is what makes a failed `--show-stats` look like a dead cache when every build is being cached normally. The role deregisters and removes the cargo copy once the managed one is in place (`tasks/strays.yml`). The setup tool run on its own only prints the `cargo uninstall` line.
+**A cargo-installed sccache would shadow it.** The cargo bin directory precedes `/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy while builds keep using the absolute path in the cargo config. That split is what makes a failed `--show-stats` look like a dead cache when every build is being cached normally. On Linux the role deregisters and removes the cargo copy once the managed one is in place (`tasks/strays.yml`). The setup tool run on its own only prints the `cargo uninstall` line.
 
-**Strays.** After the installs, the role clears what would otherwise run instead of the managed copies, in the effective `CARGO_HOME` and, where `CARGO_HOME` is relocated, in the old `~/.cargo`:
+**Strays.** The role clears what would otherwise run instead of the managed copies:
 
-- cargo-home copies of sccache, sd, fnm, uv and uvx, once the managed copy exists and is a different file
+- cargo-home copies of sccache, sd, fnm, uv and uvx, once the managed copy exists and is a different file (Linux only)
 - the retired cargo-tarpaulin
-- binaries in a superseded `~/.cargo/bin` that the effective home also holds (its registry and git caches, install record and anything installed only there stay)
+- where `CARGO_HOME` is relocated, binaries in the old `~/.cargo/bin` that the effective home also holds
 
-A cargo-installed copy goes through `cargo uninstall --root`, so `cargo install-update` does not reinstall it.
+A cargo-installed copy goes through `cargo uninstall --root`, so `cargo install-update` does not reinstall it, and a `~/.cargo` package whose binaries all go is deregistered there too. The registry and git caches and anything installed only in `~/.cargo` stay on disk. They drop off PATH once the relocation is in effect, because the shell profile and the SOE PATH drop-in name `${CARGO_HOME:-$HOME/.cargo}/bin`.
+
+`~/.cargo` counts as superseded only when the host itself exports the relocated `CARGO_HOME` (in `/etc/environment` or a login profile). A home set only with `-e rust_cargo_home=...` leaves `~/.cargo` and its `config.toml` alone and records a warning, because the host's own cargo may still be using them.
 
 `build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
 says so and leaves the per-project layout alone, so the default stays safe.

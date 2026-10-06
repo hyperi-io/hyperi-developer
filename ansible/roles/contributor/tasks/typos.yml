@@ -14,16 +14,20 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
-# Into the effective CARGO_HOME developer-rust resolved, where `cargo
-# install-update` finds it; ~/.cargo when that role is not in the run.
+# Into the effective CARGO_HOME developer-rust resolved, else the one the host
+# exports, where `cargo install-update` finds it.
 - name: Install typos (Linux — cargo)
   ansible.builtin.command:
     cmd: cargo install typos-cli
-    creates: "{{ developer_rust_cargo_home | default(user_home ~ '/.cargo') }}/bin/typos"
+    creates: "{{ contributor_cargo_home }}/bin/typos"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   environment: >-
-    {{ cargo_env | default({'PATH': user_home ~ '/.cargo/bin:/usr/local/bin:' ~ ansible_facts['env'].PATH}) }}
+    {{ cargo_env | default({'PATH': contributor_cargo_home ~ '/bin:/usr/local/bin:' ~ ansible_facts['env'].PATH,
+                            'CARGO_HOME': contributor_cargo_home}
+                           | combine({'RUSTUP_HOME': hyperi_host_rustup_home} if hyperi_host_rustup_home | default('') else {})) }}
+  vars:
+    contributor_cargo_home: "{{ developer_rust_cargo_home | default(hyperi_cargo_home | default(user_home ~ '/.cargo')) }}"
   register: contributor_typos
   changed_when: "'Installed package' in contributor_typos.stdout | default('')"
   failed_when: false

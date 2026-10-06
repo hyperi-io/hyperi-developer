@@ -30,63 +30,17 @@
 # such a host produces a file the tool silently ignores while a stale one stays
 # in effect, which is a failure mode with no error message anywhere in it.
 #
-# Ask the target user's own login shell, because that is the environment the
-# developer's cargo runs in: it sees /etc/environment (via pam_env under
-# become), /etc/profile.d and ~/.profile, which is where a relocation is
-# declared. Ansible's `ansible_facts['env']` is the CONNECTION user's
-# environment -- root under become -- so it cannot answer this.
-#
-# `${CARGO_HOME:-$HOME/.cargo}` is resolved by that shell, so the fallback uses
-# the user's real home and matches hyperi-rust-govern's own resolution.
-#
-# The sentinel is not decoration: a login shell runs /etc/profile.d and
-# ~/.profile first, and anything they print lands on stdout ahead of the answer.
-# Selecting on a marker rather than on line 0 is what stops a login banner
-# becoming CARGO_HOME.
-# One task for every platform. Linux runs it under become as the target user;
-# macOS as the connecting user, who is the target there. `timeout` is Linux
-# coreutils: a profile that blocks would otherwise hang the converge, and
-# `failed_when: false` offers no protection against a hang.
-#
-# Two sentinel lines rather than one line split on whitespace, so a path with a
-# space in it resolves whole instead of silently as its first word. `last`,
-# not `first`: the profile runs before the printf, so ours is always last, and
-# a profile that prints the sentinel itself cannot win.
-- name: Probe the target user's cargo environment
-  ansible.builtin.command:
-    cmd: >-
-      {{ 'zsh' if ansible_facts['distribution'] == 'MacOSX' else 'timeout 30 bash' }}
-      -lc 'printf "HYPERI_CARGO_HOME %s\nHYPERI_RUSTUP_HOME %s\n" "${CARGO_HOME:-$HOME/.cargo}" "${RUSTUP_HOME:-$HOME/.rustup}"'
-  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-  register: developer_rust_env_probe
-  changed_when: false
-  failed_when: false
-  # Must run in check mode too: the facts below are undefined without it, and
-  # every later task then templates an empty path.
-  check_mode: false
-  tags: ['rust-cache', 'rust-governor', 'rust-llvm']
-
-# An explicit role variable, else what the host said, else the upstream default
-# so nothing downstream is ever templated blank. Trailing slashes are stripped
-# because the retire task below compares this against ~/.cargo as a string, and
-# `~/.cargo/` would read as a relocation and rename the live config.
+# An explicit role variable, else what the target user's login environment
+# exports (probed in the developer role's init.yml), else the upstream default,
+# so nothing downstream is ever templated blank.
 - name: Resolve the effective cargo and rustup homes
   ansible.builtin.set_fact:
     developer_rust_cargo_home: >-
-      {{ rust_cargo_home | default(_probed_cargo, true)
+      {{ rust_cargo_home | default(hyperi_host_cargo_home | default(''), true)
          | default(user_home ~ '/.cargo', true) | regex_replace('/+$', '') }}
     developer_rust_rustup_home: >-
-      {{ rust_rustup_home | default(_probed_rustup, true)
+      {{ rust_rustup_home | default(hyperi_host_rustup_home | default(''), true)
          | default(user_home ~ '/.rustup', true) | regex_replace('/+$', '') }}
-  vars:
-    _lines: "{{ developer_rust_env_probe.stdout_lines | default([], true) }}"
-    _probed_cargo: >-
-      {{ _lines | select('match', '^HYPERI_CARGO_HOME ') | list | last
-         | default('') | regex_replace('^\S+ ', '') }}
-    _probed_rustup: >-
-      {{ _lines | select('match', '^HYPERI_RUSTUP_HOME ') | list | last
-         | default('') | regex_replace('^\S+ ', '') }}
   tags: ['rust-cache', 'rust-governor', 'rust-llvm']
 
 # Absolute, and free of the two characters that would break the root-owned
@@ -108,7 +62,7 @@
 
 # Compared by device and inode, not by path: ~/.cargo can be a symlink to the
 # relocated home, and then it is the live home, not a stale one.
-- name: Identify the default and the effective cargo homes
+- name: Identify the default, the effective and the host-exported cargo homes
   ansible.builtin.stat:
     path: "{{ item }}"
     follow: true
@@ -116,21 +70,44 @@
   loop:
     - "{{ user_home }}/.cargo"
     - "{{ developer_rust_cargo_home }}"
+    - "{{ hyperi_host_cargo_home | default('', true) or '/nonexistent/hyperi-no-cargo-home' }}"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   register: developer_rust_cargo_home_dirs
   tags: ['rust-cache', 'rust-governor', 'rust-llvm']
 
-# True when ~/.cargo is a separate directory from the effective CARGO_HOME:
-# whatever it still holds is left over from before the relocation.
+# ~/.cargo is stale only when it is a separate directory from the effective
+# home AND the host itself exports that effective home: cargo, hyperi-update and
+# every shell then use it, and nothing still reads ~/.cargo. A home set only by
+# rust_cargo_home is not proof -- the host's own cargo may still be ~/.cargo.
 - name: Note whether ~/.cargo is a stale home beside a relocated one
   ansible.builtin.set_fact:
-    developer_rust_cargo_home_stale: >-
-      {{ _default.exists and _default.isdir
-         and not (_effective.exists and _effective.dev == _default.dev and _effective.inode == _default.inode) }}
+    developer_rust_cargo_home_relocated: "{{ _separate | bool }}"
+    developer_rust_cargo_home_stale: "{{ _separate | bool and _declared | bool }}"
   vars:
     _default: "{{ developer_rust_cargo_home_dirs.results[0].stat }}"
     _effective: "{{ developer_rust_cargo_home_dirs.results[1].stat }}"
+    _host: "{{ developer_rust_cargo_home_dirs.results[2].stat }}"
+    _separate: >-
+      {{ _default.exists and _default.isdir
+         and not (_effective.exists and _effective.dev == _default.dev and _effective.inode == _default.inode) }}
+    _declared: >-
+      {{ _effective.exists and _host.exists
+         and _effective.dev == _host.dev and _effective.inode == _host.inode }}
+  tags: ['rust-cache', 'rust-governor', 'rust-llvm']
+
+- name: Record that ~/.cargo was left alone beside an undeclared CARGO_HOME
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['cargo home: the role used ' ~ developer_rust_cargo_home ~ ' but the login environment of '
+            ~ actual_user ~ ' exports ' ~ (hyperi_host_cargo_home | default('', true) or 'no CARGO_HOME')
+            ~ ', so ' ~ user_home ~ '/.cargo was neither swept nor had its config.toml retired.'
+            ~ ' Declare CARGO_HOME on the host (for example in /etc/environment) and re-run.'] }}
+  when:
+    - developer_rust_cargo_home_relocated | bool
+    - not developer_rust_cargo_home_stale | bool
   tags: ['rust-cache', 'rust-governor', 'rust-llvm']
 
 - name: Report where the toolchain was resolved to
@@ -806,6 +783,18 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
+# Before `cargo install-update`, which would otherwise rebuild a retired or
+# duplicate tool first, and after the installs, so every effective-home tool
+# exists before its ~/.cargo copy goes.
+- name: Remove cargo-home strays
+  ansible.builtin.include_tasks:
+    file: strays.yml
+    apply:
+      tags: ['developer-rust', 'rust']
+  vars:
+    developer_rust_strays_pass: tools
+  tags: ['developer-rust', 'rust']
+
 # The installs above are guarded by `creates:`, so on a box that already has a
 # tool they never look at its version. This is what carries them forward, and
 # it is why re-running the role upgrades rather than only installing.
@@ -914,17 +903,15 @@
   when: developer_rust_setup.rc | default(0) != 0
   tags: ['rust-cache']
 
-# ============================================================
-# Strays: duplicates, retired tools, a superseded ~/.cargo
-# ============================================================
-# After every install above and after hyperi-rust-setup, so each managed copy
-# is in place before the copy it supersedes goes, and the cargo config already
-# names the managed sccache rather than one about to be removed.
-- name: Remove cargo-home strays
+# After hyperi-rust-setup, so the managed sccache is in place and the cargo
+# config already names it rather than the copy about to be removed.
+- name: Remove cargo-home copies of sccache
   ansible.builtin.include_tasks:
     file: strays.yml
     apply:
       tags: ['developer-rust', 'rust']
+  vars:
+    developer_rust_strays_pass: sccache
   tags: ['developer-rust', 'rust']
 
 # ============================================================

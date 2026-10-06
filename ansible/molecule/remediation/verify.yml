@@ -277,6 +277,9 @@
         - {path: .local/bin/kubeconform, gone: false}
         - {path: .local/bin/tinygo-dev, gone: false}
         - {path: .local/bin/argocd, gone: false}
+        - {path: .local/bin/dive, gone: false}
+        - {path: .local/bin/kubectx, gone: false}
+        - {path: .local/bin/yq, gone: false}
       loop_control:
         label: "{{ item.path }}"
       register: verify_user_copies
@@ -284,11 +287,11 @@
     - name: Assert user-level duplicates went and everything else stayed
       ansible.builtin.assert:
         that:
-          - item.stat.exists != item.item.gone
+          - (item.stat.exists or item.stat.islnk | default(false)) != item.item.gone
         fail_msg: >-
           ~/{{ item.item.path }} {{ 'survived beside the managed copy it shadows'
-          if item.item.gone else 'was REMOVED -- it was the only copy, a link to
-          the managed one, or a tool the roles do not manage' }}.
+          if item.item.gone else 'was REMOVED -- it was the only copy, a link, a
+          directory, or a tool the sweep does not cover' }}.
         success_msg: "~/{{ item.item.path }} {{ 'removed' if item.item.gone else 'left alone' }}"
       loop: "{{ verify_user_copies.results }}"
       loop_control:
@@ -304,6 +307,7 @@
         - /usr/local/bin/argocd
         - /usr/local/bin/macbash
         - /usr/local/bin/git-scrub
+        - /usr/local/bin/yq
         - /usr/local/go/bin/go
       register: verify_managed_copies
 
@@ -317,35 +321,92 @@
       loop_control:
         label: "{{ item.item }}"
 
-    - name: Re-read the installed packages (Ubuntu)
+    - name: Re-read the installed packages
       ansible.builtin.package_facts:
         manager: auto
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    # golang-1.26-go is whichever versioned package /usr/bin/go resolved to.
-    - name: Assert the hand-installed and distro duplicates were purged (Ubuntu)
+    - name: List the installed packages (Fedora)
+      ansible.builtin.command:
+        argv: [rpm, -qa, --qf, "%{NAME}\n"]
+      register: verify_rpms
+      changed_when: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Collect the installed package names
+      ansible.builtin.set_fact:
+        verify_installed: >-
+          {{ ansible_facts.packages.keys() | list if ansible_facts['distribution'] == 'Ubuntu'
+             else verify_rpms.stdout_lines }}
+
+    # On the golink host /usr/local/go IS the distro tree, so the distro Go
+    # stays. On Fedora the repository golangci-lint requires golang, so it stays
+    # there too.
+    - name: Assert the hand-installed and distro duplicates were removed
       ansible.builtin.assert:
         that:
-          - ansible_facts.packages.keys() | select('match', item) | list | length == 0
+          - verify_installed | select('match', item) | list | length == 0
         fail_msg: "{{ item }} is still installed beside the managed copy it duplicates."
-        success_msg: "{{ item }} purged"
-      loop:
-        - '^macbash$'
-        - '^golang-go$'
-        - '^golang-src$'
-        - '^golang-[0-9.]+-go$'
+        success_msg: "{{ item }} removed"
+      loop: >-
+        {{ ['^macbash$']
+           + ([] if 'golink' in inventory_hostname else
+              (['^golang-go$', '^golang-src$', '^golang-[0-9.]+-go$']
+               if ansible_facts['distribution'] == 'Ubuntu' else [])) }}
+
+    - name: Assert the packages that must stay are still installed
+      ansible.builtin.assert:
+        that:
+          - item in verify_installed
+        fail_msg: >-
+          {{ item }} was removed. It has a dependant, is not on the purge list,
+          is offered by a repository, or is the only Go.
+        success_msg: "{{ item }} kept"
+      loop: >-
+        {{ ((['git-scrub', 'git-scrub-dependant', 'kind', 'dive']
+             + (['golang-go'] if 'golink' in inventory_hostname else []))
+            if ansible_facts['distribution'] == 'Ubuntu'
+            else ['golangci-lint', 'golang']) }}
+
+    # The Go purge must not leave the compiler toolchain for the updater's
+    # unattended autoremove to take.
+    - name: Simulate the updater's autoremove (Ubuntu)
+      ansible.builtin.command:
+        argv: [apt-get, -s, autoremove]
+      register: verify_autoremove
+      changed_when: false
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Assert a duplicate package with a dependant was kept (Ubuntu)
+    - name: Assert the Go purge orphaned no compiler toolchain (Ubuntu)
       ansible.builtin.assert:
         that:
-          - "'git-scrub' in ansible_facts.packages"
-          - "'git-scrub-dependant' in ansible_facts.packages"
-        fail_msg: >-
-          The git-scrub package was removed although git-scrub-dependant needs it --
-          removing it took a package nobody asked us to touch.
-        success_msg: "git-scrub kept for its dependant"
+          - verify_autoremove.stdout_lines | select('match', '^Remv ' ~ item ~ ' ') | list | length == 0
+        fail_msg: "apt-get autoremove would now remove {{ item }}, orphaned by the Go purge."
+        success_msg: "{{ item }} not autoremovable"
+      loop:
+        - gcc
+        - binutils
+        - libc6-dev
       when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: List what dnf would autoremove (Fedora)
+      ansible.builtin.command:
+        argv: [dnf, -q, repoquery, --unneeded, --qf, "%{name}\n"]
+      register: verify_unneeded
+      changed_when: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Assert the Go purge orphaned no compiler toolchain (Fedora)
+      ansible.builtin.assert:
+        that:
+          - item not in verify_unneeded.stdout_lines
+        fail_msg: "dnf autoremove would now remove {{ item }}, orphaned by the Go purge."
+        success_msg: "{{ item }} not autoremovable"
+      loop:
+        - gcc
+        - binutils
+        - glibc-devel
+      when: ansible_facts['distribution'] == 'Fedora'
 
     # PATH hygiene is NOT asserted here. The tasks that drop the unguarded
     # ~/.bashrc prepends live in the install path of the developer and

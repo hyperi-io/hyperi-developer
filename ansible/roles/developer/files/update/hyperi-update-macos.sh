@@ -41,7 +41,7 @@ emulate -L zsh
 # Make user-level tools reachable even when launched from the GUI app or a
 # non-login shell (Ansible): brew lives outside the base PATH on both Apple
 # silicon and Intel.
-export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 ASSUME_YES=0
 
