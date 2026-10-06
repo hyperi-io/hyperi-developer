@@ -70,6 +70,61 @@
         - linear      # Linear CLI — removed by decision 2026-05-01
         - minikube    # superseded by kind
 
+    # Observed on the reference workstation 2026-10-06: helm v4.1.1, unowned, left by the
+    # get.helm.sh download an older revision did. It shadows packaged helm.
+    - name: Plant the stale root-owned helm (observed v4.1.1)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "v4.1.1"
+        dest: /usr/local/bin/helm
+        owner: root
+        group: root
+        mode: '0755'
+
+    # DERIVED: the infrastructure role installs the helm package, and the helm
+    # tombstone fires only once it is present. A local stand-in keeps the
+    # fixture off the network and off Helm's signing key.
+    - name: Install a stand-in helm package (Ubuntu)
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      block:
+        - name: Create the stand-in package tree
+          ansible.builtin.file:
+            path: "/root/helm-fixture/{{ item }}"
+            state: directory
+            mode: '0755'
+          loop:
+            - DEBIAN
+            - usr/bin
+
+        - name: Write the stand-in package control file
+          ansible.builtin.copy:
+            content: |
+              Package: helm
+              Version: 0.0.0-fixture
+              Architecture: all
+              Maintainer: hyperi-developer fixture <noreply@example.invalid>
+              Description: Stand-in for the packaged helm
+            dest: /root/helm-fixture/DEBIAN/control
+            mode: '0644'
+
+        - name: Write the stand-in packaged helm
+          ansible.builtin.copy:
+            content: |
+              #!/bin/sh
+              echo "packaged helm fixture"
+            dest: /root/helm-fixture/usr/bin/helm
+            mode: '0755'
+
+        - name: Build the stand-in helm package
+          ansible.builtin.command:
+            cmd: dpkg-deb --build --root-owner-group /root/helm-fixture /root/helm-fixture.deb
+            creates: /root/helm-fixture.deb
+
+        - name: Install the stand-in helm package
+          ansible.builtin.apt:
+            deb: /root/helm-fixture.deb
+
     # ------------------------------------------------------------------
     # RETIRED PACKAGES -- all nine were still installed on the reference host.
     # `tree` matters most: pass depends on it, and docker-desktop depends on
@@ -193,7 +248,7 @@
       when: ansible_facts['distribution'] == 'Ubuntu'
       failed_when: false
 
-    # Observed on desktop-derek 2026-08-25, still configured months after the
+    # Observed on the reference workstation 2026-08-25, still configured months after the
     # tools themselves were retired. A repository outlives the tool it served:
     # nothing prunes it, and every apt update pays to fetch it.
     #

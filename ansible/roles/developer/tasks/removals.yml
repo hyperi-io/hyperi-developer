@@ -47,7 +47,7 @@
 # /usr/local/bin/uv was 0.10.2, root-owned, dated Feb 11, while current is
 # 0.11.29. Five months stale, and `which uv` resolved to it, so the host
 # looked fine.
-# uv AND its uvx sibling both land in /usr/local/bin (verified on desktop-derek:
+# uv AND its uvx sibling both land in /usr/local/bin (verified on the reference workstation:
 # both root-owned, dated Feb 11, five months stale) -- remove the pair.
 - name: Remove the retired root-owned uv/uvx binaries (no update path; shadow the repo install)
   ansible.builtin.file:
@@ -267,7 +267,7 @@
   failed_when: false
 
 # Lens / Freelens (Kubernetes desktop GUIs) - retired; no k8s desktop GUI ships
-# now (k9s covers it). Verified on desktop-derek: Freelens present as the
+# now (k9s covers it). Verified on the reference workstation: Freelens present as the
 # app.freelens.Freelens flatpak. Remove every form a host might carry.
 - name: Remove Freelens (Ubuntu apt)
   ansible.builtin.apt:
@@ -386,6 +386,21 @@
     - jfrog
     - netbird
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# helm was a GitHub-release binary in /usr/local/bin, which shadows the packaged
+# helm the infrastructure role now installs. Removed only once that package is
+# in, because soe runs this file without the infrastructure role.
+- name: Read installed packages for the helm check
+  ansible.builtin.package_facts:
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Remove the retired /usr/local/bin/helm once packaged helm is installed
+  ansible.builtin.file:
+    path: /usr/local/bin/helm
+    state: absent
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - "'helm' in ansible_facts.packages"
 
 # ============================================================================
 # RETIRED CLI UTILITIES

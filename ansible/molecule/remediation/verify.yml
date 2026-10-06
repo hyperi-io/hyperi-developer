@@ -25,6 +25,7 @@
         - bw          # Bitwarden — removed by decision
         - linear      # Linear CLI — removed by decision
         - minikube    # superseded by kind
+        - helm        # stale get.helm.sh copy; prepare installs the helm package
       register: verify_gone
 
     - name: Assert retired artefacts were removed
