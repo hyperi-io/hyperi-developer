@@ -387,6 +387,21 @@
     - netbird
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
+# helm was a GitHub-release binary in /usr/local/bin, which shadows the packaged
+# helm the infrastructure role now installs. Removed only once that package is
+# in, because soe runs this file without the infrastructure role.
+- name: Read installed packages for the helm check
+  ansible.builtin.package_facts:
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Remove the retired /usr/local/bin/helm once packaged helm is installed
+  ansible.builtin.file:
+    path: /usr/local/bin/helm
+    state: absent
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - "'helm' in ansible_facts.packages"
+
 # ============================================================================
 # RETIRED CLI UTILITIES
 # ============================================================================
