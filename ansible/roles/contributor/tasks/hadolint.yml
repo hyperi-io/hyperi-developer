@@ -64,11 +64,31 @@
     - name: Resolve the hadolint tag
       ansible.builtin.set_fact:
         contributor_hadolint_ref: "{{ contributor_hadolint_latest.json.tag_name }}"
+        contributor_hadolint_asset: "hadolint-linux-{{ contributor_hadolint_arch }}"
 
+    - name: Fetch the hadolint release checksums
+      ansible.builtin.uri:
+        url: https://github.com/hadolint/hadolint/releases/download/{{ contributor_hadolint_ref }}/checksums.sha256
+        return_content: true
+      register: contributor_hadolint_sums
+      check_mode: false
+
+    # The file marks binary mode with `*` before each name.
+    - name: Resolve the hadolint checksum
+      ansible.builtin.set_fact:
+        contributor_hadolint_sha: >-
+          {{ (contributor_hadolint_sums.content.splitlines()
+              | select('match', '^[0-9a-f]{64} +[*]?' ~ contributor_hadolint_asset ~ '$')
+              | first).split() | first }}
+
+    # Without a checksum get_url keeps whatever already sits at dest, so a new
+    # release never landed. The digest comes from the same release, so it detects
+    # a change and a truncated download; it is not a provenance check.
     - name: Download hadolint binary (Ubuntu)
       ansible.builtin.get_url:
-        url: "https://github.com/hadolint/hadolint/releases/download/{{ contributor_hadolint_ref }}/hadolint-Linux-{{ contributor_hadolint_arch }}"
+        url: "https://github.com/hadolint/hadolint/releases/download/{{ contributor_hadolint_ref }}/{{ contributor_hadolint_asset }}"
         dest: /usr/local/bin/hadolint
+        checksum: "sha256:{{ contributor_hadolint_sha }}"
         owner: root
         group: root
         mode: '0755'

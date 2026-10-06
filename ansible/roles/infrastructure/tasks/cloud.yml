@@ -10,8 +10,8 @@
 #   terraform -> tofu   (OpenTofu, MPL-2.0)
 #   vault     -> bao    (OpenBao, MPL-2.0)
 #
-# `aws-vault` below is NOT HashiCorp Vault -- it is 99designs/aws-vault, an
-# unrelated tool for keeping AWS credentials in the OS keychain. It stays.
+# `aws-vault` below is NOT HashiCorp Vault -- it is aws-vault (the ByteNess fork
+# of 99designs/aws-vault), an unrelated tool for keeping AWS credentials in the OS keychain. It stays.
 #
 # Packer has no viable fork (the community never produced one) and is
 # deliberately NOT installed here. hyperi-infra needs it for image builds; its
@@ -168,18 +168,97 @@
 # AWS SESSION MANAGER PLUGIN (for aws ssm start-session)
 # ============================================================================
 
+# AWS publishes no repo for it, only a package per distro family and arch with a
+# detached signature beside it. The package is installed only once that
+# signature checks out against the AWS key shipped in this role, which AWS
+# publishes in its documentation rather than beside the download.
+#
+# The scratch steps are changed_when: false: they work in a throwaway directory,
+# and the install below is what reports a real change.
 - name: Install AWS Session Manager Plugin (Linux)
+  vars:
+    infrastructure_ssm_pkg: "session-manager-plugin.{{ 'rpm' if ansible_facts['distribution'] == 'Fedora' else 'deb' }}"
+    infrastructure_ssm_url: >-
+      https://s3.amazonaws.com/session-manager-downloads/plugin/latest/{{
+      'linux' if ansible_facts['distribution'] == 'Fedora' else 'ubuntu' }}_{{
+      'arm64' if hyperi_arch_deb == 'arm64' else '64bit' }}/{{ infrastructure_ssm_pkg }}
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   block:
+    - name: Ensure gpg is present for the signature check
+      ansible.builtin.package:
+        name: "{{ 'gnupg2' if ansible_facts['distribution'] == 'Fedora' else 'gpg' }}"
+        state: present
+
+    - name: Create a private working directory for the plugin
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .ssm-plugin
+      register: infrastructure_ssm_dir
+      changed_when: false
+      check_mode: false
+
+    - name: Download the Session Manager Plugin package and its signature
+      ansible.builtin.get_url:
+        url: "{{ infrastructure_ssm_url }}{{ item }}"
+        dest: "{{ infrastructure_ssm_dir.path }}/{{ infrastructure_ssm_pkg }}{{ item }}"
+        mode: '0644'
+      loop: ['', '.sig']
+      changed_when: false
+      check_mode: false
+
+    - name: Stage the AWS Session Manager signing key
+      ansible.builtin.copy:
+        src: session-manager-plugin.asc
+        dest: "{{ infrastructure_ssm_dir.path }}/signing-key.asc"
+        mode: '0644'
+      changed_when: false
+      check_mode: false
+
+    # gpgv reads a binary keyring only.
+    - name: Convert the signing key to a keyring
+      ansible.builtin.command:
+        argv:
+          - gpg
+          - --batch
+          - --homedir
+          - "{{ infrastructure_ssm_dir.path }}"
+          - --dearmor
+          - --output
+          - "{{ infrastructure_ssm_dir.path }}/signing-key.gpg"
+          - "{{ infrastructure_ssm_dir.path }}/signing-key.asc"
+      changed_when: false
+      check_mode: false
+
+    # Fails closed: a missing, bad or foreign signature stops the install.
+    - name: Verify the Session Manager Plugin signature
+      ansible.builtin.command:
+        argv:
+          - gpgv
+          - --status-fd
+          - '1'
+          - --keyring
+          - "{{ infrastructure_ssm_dir.path }}/signing-key.gpg"
+          - "{{ infrastructure_ssm_dir.path }}/{{ infrastructure_ssm_pkg }}.sig"
+          - "{{ infrastructure_ssm_dir.path }}/{{ infrastructure_ssm_pkg }}"
+      register: infrastructure_ssm_verify
+      changed_when: false
+      check_mode: false
+      failed_when: >-
+        infrastructure_ssm_verify.rc != 0
+        or ('[GNUPG:] VALIDSIG ' ~ infrastructure_ssm_signing_fingerprint) not in infrastructure_ssm_verify.stdout
+
+    # disable_gpg_check: the RPM carries no rpm-native signature; the detached
+    # one above is what AWS signs.
     - name: Install Session Manager Plugin (Fedora)
       ansible.builtin.dnf:
-        name: https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm
+        name: "{{ infrastructure_ssm_dir.path }}/{{ infrastructure_ssm_pkg }}"
         state: present
         disable_gpg_check: true
       when: ansible_facts['distribution'] == 'Fedora'
 
     - name: Install Session Manager Plugin (Ubuntu)
       ansible.builtin.apt:
-        deb: https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
+        deb: "{{ infrastructure_ssm_dir.path }}/{{ infrastructure_ssm_pkg }}"
       when: ansible_facts['distribution'] == 'Ubuntu'
 
   rescue:
@@ -187,32 +266,80 @@
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['Session Manager Plugin: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+             + ['Session Manager Plugin: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  always:
+    - name: Remove the plugin working directory
+      ansible.builtin.file:
+        path: "{{ infrastructure_ssm_dir.path }}"
+        state: absent
+      changed_when: false
+      check_mode: false
+      when: infrastructure_ssm_dir.path is defined
 
 # ============================================================================
 # AWS-VAULT (secure credential storage in OS keychain)
 # ============================================================================
+# The ByteNess fork, not 99designs/aws-vault: 99designs stopped at v7.2.0 in
+# 2023. The fork publishes the same asset names, so a host carrying the old
+# binary has it replaced in place at /usr/local/bin/aws-vault.
 
 - name: Install aws-vault (Linux)
   block:
-    - name: Get latest aws-vault version from GitHub API
+    - name: List the aws-vault releases
       ansible.builtin.uri:
-        url: https://api.github.com/repos/99designs/aws-vault/releases/latest
+        url: "https://api.github.com/repos/{{ infrastructure_aws_vault_repo }}/releases?per_page=30"
         return_content: true
         headers: "{{ hyperi_github_headers }}"
-      register: aws_vault_release
+      register: infrastructure_aws_vault_releases
       check_mode: false
 
-    - name: Set aws-vault version fact
+    # The newest release that has been out for the cooldown, so a bad release
+    # has time to be pulled before it reaches a workstation. ISO-8601 UTC
+    # timestamps compare correctly as strings.
+    - name: Pick the newest aws-vault release past the cooldown
       ansible.builtin.set_fact:
-        aws_vault_version: "{{ aws_vault_release.json.tag_name }}"
+        infrastructure_aws_vault_version: >-
+          {{ infrastructure_aws_vault_releases.json
+             | rejectattr('draft') | rejectattr('prerelease')
+             | selectattr('published_at', 'le', infrastructure_aws_vault_cutoff)
+             | map(attribute='tag_name') | first }}
+        infrastructure_aws_vault_asset: "aws-vault-linux-{{ hyperi_arch_deb }}"
+      vars:
+        infrastructure_aws_vault_cutoff: >-
+          {{ '%Y-%m-%dT%H:%M:%SZ' | strftime(
+             (now().timestamp() | int) - (infrastructure_aws_vault_min_release_age_days | int) * 86400,
+             utc=true) }}
 
+    - name: Fetch the aws-vault release checksums
+      ansible.builtin.uri:
+        url: >-
+          https://github.com/{{ infrastructure_aws_vault_repo }}/releases/download/{{
+          infrastructure_aws_vault_version }}/aws-vault_sha256_checksums.txt
+        return_content: true
+      register: infrastructure_aws_vault_sums
+      check_mode: false
+
+    - name: Resolve the aws-vault checksum
+      ansible.builtin.set_fact:
+        infrastructure_aws_vault_sha: >-
+          {{ (infrastructure_aws_vault_sums.content.splitlines()
+              | select('match', '^[0-9a-f]{64} +' ~ infrastructure_aws_vault_asset ~ '$')
+              | first).split() | first }}
+
+    # Without a checksum get_url keeps whatever already sits at dest, so a new
+    # release never landed. The digest comes from the same release, so it detects
+    # a change and a truncated download; it is not a provenance check.
     - name: Download aws-vault binary
       ansible.builtin.get_url:
-        url: "https://github.com/99designs/aws-vault/releases/download/{{ aws_vault_version }}/aws-vault-linux-{{ hyperi_arch_deb }}"
+        url: >-
+          https://github.com/{{ infrastructure_aws_vault_repo }}/releases/download/{{
+          infrastructure_aws_vault_version }}/{{ infrastructure_aws_vault_asset }}
         dest: /usr/local/bin/aws-vault
+        checksum: "sha256:{{ infrastructure_aws_vault_sha }}"
+        owner: root
+        group: root
         mode: '0755'
 
   rescue:
@@ -486,8 +613,16 @@
         name: session-manager-plugin
         state: present
 
-    - name: Install aws-vault
+    # The `aws-vault` cask was renamed `aws-vault-binary` and still ships
+    # 99designs v7.2.0; the `aws-vault` formula builds the ByteNess fork. Both
+    # link the same `aws-vault` binary, so the cask goes first.
+    - name: Remove the aws-vault-binary cask (superseded by the formula)
       community.general.homebrew_cask:
+        name: aws-vault-binary
+        state: absent
+
+    - name: Install aws-vault
+      community.general.homebrew:
         name: aws-vault
         state: present
 

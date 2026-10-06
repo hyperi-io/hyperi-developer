@@ -25,7 +25,6 @@
         - bw          # Bitwarden — removed by decision
         - linear      # Linear CLI — removed by decision
         - minikube    # superseded by kind
-        - helm        # stale get.helm.sh copy; prepare installs the helm package
       register: verify_gone
 
     - name: Assert retired artefacts were removed
@@ -41,9 +40,12 @@
       loop_control:
         label: "{{ item.item }}"
 
+    # Ubuntu only, like the assertion that reads it: on Fedora package_facts
+    # needs rpm Python bindings a minimal image lacks.
     - name: Gather installed packages
       ansible.builtin.package_facts:
         manager: auto
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
     # Ubuntu only: prepare.yml installs these through apt, and the names are
     # Debian's.
@@ -65,6 +67,74 @@
       loop_control:
         label: "{{ item }}"
       when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # ==================================================================
+    # SUPERSEDED BY A PACKAGE -- both directions, per distro. A copy goes
+    # where prepare installed the package that replaces it, and stays where
+    # it did not: there it is the only working copy.
+    # ==================================================================
+    - name: Stat the copies a package supersedes
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+      loop: "{{ verify_superseded_gone[ansible_facts['distribution']] | default([]) }}"
+      register: verify_superseded_gone_stat
+      vars:
+        verify_superseded_gone:
+          Ubuntu: [kubectx, kubens, helm]
+          Fedora: [k9s, gitleaks]
+
+    - name: Assert the superseded copies were removed
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          /usr/local/bin/{{ item.item }} survived beside the package that
+          supplies it. /usr/local/bin precedes /usr/bin on PATH, so it shadows
+          the package and nothing updates it.
+        success_msg: "/usr/local/bin/{{ item.item }} removed"
+      loop: "{{ verify_superseded_gone_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Stat the copies with no package behind them
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+      loop: "{{ verify_superseded_kept[ansible_facts['distribution']] | default([]) }}"
+      register: verify_superseded_kept_stat
+      vars:
+        verify_superseded_kept:
+          Ubuntu: [k9s, gitleaks]
+          Fedora: [kubectx, kubens, helm, kustomize]
+
+    - name: Assert copies with no package behind them were left alone
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: >-
+          /usr/local/bin/{{ item.item }} was REMOVED although no package
+          supplies it here. It was the only working copy of the tool.
+        success_msg: "/usr/local/bin/{{ item.item }} correctly left alone"
+      loop: "{{ verify_superseded_kept_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # The tombstones touch /usr/local/bin only; the package's own files stay.
+    # Ubuntu only: prepare installs the kubectx package there.
+    - name: Stat the packaged kubectx and kubens (Ubuntu)
+      ansible.builtin.stat:
+        path: "/usr/bin/{{ item }}"
+      loop: "{{ ['kubectx', 'kubens'] if ansible_facts['distribution'] == 'Ubuntu' else [] }}"
+      register: verify_packaged_kubectx
+
+    - name: Assert the packaged kubectx and kubens survived
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "/usr/bin/{{ item.item }} is gone -- a tombstone removed the package's own file."
+        success_msg: "/usr/bin/{{ item.item }} intact"
+      loop: "{{ verify_packaged_kubectx.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
     # ==================================================================
     # MUST SURVIVE — the half that stops us becoming destructive

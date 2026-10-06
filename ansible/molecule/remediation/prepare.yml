@@ -126,6 +126,78 @@
             deb: /root/helm-fixture.deb
 
     # ------------------------------------------------------------------
+    # SUPERSEDED BY A PACKAGE -- a /usr/local/bin copy left beside the package
+    # that now supplies the tool. Each must go only where its package is in.
+    #
+    # The Fedora branches below are not run by molecule.yml, which is Ubuntu
+    # only; they let the same playbooks exercise the Fedora tombstones against
+    # a fedora container by hand.
+    # ------------------------------------------------------------------
+    # Observed on the reference workstation 2026-10-06: root-owned kubectx and
+    # kubens beside the kubectx 0.9.5 package. DERIVED too: until ca841da every
+    # Linux host took both from GitHub releases into /usr/local/bin.
+    - name: Plant the retired kubectx and kubens binaries
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "retired GitHub-release fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - kubectx
+        - kubens
+
+    # Observed on the reference workstation 2026-10-06: k9s and gitleaks in
+    # /usr/local/bin with no package. On Ubuntu that IS the current install, so
+    # both must survive. DERIVED for Fedora: the same pre-ca841da paths, which
+    # dnf now supplies, so there both must go.
+    - name: Plant the k9s and gitleaks release binaries
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "GitHub-release fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - k9s
+        - gitleaks
+
+    - name: Install the kubectx package (Ubuntu)
+      ansible.builtin.apt:
+        name: kubectx
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # Fedora 44 carries no kubectx package, so there kubectx and kubens stay
+    # planted with nothing behind them -- the keep direction.
+    - name: Install the packages that supersede the binaries (Fedora)
+      ansible.builtin.dnf:
+        name:
+          - k9s
+          - gitleaks
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # DERIVED: Fedora installed kustomize to /usr/local/bin before it moved to
+    # dnf. Planted with no package behind it -- like helm and kubectx on Fedora
+    # -- so verify can assert a copy stays wherever nothing has replaced it.
+    - name: Plant the pre-dnf kustomize binary (Fedora)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "GitHub-release fixture: kustomize"
+        dest: /usr/local/bin/kustomize
+        owner: root
+        group: root
+        mode: '0755'
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # ------------------------------------------------------------------
     # RETIRED PACKAGES -- all nine were still installed on the reference host.
     # `tree` matters most: pass depends on it, and docker-desktop depends on
     # pass, so removing tree cascades. The fixture must reproduce that chain

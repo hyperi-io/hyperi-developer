@@ -46,6 +46,16 @@
       tags: ['infrastructure', 'k8s']
   tags: ['infrastructure', 'k8s']
 
+# After cloud and k8s, so each package is in before the copy it supersedes goes.
+# `removals` also reaches it, for a remediation run that installs nothing.
+- name: Remove binaries superseded by the packaged tools
+  ansible.builtin.include_tasks:
+    file: superseded.yml
+    apply:
+      tags: ['infrastructure', 'cloud', 'k8s', 'removals']
+  tags: ['infrastructure', 'cloud', 'k8s', 'removals']
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
 # The `data` group: vector, clickhouse-client, rpk (Redpanda), valkey-cli.
 - name: Install data platform tools (data group)
   ansible.builtin.include_tasks:

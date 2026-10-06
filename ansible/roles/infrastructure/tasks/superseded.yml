@@ -1,0 +1,42 @@
+---
+# Binaries older revisions dropped in /usr/local/bin for tools a package now
+# supplies. /usr/local/bin precedes /usr/bin on the default PATH, so a leftover
+# copy shadows the package and nothing ever updates it again.
+#
+# Each copy goes only once the packaged binary is in /usr/bin: where it is not,
+# the /usr/local/bin copy is the only working one and it stays. Only the
+# /usr/local/bin path is touched, never the package's own file.
+#
+# A stat rather than package_facts: package_facts needs the rpm Python bindings,
+# which a minimal Fedora does not carry, and fails the run without them.
+#
+# Runs on every install of these tools rather than behind the removals opt-in,
+# because the package that replaces the copy arrives on that same run.
+
+- name: Look for the packaged binaries that supersede /usr/local/bin copies
+  ansible.builtin.stat:
+    path: "/usr/bin/{{ item.bin }}"
+  loop: "{{ infrastructure_superseded | selectattr('distros', 'contains', ansible_facts['distribution']) }}"
+  loop_control:
+    label: "{{ item.bin }}"
+  register: infrastructure_superseded_packaged
+  vars:
+    infrastructure_superseded:
+      # GitHub-release binaries until ca841da; one kubectx package ships both.
+      - { bin: kubectx, distros: [Fedora, Ubuntu] }
+      - { bin: kubens, distros: [Fedora, Ubuntu] }
+      # Fedora moved to dnf; Ubuntu still installs k9s to /usr/local/bin.
+      - { bin: k9s, distros: [Fedora] }
+      # Fedora moved to dnf; Ubuntu still installs kustomize to /usr/local/bin.
+      - { bin: kustomize, distros: [Fedora] }
+      # The get.helm.sh binary, before helm came from package repositories.
+      - { bin: helm, distros: [Fedora, Ubuntu] }
+
+- name: Remove /usr/local/bin copies a package now supplies
+  ansible.builtin.file:
+    path: "/usr/local/bin/{{ item.item.bin }}"
+    state: absent
+  loop: "{{ infrastructure_superseded_packaged.results }}"
+  loop_control:
+    label: "{{ item.item.bin }}"
+  when: item.stat.exists

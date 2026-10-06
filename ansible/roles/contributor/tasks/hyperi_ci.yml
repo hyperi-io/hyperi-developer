@@ -174,12 +174,31 @@
     - name: Resolve the osv-scanner tag
       ansible.builtin.set_fact:
         contributor_osv_ref: "{{ contributor_osv_latest.json.tag_name }}"
+        contributor_osv_asset: "osv-scanner_linux_{{ hyperi_arch_deb }}"
 
+    - name: Fetch the osv-scanner release checksums
+      ansible.builtin.uri:
+        url: https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_ref }}/osv-scanner_SHA256SUMS
+        return_content: true
+      register: contributor_osv_sums
+      check_mode: false
+
+    - name: Resolve the osv-scanner checksum
+      ansible.builtin.set_fact:
+        contributor_osv_sha: >-
+          {{ (contributor_osv_sums.content.splitlines()
+              | select('match', '^[0-9a-f]{64} +' ~ contributor_osv_asset ~ '$')
+              | first).split() | first }}
+
+    # Without a checksum get_url keeps whatever already sits at dest, so a new
+    # release never landed. The digest comes from the same release, so it detects
+    # a change and a truncated download; it is not a provenance check.
     - name: Download osv-scanner
       ansible.builtin.get_url:
         url: >-
-          https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_ref }}/osv-scanner_linux_{{ hyperi_arch_deb }}
+          https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_ref }}/{{ contributor_osv_asset }}
         dest: /usr/local/bin/osv-scanner
+        checksum: "sha256:{{ contributor_osv_sha }}"
         owner: root
         group: root
         mode: '0755'

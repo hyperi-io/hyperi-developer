@@ -146,14 +146,6 @@
       register: developer_fnm_latest
       check_mode: false
 
-    - name: Download fnm
-      ansible.builtin.get_url:
-        url: >-
-          https://github.com/Schniz/fnm/releases/download/{{
-          developer_fnm_latest.json.tag_name }}/{{ fnm_asset }}
-        dest: /tmp/fnm.zip
-        mode: '0644'
-
     - name: Ensure unzip is present (Ubuntu)
       ansible.builtin.apt:
         name: unzip
@@ -168,9 +160,13 @@
       become: true
       when: ansible_facts['distribution'] == 'Fedora'
 
-    - name: Unpack fnm
+    # Straight from the URL: unarchive downloads into its own private temp file,
+    # where a fixed root-written path under /tmp is open to a planted symlink.
+    - name: Download and unpack fnm
       ansible.builtin.unarchive:
-        src: /tmp/fnm.zip
+        src: >-
+          https://github.com/Schniz/fnm/releases/download/{{
+          developer_fnm_latest.json.tag_name }}/{{ fnm_asset }}
         dest: /usr/local/bin
         remote_src: true
         include:

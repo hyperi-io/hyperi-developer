@@ -14,3 +14,13 @@ infrastructure_helm_apt_key_fingerprint: DDF78C3E6EBB2D2CC223C95C62BA89D07698DBC
 # is the fallback for a release Microsoft has not published yet.
 azure_cli_supported_suites:
   - noble
+
+# Fingerprint of the AWS Session Manager plugin signing key, as published at
+# https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-linux-verify-signature.html
+# and shipped in files/session-manager-plugin.asc.
+infrastructure_ssm_signing_fingerprint: 7959637124CE093AD501D47A2C4D4AFF6F6757EE  # gitleaks:allow -- public key fingerprint
+
+# aws-vault on Linux comes from the maintained fork's GitHub releases, taking
+# the newest release at least this many days old.
+infrastructure_aws_vault_repo: ByteNess/aws-vault
+infrastructure_aws_vault_min_release_age_days: 7

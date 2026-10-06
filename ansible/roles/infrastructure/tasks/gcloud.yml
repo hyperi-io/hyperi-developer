@@ -8,11 +8,13 @@
 
 - name: Install Google Cloud CLI (Fedora)
   block:
+    # Google builds the repo per arch (x86_64, aarch64), the same tokens as dnf's
+    # $basearch.
     - name: Add Google Cloud SDK repository
       ansible.builtin.yum_repository:
         name: google-cloud-cli
         description: Google Cloud CLI
-        baseurl: https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-x86_64
+        baseurl: https://packages.cloud.google.com/yum/repos/cloud-sdk-el9-$basearch
         enabled: true
         gpgcheck: true
         repo_gpgcheck: false
@@ -49,22 +51,20 @@
           - gnupg
         state: present
 
-    - name: Download Google Cloud GPG key (armored)
+    - name: Create the apt keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    # apt reads an armored key directly when the file ends in .asc, so no
+    # dearmor step and no scratch file under /tmp.
+    - name: Download the Google Cloud apt signing key
       ansible.builtin.get_url:
         url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
-        dest: /tmp/cloud.google.asc
+        dest: /etc/apt/keyrings/cloud.google.asc
         mode: '0644'
         force: true
-
-    - name: Dearmor Google Cloud GPG key
-      ansible.builtin.shell:
-        cmd: gpg --batch --yes --dearmor -o /usr/share/keyrings/cloud.google.gpg /tmp/cloud.google.asc
-      changed_when: true
-
-    - name: Remove temporary armored key
-      ansible.builtin.file:
-        path: /tmp/cloud.google.asc
-        state: absent
 
     # A host provisioned by an older revision carries google-cloud-sdk.list
     # beside the .sources this writes, and apt then reads the repo twice.
@@ -80,8 +80,15 @@
         uris: "https://packages.cloud.google.com/apt"
         suites: cloud-sdk
         components: main
-        signed_by: /usr/share/keyrings/cloud.google.gpg
+        signed_by: /etc/apt/keyrings/cloud.google.asc
         state: present
+
+    # The dearmored copy an older revision of this file wrote. Removed only once
+    # the repository names the .asc, so apt never points at a missing key.
+    - name: Remove the superseded dearmored Google Cloud key
+      ansible.builtin.file:
+        path: /usr/share/keyrings/cloud.google.gpg
+        state: absent
 
     - name: Install Google Cloud CLI
       ansible.builtin.apt:

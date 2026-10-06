@@ -85,6 +85,9 @@ gh_rpm_gpg_url: "https://cli.github.com/packages/githubcli-archive-keyring.asc"
 git_ppa_supported_suites:
   - noble
   - resolute
+# Launchpad's signing key for the git-core PPA, as its archive API reports it
+# (signing_key_fingerprint on ~git-core/+archive/ubuntu/ppa).
+git_ppa_signing_fingerprint: F911AB184317630C59970973E363C90F8F1B6217  # gitleaks:allow -- public key fingerprint
 
 # ============================================================================
 # BRANDING / CUSTOMIZATION
