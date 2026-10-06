@@ -5,17 +5,71 @@
 #   vault     -> bao   (OpenBao, MPL-2.0)
 #
 # Ansible cannot remove what we simply stop declaring, so every host we have
-# ever provisioned keeps terraform, vault AND the HashiCorp repo until we say
-# otherwise. Leaving the repo behind is the worse half: it would go on serving
-# BUSL packages and updates forever.
+# ever provisioned keeps terraform and vault until we say otherwise.
+#
+# The HashiCorp repo, its key and the Homebrew tap go only where Packer is not
+# installed, since the opt-in `packer` role installs from them. A repo left
+# behind with a key the host no longer trusts fails every apt refresh.
 #
 # Removing terraform WILL break tooling that still shells out to it -- notably
 # hyperi-infra, which invokes `terraform` directly. That is why this runs on
 # `--tags removals` alone: installing the IaC tools is not a request to delete
 # somebody's Terraform.
-#
-# apt refuses every operation while any source list is malformed, so a host with
-# a broken hashicorp.list cannot run the removal that would clear it.
+
+# Before the package removals, which refresh the apt cache and fail on a repo
+# signed by a key the host no longer trusts.
+- name: Check whether Packer is installed (Ubuntu)
+  ansible.builtin.command:
+    argv: [dpkg-query, --show, '--showformat=${Status}', packer]
+  register: infrastructure_packer_deb
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# Both filenames: deb822_repository writes .sources, and older setups wrote .list.
+- name: Remove the HashiCorp APT repository where Packer is not installed (Ubuntu)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/hashicorp.sources
+    - /etc/apt/sources.list.d/hashicorp.list
+    - /usr/share/keyrings/hashicorp-archive-keyring.asc
+    - /usr/share/keyrings/hashicorp-archive-keyring.asc.unverified
+    - /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  register: infrastructure_hashicorp_repo_removed
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - "'install ok installed' not in infrastructure_packer_deb.stdout | default('')"
+
+- name: Refresh the APT cache after removing the repository
+  ansible.builtin.apt:
+    update_cache: true
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - infrastructure_hashicorp_repo_removed is changed
+
+- name: Check whether Packer is installed (Fedora)
+  ansible.builtin.command:
+    argv: [rpm, -q, packer]
+  register: infrastructure_packer_rpm
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Remove the HashiCorp YUM repository where Packer is not installed (Fedora)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/yum.repos.d/hashicorp.repo
+    - /etc/pki/rpm-gpg/RPM-GPG-KEY-hashicorp
+    - /etc/pki/rpm-gpg/RPM-GPG-KEY-hashicorp.unverified
+  when:
+    - ansible_facts['distribution'] == 'Fedora'
+    - infrastructure_packer_rpm.rc | default(0) != 0
 
 - name: Remove Terraform and Vault (Ubuntu)
   ansible.builtin.apt:
@@ -34,36 +88,6 @@
     state: absent
   when: ansible_facts['distribution'] == 'Fedora'
 
-# The repo itself. Both filenames are removed: deb822_repository writes
-# .sources, and older revisions of this role used apt_repository, which wrote
-# .list. A host provisioned before that migration carries the .list.
-- name: Remove the HashiCorp APT repository (Ubuntu)
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - /etc/apt/sources.list.d/hashicorp.sources
-    - /etc/apt/sources.list.d/hashicorp.list
-    - /usr/share/keyrings/hashicorp-archive-keyring.asc
-    - /usr/share/keyrings/hashicorp-archive-keyring.gpg
-  register: infrastructure_hashicorp_repo_removed
-  when: ansible_facts['distribution'] == 'Ubuntu'
-
-- name: Refresh the APT cache after removing the repository
-  ansible.builtin.apt:
-    update_cache: true
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - infrastructure_hashicorp_repo_removed is changed
-
-- name: Remove the HashiCorp YUM repository (Fedora)
-  ansible.builtin.file:
-    path: /etc/yum.repos.d/hashicorp.repo
-    state: absent
-  when: ansible_facts['distribution'] == 'Fedora'
-
-# macOS. Untap only after the formulae are gone, or brew refuses.
-#
 # NOT touched: `aws-vault`. It is the ByteNess aws-vault, nothing to do with
 # HashiCorp Vault despite the name, and it is still installed on purpose.
 - name: Remove Terraform and Vault (macOS)
@@ -77,11 +101,25 @@
   failed_when: false
   when: ansible_facts['distribution'] == 'MacOSX'
 
-- name: Remove the HashiCorp Homebrew tap (macOS)
+- name: Check whether Packer is installed (macOS)
+  ansible.builtin.command:
+    argv: [brew, list, hashicorp/tap/packer]
+  register: infrastructure_packer_brew
+  become: false
+  environment: "{{ homebrew_env }}"
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['distribution'] == 'MacOSX'
+
+# Untap only after the formulae are gone, or brew refuses.
+- name: Remove the HashiCorp Homebrew tap where Packer is not installed (macOS)
   community.general.homebrew_tap:
     name: hashicorp/tap
     state: absent
   become: false
   environment: "{{ homebrew_env }}"
   failed_when: false
-  when: ansible_facts['distribution'] == 'MacOSX'
+  when:
+    - ansible_facts['distribution'] == 'MacOSX'
+    - infrastructure_packer_brew.rc | default(0) != 0

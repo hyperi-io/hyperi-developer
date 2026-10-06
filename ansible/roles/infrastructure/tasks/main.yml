@@ -3,13 +3,11 @@
 # Not HyperI-specific. Org tooling lives in `soe`.
 
 # Before the installs: removing terraform/vault must not race the tofu/bao
-# install, and the HashiCorp repo has to go before an apt update reads it again.
+# install.
 #
 # `removals` ONLY, and never on a propagated tag. Installing the IaC tools is
-# not a request to delete someone's Terraform or unhook their HashiCorp repo --
-# that is a remediation, asked for explicitly. `--tags infrastructure` and
-# `--tags cloud` used to fire it too, which meant a routine IaC install silently
-# took both away.
+# not a request to delete someone's Terraform -- that is a remediation, asked
+# for explicitly.
 - name: Remove the retired HashiCorp tools (opt-in)
   ansible.builtin.include_tasks:
     file: removals.yml

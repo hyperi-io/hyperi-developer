@@ -97,6 +97,7 @@ flowchart TD
 | developer-typescript | `developer-typescript` | developer-node | opt-in |
 | developer-languages | `developer-languages` | all `developer-<lang>` | opt-in (meta) |
 | infrastructure | `infrastructure` | - | opt-in |
+| packer | `packer` | - | opt-in, in no persona |
 | contributor | `contributor` | developer | opt-in |
 | soe | `soe` | contributor | opt-in |
 | soe-gui | `soe-gui` | astral, rdp-client | opt-in |
@@ -332,6 +333,14 @@ platforms build it from source. It also lives on cloudflare-go's `v0` branch --
 from v4 that SDK is generated and carries no `cmd/` directory. The Linux build
 needs a Go toolchain (`--tags developer-go`); without one the run records a
 warning and continues.
+
+### packer
+
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| packer | all | vendor-repo (apt.releases.hashicorp.com, rpm.releases.hashicorp.com), signing key fingerprint-pinned / brew (`hashicorp/tap`) |
+
+The one HashiCorp tool installed: BUSL, with no open-source fork, so it is its own opt-in role rather than part of `infrastructure`. `--tags removals` takes terraform and vault, and removes this repo only where Packer is not installed.
 
 ### contributor (CI toolchain - what `hyperi-ci check` drives)
 

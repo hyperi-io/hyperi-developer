@@ -252,6 +252,11 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['infrastructure', 'never']
 
+    # Packer from HashiCorp's repo (opt-in, in no persona): BUSL, no fork.
+    - role: packer
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['packer', 'never']
+
     # ========================================================================
     # PERSONAS (meta-roles) — opinionated bundles that resolve to the roles
     # above via meta/dependencies. They pull the CLEAN developer base: its
