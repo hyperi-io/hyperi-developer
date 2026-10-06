@@ -3,10 +3,9 @@
 # Docker CLI (bring-your-own-daemon); HyperI Macs get a daemon by default:
 #   - colima: runs docker-ce in a small Virtualization.framework VM -- the same
 #     engine Linux runs natively. Homebrew formula (Tier 1, brew upgrade sweeps it).
-#   - Apple `container`: native per-container micro-VMs on Apple silicon. Ships
-#     ONLY as a signed .pkg on GitHub releases (no brew channel), so a re-run of
-#     this role installs the latest. hyperi-update does not touch it. Optional:
-#     warn, never abort.
+#   - Apple `container`: native per-container micro-VMs on Apple silicon. The
+#     homebrew-core formula (Tier 1, brew upgrade sweeps it), which needs Apple
+#     silicon and macOS 26. Optional: warn, never abort.
 # Both are wrapped warn-and-continue so a single failure does not sink the soe run.
 
 - name: Install colima (Docker daemon for macOS)
@@ -167,53 +166,52 @@
           {{ deploy_warnings | default([])
              + ['colima-wiring: ' ~ (ansible_failed_result.msg | default('autostart/socket setup failed'))] }}
 
+# The formula declares `depends_on arch: :arm64` and `macos: :tahoe`, so any
+# other Mac would only collect a warning.
 - name: Install Apple container (native macOS containers)
+  when:
+    - hyperi_arch_deb == 'arm64'
+    - ansible_facts['distribution_major_version'] | int >= 26
   block:
-    - name: Get the latest Apple container release
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/apple/container/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: soe_container_release
+    - name: Install Apple container via Homebrew
+      community.general.homebrew:
+        name: container
+        state: present
+      become: false
+      environment: "{{ homebrew_env }}"
+
+    # Earlier runs of this role installed Apple's signed .pkg into /usr/local.
+    # Its receipt is the record of exactly which files that put there.
+    - name: Check for the Apple container .pkg receipt
+      ansible.builtin.command:
+        cmd: pkgutil --pkg-info com.apple.container-installer
+      register: soe_container_pkg_receipt
+      changed_when: false
+      failed_when: false
       check_mode: false
 
-    # Prefer the signed/notarized .pkg (avoids a Gatekeeper bypass); fall back to
-    # any .pkg. Concatenating [signed] + [all] and taking `first` gives that
-    # preference in one expression.
-    - name: Select the container installer package (prefer the signed .pkg)
-      ansible.builtin.set_fact:
-        soe_container_pkg_url: >-
-          {{ ((soe_container_release.json.assets
-                | selectattr('name', 'search', '(?i)signed.*\.pkg$')
-                | map(attribute='browser_download_url') | list)
-              + (soe_container_release.json.assets
-                | selectattr('name', 'search', '\.pkg$')
-                | map(attribute='browser_download_url') | list)) | first }}
+    # Removed only once the brew copy is in place, so the host is never left
+    # without a container CLI.
+    - name: Remove the Apple container .pkg install
+      when: soe_container_pkg_receipt.rc == 0
+      block:
+        # The uninstaller refuses while the services run, and as root it would
+        # only look in root's launchd domain, not the user's where they live.
+        - name: Stop the .pkg container services
+          ansible.builtin.command:
+            cmd: /usr/local/bin/container system stop
+          become: false
+          register: soe_container_pkg_stop
+          changed_when: soe_container_pkg_stop.rc == 0
+          failed_when: false
 
-    # Root-owned, randomly-named temp (mkstemp, mode 0600) -- NOT a predictable
-    # world-writable /tmp path a local user could swap before the root installer
-    # reads it (TOCTOU). The `always` block removes it on success OR failure.
-    - name: Create a root-owned temp path for the installer
-      ansible.builtin.tempfile:
-        state: file
-        suffix: .pkg
-      become: true
-      register: soe_container_tmp
-
-    - name: Download the Apple container installer
-      ansible.builtin.get_url:
-        url: "{{ soe_container_pkg_url }}"
-        dest: "{{ soe_container_tmp.path }}"
-        mode: '0600'
-        force: true
-      become: true
-
-    - name: Install Apple container from the signed package
-      ansible.builtin.command:
-        cmd: "installer -pkg {{ soe_container_tmp.path }} -target /"
-      become: true
-      register: soe_container_install
-      changed_when: "'successful' in (soe_container_install.stdout | lower)"
+        # -k keeps ~/Library/Application Support/com.apple.container, which the
+        # brew copy reads as its own data.
+        - name: Uninstall the .pkg with Apple's own uninstaller
+          ansible.builtin.command:
+            cmd: /usr/local/bin/uninstall-container.sh -k
+            removes: /usr/local/bin/uninstall-container.sh
+          become: true
 
   rescue:
     - name: Record that Apple container did not install
@@ -221,12 +219,4 @@
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['apple-container: ' ~ (ansible_failed_result.msg | default('download/install failed'))] }}
-
-  always:
-    - name: Remove the downloaded installer
-      ansible.builtin.file:
-        path: "{{ soe_container_tmp.path }}"
-        state: absent
-      become: true
-      when: soe_container_tmp.path is defined
+             + ['apple-container: ' ~ (ansible_failed_result.msg | default('brew install or .pkg removal failed'))] }}
