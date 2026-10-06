@@ -2,6 +2,20 @@
 # Developer-GUI role defaults.
 
 # ============================================================================
+# Ghostty on Ubuntu -- ppa:mkasberg/ghostty-ubuntu
+# ============================================================================
+# Launchpad builds the PPA per Ubuntu series, and a new series appears only
+# once Launchpad opens it. Oldest first; the last entry is the fallback for a
+# series the PPA does not publish yet.
+ghostty_ppa_supported_suites:
+  - noble
+  - resolute
+# Launchpad's signing key for the PPA, as its archive API reports it
+# (signing_key_fingerprint on ~mkasberg/+archive/ubuntu/ghostty-ubuntu).
+ghostty_ppa_signing_fingerprint: 0721FDF5FECB88DC6920361657C8EF455CEAE491  # gitleaks:allow -- public key fingerprint
+ghostty_ppa_signing_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x{{ ghostty_ppa_signing_fingerprint }}"
+
+# ============================================================================
 # VSCode privacy + AI-upsell de-nag profile -- OPT-IN (hyperi-io/hyperi-developer#7)
 # ============================================================================
 # Off by default: this rewrites part of a personal settings.json, so it goes

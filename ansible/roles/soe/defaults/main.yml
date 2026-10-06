@@ -1,4 +1,14 @@
 ---
+# Claude Code on Linux comes from Anthropic's signed apt/dnf repository. The
+# fingerprint is the release signing key published at
+# https://code.claude.com/docs/en/setup, checked before the key is trusted.
+soe_claude_key_url: https://downloads.claude.ai/keys/claude-code.asc
+soe_claude_key_fingerprint: 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE  # gitleaks:allow -- public key fingerprint
+# `stable` can lag a just-launched model by about a week; set `latest` to follow every release.
+soe_claude_channel: stable
+soe_claude_apt_repo_url: "https://downloads.claude.ai/claude-code/apt/{{ soe_claude_channel }}"
+soe_claude_rpm_repo_url: "https://downloads.claude.ai/claude-code/rpm/{{ soe_claude_channel }}"
+
 # Arcane -- container management UI (https://getarcane.app), OPT-IN.
 #
 # Off by default: it is a web UI holding the Docker socket, so it goes on only

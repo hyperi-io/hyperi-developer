@@ -24,11 +24,11 @@
   failed_when: verify_openvpn.rc != 0
   when: ansible_facts['distribution'] == 'MacOSX'
 
-# Run as the user whose home this is, not as whoever connected. `become: false`
-# means the connection user, and on a fleet machine that is a service account
-# (hyperi-infra connects as `ubuntu`) with no access to the desktop user's home.
+# Run as the desktop user, not whoever connected: on a fleet machine the
+# connection user is a service account (hyperi-infra connects as `ubuntu`), and
+# claude would start up against that account's home instead.
 - name: Verify Claude Code CLI (Linux)
-  ansible.builtin.command: "{{ user_home }}/.local/bin/claude --version"
+  ansible.builtin.command: /usr/bin/claude --version
   register: verify_claude
   changed_when: false
   failed_when: verify_claude.rc != 0

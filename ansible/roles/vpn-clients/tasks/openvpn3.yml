@@ -7,10 +7,16 @@
 
 - name: Install OpenVPN 3 (Fedora)
   block:
+    # dnf5's own copr command, because community.general.copr needs dnf4's python3-dnf, which Fedora Server, cloud and minimal images lack.
+    - name: Ensure the dnf5 copr plugin is present
+      ansible.builtin.dnf:
+        name: dnf5-plugins
+        state: present
+
     - name: Enable OpenVPN 3 COPR repository
-      community.general.copr:
-        name: dsommers/openvpn3
-        state: enabled
+      ansible.builtin.command:
+        argv: [dnf, -y, copr, enable, dsommers/openvpn3]
+        creates: /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:dsommers:openvpn3.repo
 
     - name: Install OpenVPN 3 client
       ansible.builtin.dnf:

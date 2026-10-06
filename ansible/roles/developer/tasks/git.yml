@@ -25,13 +25,27 @@
 
 - name: Install latest Git via PPA (Ubuntu)
   block:
-    # A minimal Ubuntu ships neither: gpg reads the key fingerprint below, and
-    # hyperi-update shells out to curl.
-    - name: Ensure gpg and curl are present
+    # Runs before any apt call, because another source for this PPA with a
+    # different key (`add-apt-repository ppa:git-core/ppa` writes one) stops apt
+    # reading anything.
+    - name: Remove other apt sources for the git-core PPA
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: apt_source_exclusive.yml
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_apt_source_name: git
+
+    # A minimal Ubuntu ships none of these: gpg reads the key fingerprint below,
+    # hyperi-update shells out to curl, and deb822_repository needs python3-debian.
+    - name: Ensure gpg, curl and python3-debian are present
       ansible.builtin.apt:
         name:
           - curl
           - gpg
+          - python3-debian
         state: present
         update_cache: true
 

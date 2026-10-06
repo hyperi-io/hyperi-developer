@@ -1,10 +1,9 @@
 ---
 # Claude Code CLI installation. THE BINARY ONLY.
 #
-# Linux: Native binary download with SHA256 verification from manifest
-# macOS: Homebrew cask
-#
-# Binary location: ~/.local/bin/claude (installed by 'claude install')
+# Linux: Anthropic's signed apt/dnf repository, stable channel, swept by the
+#        host's own package updates.
+# macOS: Homebrew cask.
 #
 # The HyperI managed settings moved to claude_policy.yml, and the split is the
 # point. Both used to live here under the same `claude` tag, so `--tags claude`
@@ -14,14 +13,6 @@
 # carry org policy, and this file is reachable from outside soe by design:
 # developer-ai's Codex plugin hard-requires Claude Code, and telling someone to
 # run `--tags claude` has to mean only that.
-
-# ============================================================================
-# Distribution URL
-# ============================================================================
-
-- name: Set Claude Code distribution URL
-  ansible.builtin.set_fact:
-    claude_gcs_bucket: "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
 
 # ============================================================================
 # Cleanup deprecated npm installation
@@ -50,101 +41,221 @@
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================
-# Linux - Native binary installation with SHA256 verification
+# Linux - Anthropic's package repository
 # ============================================================================
 
-- name: Install Claude Code native binary (Linux)
+- name: Install Claude Code from Anthropic's package repository (Linux)
+  vars:
+    soe_claude_key_dest: >-
+      {{ '/etc/apt/keyrings/claude-code.asc' if ansible_facts['distribution'] == 'Ubuntu'
+         else '/etc/pki/rpm-gpg/RPM-GPG-KEY-claude-code' }}
+    # Check mode adds no repo, so there is nothing to install from yet.
+    soe_claude_repo_pending: >-
+      {{ ansible_check_mode and ((soe_claude_deb_repo | default({})) is changed
+         or (soe_claude_rpm_repo | default({})) is changed) }}
+  become: true
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   block:
-    - name: Fetch latest Claude Code version
-      ansible.builtin.uri:
-        url: "{{ claude_gcs_bucket }}/latest"
-        return_content: true
-      register: claude_latest_version
-      check_mode: false
+    # Runs before any apt call, because another source for this repository
+    # with a different key stops apt reading anything.
+    - name: Remove other apt sources for the Claude Code repository (Ubuntu)
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: apt_source_exclusive.yml
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_apt_source_name: claude
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Set Claude Code version fact
-      ansible.builtin.set_fact:
-        claude_version: "{{ claude_latest_version.content | trim }}"
+    # A minimal Ubuntu ships gpgv but not gpg, which the key check needs, and
+    # deb822_repository needs python3-debian.
+    - name: Ensure the Claude Code repository prerequisites are present
+      ansible.builtin.package:
+        name: "{{ ['gpg', 'python3-debian'] if ansible_facts['distribution'] == 'Ubuntu' else ['gnupg2'] }}"
+        state: present
 
-    - name: Determine Claude Code platform
-      ansible.builtin.set_fact:
-        claude_platform: >-
-          {%- if ansible_facts['architecture'] == 'x86_64' -%}
-          linux-x64
-          {%- elif ansible_facts['architecture'] == 'aarch64' -%}
-          linux-arm64
-          {%- else -%}
-          unsupported
-          {%- endif -%}
-
-    - name: Fail if unsupported architecture
-      ansible.builtin.fail:
-        msg: "Unsupported architecture for Claude Code: {{ ansible_facts['architecture'] }}"
-      when: claude_platform == 'unsupported'
-
-    - name: Fetch Claude Code manifest for checksum
-      ansible.builtin.uri:
-        url: "{{ claude_gcs_bucket }}/{{ claude_version }}/manifest.json"
-        return_content: true
-      register: claude_manifest
-      check_mode: false
-
-    - name: Set Claude Code checksum fact
-      ansible.builtin.set_fact:
-        claude_checksum: "{{ claude_manifest.json.platforms[claude_platform].checksum }}"
-
-    - name: Create temporary download directory
+    - name: Create the apt keyring directory (Ubuntu)
       ansible.builtin.file:
-        path: /tmp/claude-install
+        path: /etc/apt/keyrings
         state: directory
         mode: '0755'
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Download Claude Code binary with checksum verification
+    # Downloaded under a name no repo trusts, and forced so a rejected download
+    # is replaced on the next run instead of kept by an If-Modified-Since 304.
+    - name: Download the Claude Code signing key
       ansible.builtin.get_url:
-        url: "{{ claude_gcs_bucket }}/{{ claude_version }}/{{ claude_platform }}/claude"
-        dest: /tmp/claude-install/claude
-        mode: '0755'
-        checksum: "sha256:{{ claude_checksum }}"
-      when: not ansible_check_mode
+        url: "{{ soe_claude_key_url }}"
+        dest: "{{ soe_claude_key_dest }}.unverified"
+        mode: '0644'
+        force: true
+      register: soe_claude_key_download
 
-    - name: Create ~/.local/bin directory
-      ansible.builtin.file:
-        path: "{{ user_home }}/.local/bin"
-        state: directory
-        mode: '0755'
-        owner: "{{ actual_user }}"
-        group: "{{ actual_user }}"
-
-    - name: Run claude install to set up launcher and shell integration
+    # Check mode downloads nothing, so there is no new key to read.
+    - name: Read the Claude Code signing key fingerprint
       ansible.builtin.command:
-        cmd: /tmp/claude-install/claude install
+        argv: [gpg, --show-keys, --with-colons, "{{ soe_claude_key_dest }}.unverified"]
+      register: soe_claude_key_read
+      changed_when: false
+      check_mode: false
+      when: not (ansible_check_mode and soe_claude_key_download is changed)
+
+    # Exactly one primary key, and the pinned one: apt and rpm trust every key
+    # in the file, so a second key riding along would be trusted too.
+    - name: Verify the Claude Code signing key fingerprint
+      ansible.builtin.assert:
+        that:
+          - soe_claude_key_primaries | int == 1
+          - soe_claude_key_fpr == soe_claude_key_fingerprint | upper | replace(' ', '')
+        fail_msg: >-
+          {{ soe_claude_key_url }} holds {{ soe_claude_key_primaries }} key(s), first
+          {{ soe_claude_key_fpr or 'missing' }}; expected only {{ soe_claude_key_fingerprint }}
+        quiet: true
+      when: not (ansible_check_mode and soe_claude_key_download is changed)
+      vars:
+        soe_claude_key_primaries: "{{ soe_claude_key_read.stdout_lines | select('match', '^pub:') | list | length }}"
+        soe_claude_key_fpr: >-
+          {{ (soe_claude_key_read.stdout_lines | select('match', '^fpr:') | first | default('')).split(':')[9] | default('') }}
+
+    - name: Install the verified Claude Code signing key
+      ansible.builtin.copy:
+        src: "{{ soe_claude_key_dest }}.unverified"
+        dest: "{{ soe_claude_key_dest }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0644'
+      when: not (ansible_check_mode and soe_claude_key_download is changed)
+
+    - name: Add the Claude Code apt repository (Ubuntu)
+      ansible.builtin.deb822_repository:
+        name: claude-code
+        types: deb
+        uris: "{{ soe_claude_apt_repo_url }}"
+        suites: "{{ soe_claude_channel }}"
+        components: main
+        signed_by: /etc/apt/keyrings/claude-code.asc
+        state: present
+      register: soe_claude_deb_repo
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # Both the packages and the repo metadata are signed with the same key.
+    - name: Add the Claude Code repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: claude-code
+        description: Claude Code
+        baseurl: "{{ soe_claude_rpm_repo_url }}"
+        enabled: true
+        gpgcheck: true
+        repo_gpgcheck: true
+        gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-claude-code
+      register: soe_claude_rpm_repo
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Install Claude Code (Ubuntu)
+      ansible.builtin.apt:
+        name: claude-code
+        state: present
+        update_cache: true
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not soe_claude_repo_pending
+
+    - name: Install Claude Code (Fedora)
+      ansible.builtin.dnf:
+        name: claude-code
+        state: present
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - not soe_claude_repo_pending
+
+    # The native copy in ~/.local/bin precedes /usr/bin on the PATH, so it goes once the package copy runs.
+    - name: Check the packaged Claude Code runs
+      ansible.builtin.command:
+        argv: [/usr/bin/claude, --version]
       become: true
       become_user: "{{ actual_user }}"
-      environment:
-        HOME: "{{ user_home }}"
-      register: claude_install_result
-      changed_when: claude_install_result.rc == 0
+      register: soe_claude_package_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
 
-    - name: Remove temporary download directory
+    - name: Inspect the native Claude Code launcher
+      ansible.builtin.stat:
+        path: "{{ user_home }}/.local/bin/claude"
+        follow: false
+      register: soe_claude_native_launcher
+
+    # A launcher linking into the native installer's versions directory is the native install; any other file there is left alone.
+    - name: Decide whether a native Claude Code install is to be replaced
+      ansible.builtin.set_fact:
+        soe_claude_native_found: >-
+          {{ soe_claude_package_check.rc == 0
+             and soe_claude_native_launcher.stat.islnk | default(false)
+             and soe_claude_native_launcher.stat.lnk_target is match('^' ~ (user_home ~ '/.local/share/claude/versions/') | regex_escape) }}
+
+    # The staging and locks directories belong to the native updater, which the package build does not run.
+    - name: Remove the native Claude Code install the package replaces
       ansible.builtin.file:
-        path: /tmp/claude-install
+        path: "{{ item }}"
         state: absent
+      loop:
+        - "{{ user_home }}/.local/bin/claude"
+        - "{{ user_home }}/.local/share/claude"
+        - "{{ user_home }}/.cache/claude/staging"
+        - "{{ user_home }}/.local/state/claude/locks"
+      when: soe_claude_native_found | bool
 
-    - name: Display Claude Code installation info
-      ansible.builtin.debug:
-        msg: "Claude Code {{ claude_version }} installed ({{ claude_platform }})"
+    # A top-level "installMethod": "native" makes `claude doctor` offer `claude install`,
+    # which would restore the shadowing copy; failed_when covers a user with no config file.
+    - name: Clear the native install method from the user's Claude Code config
+      ansible.builtin.replace:
+        path: "{{ user_home }}/.claude.json"
+        regexp: '^  "installMethod": "native",\n'
+        replace: ''
+      failed_when: false
+      when:
+        - soe_claude_package_check.rc == 0
+        - not soe_claude_native_launcher.stat.exists or soe_claude_native_found | bool
 
-  # Check mode previews the download, so `claude install` runs against a binary
-  # that is not there and the whole soe run would otherwise stop at a preview.
   rescue:
+    # Deleted as a file on a key mismatch, leaving the trusted key: deb822_repository state=absent would delete that keyring too.
+    - name: Remove the Claude Code apt repository after a key mismatch (Ubuntu)
+      ansible.builtin.file:
+        path: "{{ hyperi_exclusive_apt_sources.claude.file }}"
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove the Claude Code repository after a key mismatch (Fedora)
+      ansible.builtin.yum_repository:
+        name: claude-code
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Fedora'
+
+    - name: Remove the Claude Code apt source if apt reported a conflicting key (Ubuntu)
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: apt_source_exclusive.yml
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_apt_source_name: claude
+        system_cleanup_apt_source_failed: "{{ ansible_failed_result }}"
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
     - name: Record that Claude Code did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
              + ['Claude Code: ' ~ (ansible_failed_task.name | default('unknown task'))
                 ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
-
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # ============================================================================
 # macOS - Homebrew cask installation

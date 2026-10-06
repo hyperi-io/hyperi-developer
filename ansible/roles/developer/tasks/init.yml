@@ -193,6 +193,22 @@
   ansible.builtin.debug:
     msg: "GNOME desktop: {{ 'Installed' if has_gnome else 'Not installed' }}"
 
+# Runs before the first apt task in the play, so a host where another source now
+# duplicates one of ours with a different key reads its sources again.
+- name: Remove apt sources that conflict with the ones the roles wrote (Ubuntu)
+  ansible.builtin.include_role:
+    name: system_cleanup
+    tasks_from: apt_source_exclusive.yml
+    apply:
+      tags: ['always']
+  vars:
+    system_cleanup_apt_source_name: "{{ developer_owned_apt_source }}"
+    system_cleanup_apt_source_if_present: true
+  loop: "{{ hyperi_exclusive_apt_sources | list }}"
+  loop_control:
+    loop_var: developer_owned_apt_source
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
 # Install psutil for dconf module (required for GNOME settings tasks)
 - name: Install psutil for dconf module (Fedora)
   ansible.builtin.dnf:

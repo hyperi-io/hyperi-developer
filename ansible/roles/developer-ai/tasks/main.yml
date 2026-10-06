@@ -20,8 +20,8 @@
 # a machine that asked for AI tooling. The plugin's gate names the `claude` tag
 # instead, which installs Claude Code and nothing else.
 #
-# EVERY TOOL HERE IS PER USER. Claude Code, Codex and the plugin all live under
-# the TARGET user's home, so `install.sh`'s once-per-user loop is what makes a
+# EVERY TOOL HERE IS PER USER. Codex and the plugin both live under the TARGET
+# user's home, so `install.sh`'s once-per-user loop is what makes a
 # multi-user box come out right, and every task below runs under become_user
 # rather than as the connecting account.
 #
