@@ -52,17 +52,17 @@ Which major matters differs per tool:
 
 Nothing is exported (`LLVM_PROFDATA`, `LLVM_COV`, `LIBCLANG_PATH`): a pinned path goes stale on the next `rustup update`.
 
-**Ubuntu** takes apt.llvm.org's VERSIONED suite (`llvm-toolchain-<codename>-<N>`) and only that. The unversioned suite is the development snapshot, and its unversioned packages replace the archive's clang, llvm and lld box-wide. The key is checked against its published fingerprint before anything trusts it. The keyring is `/usr/share/keyrings/llvm.gpg`, the same path hyperi-ci uses, because two Signed-By values for one suite stop apt reading any source list. If hyperi-ci's `llvm.list` names the same suite, that one line is removed.
+**Ubuntu** takes apt.llvm.org's VERSIONED suite (`llvm-toolchain-<codename>-<N>`) and only that. The unversioned suite is the development snapshot, and its unversioned packages replace the archive's clang, llvm and lld box-wide. The key file must hold exactly one key, with the published fingerprint, before anything trusts it. The keyring is `/usr/share/keyrings/llvm.gpg`, the same path hyperi-ci uses. Two Signed-By values for one suite stop apt reading any source list, so a one-line entry for the same suite anywhere else (hyperi-ci's `llvm.list`, upstream's `llvm.sh`) is removed once ours is written. A deb822 file someone else wrote for that suite is used as is, with a warning. A failed run puts the sources back as it found them.
 
 `/usr/local/bin` gets `clang`, `clang++`, `ld.lld`, `llvm-bolt`, `merge-fdata` and `perf2bolt` pointing at `/usr/bin/<tool>-<N>`, so `hyperi-rust-setup` names LLVM N as the cargo linker. A real file, or a link not pointing at some `/usr/bin/<tool>-<major>`, is left alone and reported. Unversioned `bolt` on Ubuntu is the Thunderbolt daemon, so the package is always `bolt-<N>`.
 
 `apt full-upgrade` (and `hyperi-update`) moves patch releases within N. A new major needs a re-converge. `rust_llvm_remove_previous: true` removes the old major's packages when it moves.
 
-**Fedora** installs its own LLVM; there is no third-party repo. Fedora 44 ships 22, so with `latest` (23 as of 2026-10) the run warns that cross-language LTO with a rustc on 23 will fail until Fedora catches up. PGO and coverage still work. A pinned major older than Fedora's takes the compat packages (`llvm21`, `clang21`, ...).
+**Fedora** installs its own LLVM; there is no third-party repo. Fedora 44 ships 22 and rustc is on 23 (as of 2026-10), so the run warns that cross-language LTO with that rustc fails until Fedora catches up. PGO and coverage still work. A pinned major older than Fedora's takes the compat packages (`llvm21`, `clang21`, ...).
 
-**macOS** installs brew's `llvm` and `lld` (`llvm@N` and `lld@N` for a pinned older major). Both are keg-only, so Apple's clang stays the default. Homebrew builds no BOLT for macOS.
+**macOS** installs brew's `llvm` and `lld` (`llvm@N`, plus `lld@N` from 19 up, for a pinned older major). `llvm` is keg-only, so Apple's clang stays the default. `lld` is not: `ld.lld`, `ld64.lld` and `wasm-ld` land on PATH, which is harmless because Apple's linker is `ld`. Homebrew builds no BOLT for macOS.
 
-At the end the run compares the system major with rustc's. Older warns. Newer is fine, but merge Rust profiles with rustup's llvm-profdata, not the system one.
+At the end the run compares the system major with rustc's. Older warns. Newer is fine, but merge Rust profiles with rustup's llvm-profdata, not the system one. A pinned major the host cannot package also warns.
 
 ## Keeping the caches bounded
 

@@ -918,11 +918,16 @@
 # good config back, and pass, while cargo went on reading a stale file
 # somewhere else. A leftover config in the location that is NOT in effect is
 # exactly the trap this whole change exists to close.
-# The linker gets the same check: it is the /usr/local/bin/clang link on Ubuntu,
-# so a link left pointing at a removed LLVM major breaks every build the same way.
+# The host linker gets the same check: it is the /usr/local/bin/clang link on
+# Ubuntu, so a link left pointing at a removed LLVM major breaks every build the
+# same way.
 - name: Verify no cargo config names an unusable rustc-wrapper or linker
   when: rust_verify_wrapper | default(true) | bool
   tags: ['rust-cache', 'rust-llvm']
+  vars:
+    developer_rust_host_triple: >-
+      {{ hyperi_arch_gnu ~ ('-apple-darwin' if ansible_facts['distribution'] == 'MacOSX'
+                            else '-unknown-linux-gnu') }}
   block:
     - name: Read every candidate cargo config
       ansible.builtin.slurp:
@@ -1005,20 +1010,38 @@
             | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
             | list | length > 0
 
-    # Plain and dotted keys, both quote styles, one line each -- the same
-    # reasoning as the rustc-wrapper extraction above.
-    - name: Extract the linker each config names
+    # The host target only: that is the table hyperi-rust-setup writes, and a
+    # cross target's linker is installed when that cross build is set up, not
+    # by this role. Table and dotted forms, quoted triple or bare.
+    - name: Extract the host target's linker from each config
       ansible.builtin.set_fact:
         developer_rust_linkers: >-
-          {{ developer_rust_cargo_configs.results
-             | selectattr('content', 'defined') | map(attribute='content')
-             | map('b64decode') | join('\n')
-             | regex_findall('(?m)^[ \t]*(?:target\.[^=\n]+\.)?linker[ \t]*=[ \t]*["\x27]([^"\x27\n]+)["\x27]')
+          {{ (_text | regex_findall('(?ms)^[ \t]*\[target\.(?:"' ~ _t ~ '"|' ~ _t ~ ')\][ \t]*$(.*?)(?=^[ \t]*\[|\Z)')
+              | map('regex_findall', '(?m)^[ \t]*linker[ \t]*=[ \t]*["\x27]([^"\x27\n]+)["\x27]') | flatten)
+             + (_text | regex_findall('(?m)^[ \t]*target\.(?:"' ~ _t ~ '"|' ~ _t ~ ')\.linker[ \t]*=[ \t]*["\x27]([^"\x27\n]+)["\x27]'))
              | unique }}
+      vars:
+        _text: >-
+          {{ developer_rust_cargo_configs.results | selectattr('content', 'defined')
+             | map(attribute='content') | map('b64decode') | join('\n') }}
+        _t: "{{ developer_rust_host_triple | regex_escape }}"
 
-    - name: Check that each configured linker resolves
+    # PATH first, then the toolchain's own bin directory, which is where
+    # `rust-lld` lives and is never on PATH.
+    - name: Check that the host target's linker resolves
       ansible.builtin.command:
-        argv: [bash, -lc, '[ -x "$(command -v -- "$1")" ]', bash, "{{ item }}"]
+        argv:
+          - bash
+          - -lc
+          - |
+            [ -x "$(command -v -- "$1")" ] && exit 0
+            for r in rustc "${CARGO_HOME:-$HOME/.cargo}/bin/rustc"; do
+                s=$("$r" --print sysroot 2>/dev/null) && [ -x "$s/lib/rustlib/$2/bin/$1" ] && exit 0
+            done
+            exit 1
+          - bash
+          - "{{ item }}"
+          - "{{ developer_rust_host_triple }}"
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
       register: developer_rust_linker_checks
@@ -1027,10 +1050,10 @@
       check_mode: false
       loop: "{{ developer_rust_linkers }}"
 
-    - name: Fail when a cargo config names a linker that does not exist
+    - name: Fail when a cargo config names a host linker that does not exist
       ansible.builtin.fail:
         msg: >-
-          A cargo config on this host sets linker =
+          A cargo config on this host sets the host target's linker =
           "{{ developer_rust_linker_checks.results
               | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0)
               | map(attribute='item') | join('", "') }}",
