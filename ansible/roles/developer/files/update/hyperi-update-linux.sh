@@ -6,22 +6,23 @@
 #   * System packages  (apt or dnf, incl. 3rd-party repos: docker, vscode,
 #                       chrome, brave, git, gh, node, k8s, azure, gcloud,
 #                       opentofu, ...)
-#   * Snap             (if installed)                   — needs sudo
-#   * Flatpak          (apps + runtimes)                — user
-#   * Firmware         (fwupd)                          — needs sudo
-#   * uv tools         (gnome-extensions-cli, ...)      — user
-#   * rustup           (Rust toolchains)                — user
-#   * Go toolchain     (/usr/local/go, no upstream repo) — needs sudo
-#   * fnm Node majors  (the n-1 Node, per user)         — user
-#   * Claude Code CLI  (self-installed under ~/.local)  — user
-#   * Codex CLI        (re-run of the installer)        - user
-#   * Codex plugin     (claude plugin update)           - user
+#   * Snap             (if installed)                   -- needs sudo
+#   * Flatpak          (apps + runtimes)                -- user
+#   * Firmware         (fwupd)                          -- needs sudo
+#   * uv tools         (gnome-extensions-cli, ...)      -- user
+#   * uv Pythons       (patch releases of each minor)   -- user
+#   * rustup           (Rust toolchains)                -- user
+#   * cargo, go, npm and pnpm global tools              -- user
+#   * Go toolchain     (/usr/local/go, no upstream repo) -- needs sudo
+#   * fnm Node majors  (the n-1 Node, per user)         -- user
+#   * Release binaries (/usr/local/bin, no repo/snap)   -- needs sudo
+#   * Claude Code CLI  (self-installed under ~/.local)  -- user
+#   * Codex CLI        (re-run of the installer)        -- user
+#   * Codex plugin     (claude plugin update)           -- user
 #
-# Note on the dev stacks: node, gh, docker and git come from UPSTREAM signed
-# repos, so "System packages" above already carries them to latest -- there is
-# nothing stack-specific to do for them here. Only the two that have no
-# upstream repo (the Go toolchain, and fnm's Node majors) need their own
-# sections, plus rustup, which manages its own toolchains.
+# Anything a package repo, snap or flatpak carries is left to the system-package
+# sections, and the sections after them cover only what nothing at the OS level
+# refreshes.
 #
 # Each section is independent and self-guarding: a tool that isn't installed is
 # skipped (printed, not fatal), and a failing step is recorded and reported in
@@ -58,10 +59,13 @@ fi
 CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
 
 # Make user-level tools reachable even when launched from a GUI/.desktop entry
-# that doesn't source the login shell (rustup and the cargo tools live in the
-# cargo home, uv and claude in ~/.local/bin, Go in /usr/local/go/bin and the
-# go-installed tools in ~/go/bin).
-export PATH="$HOME/.local/bin:$CARGO_BIN:/usr/local/go/bin:$HOME/go/bin:$PATH"
+# or the systemd unit, neither of which sources the login shell (rustup and the
+# cargo tools live in the cargo home, uv and claude in ~/.local/bin, Go in
+# /usr/local/go/bin, the go-installed tools in ~/go/bin and the pnpm globals in
+# PNPM_HOME).
+export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+export FNM_DIR="${FNM_DIR:-$HOME/.local/share/fnm}"
+export PATH="$HOME/.local/bin:$CARGO_BIN:/usr/local/go/bin:$HOME/go/bin:$PNPM_HOME:$PNPM_HOME/bin:$PATH"
 
 ASSUME_YES=0
 
@@ -149,12 +153,13 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     have snap     && printf '  - snap packages\n'
     have flatpak  && printf '  - flatpak apps and runtimes\n'
     have fwupdmgr && printf '  - device firmware\n'
-    have uv       && printf '  - uv tools\n'
+    have uv       && printf '  - uv tools and uv-managed Pythons\n'
     have rustup   && printf '  - rust toolchains\n'
     have cargo-install-update && printf '  - cargo-installed tools\n'
-    have go       && printf '  - go-installed tools (gopls, govulncheck)\n'
+    have go       && printf '  - go-installed tools in ~/go/bin (gopls, govulncheck, gosec, flarectl)\n'
     have npm      && printf '  - npm global tools + pnpm\n'
-    printf '  - static release binaries (kind, argocd, kubeconform, kube-linter, dive, kustomize, k9s, yq, terraform-docs, golangci-lint)\n'
+    have pnpm     && printf '  - pnpm global tools\n'
+    printf '  - release binaries in /usr/local/bin that no package covers\n'
     have claude   && printf '  - Claude Code CLI\n'
     have codex    && printf '  - Codex CLI (re-run of the official installer)\n'
     have claude   && printf '  - the Codex plugin for Claude Code, if installed\n'
@@ -176,6 +181,14 @@ fi
 #
 # The keepalive only matters when a password was actually entered: NOPASSWD
 # leaves no timestamp to refresh.
+# Stops the keepalive and removes the GitHub token file, however the run ends.
+cleanup() {
+    [[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+    [[ -n "${GH_AUTH_HEADER:-}" ]] && rm -f "$GH_AUTH_HEADER"
+    return 0
+}
+trap cleanup EXIT
+
 section "Authenticating (sudo)"
 if sudo -n true 2>/dev/null; then
     ok "sudo authenticated (passwordless)"
@@ -183,7 +196,6 @@ elif [[ -t 0 ]] && sudo -v; then
     ok "sudo authenticated"
     ( while true; do sudo -n true 2>/dev/null; sleep 50; kill -0 "$$" 2>/dev/null || exit; done ) &
     SUDO_KEEPALIVE_PID=$!
-    trap '[[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
 else
     printf '%s    \xe2\x9c\x97 sudo authentication failed — aborting%s\n' "$RED" "$RESET"
     printf '%s    No passwordless sudo and no terminal to prompt on.%s\n' "$RED" "$RESET"
@@ -277,9 +289,22 @@ else
     skip "uv not found"
 fi
 
+# --- uv-managed Pythons ----------------------------------------------------
+# Nothing else moves a uv-installed Python to a newer patch. `uv python upgrade`
+# touches only the minors already installed and, without --default, adds no
+# python or python3 shim.
+section "uv Pythons"
+if ! have uv; then
+    skip "uv not found"
+elif [[ "$(uv python list --only-installed --managed-python --output-format json 2>/dev/null)" != *'"version"'* ]]; then
+    skip "uv manages no Pythons"
+else
+    run "uv python upgrade" uv python upgrade
+fi
+
 # --- rustup toolchains -----------------------------------------------------
-# Updates the Rust toolchains. NOTE: cargo-installed binaries (nextest, deny,
-# bacon, ...) are not refreshed by rustup; reinstall them with cargo if needed.
+# Updates the Rust toolchains and rustup itself. The cargo-installed binaries
+# are the next section's job.
 section "rustup toolchains"
 # rustup proxies in the cargo home with no rustup on PATH means the toolchain is
 # not where the environment says it is, which is a fault to report, not a skip.
@@ -308,29 +333,54 @@ else
 fi
 
 # --- go-installed tools ----------------------------------------------------
-# No bulk updater for `go install` tools, so re-install @latest the ones that
-# are already present (this adds nothing that was not there before).
+# No bulk updater for `go install` tools, so each one the roles put in ~/go/bin
+# is re-installed @latest. Keyed on the binary being in ~/go/bin rather than on
+# PATH, because a dnf gosec or govulncheck would otherwise gain a second copy.
 section "go tools"
+GO_HOME="$HOME/go"
 if have go; then
+    go_found=0
     for gt in \
         "gopls:golang.org/x/tools/gopls@latest" \
-        "govulncheck:golang.org/x/vuln/cmd/govulncheck@latest"; do
+        "govulncheck:golang.org/x/vuln/cmd/govulncheck@latest" \
+        "gosec:github.com/securego/gosec/v2/cmd/gosec@latest" \
+        "flarectl:github.com/cloudflare/cloudflare-go/cmd/flarectl@latest"; do
         bin="${gt%%:*}"; mod="${gt#*:}"
-        have "$bin" && run "go install $bin" go install "$mod"
+        [[ -x "$GO_HOME/bin/$bin" ]] || continue
+        go_found=1
+        # "<module> <version>" as built into the binary, so a tool already at the
+        # module's latest release is not rebuilt.
+        built="$(go version -m "$GO_HOME/bin/$bin" 2>/dev/null | awk '$1 == "mod" {print $2, $3; exit}')"
+        if [[ -n "$built" ]] && [[ "$(go list -m -f '{{.Version}}' "${built% *}@latest" 2>/dev/null)" == "${built#* }" ]]; then
+            ok "$bin ${built#* } is current"
+            continue
+        fi
+        run "go install $bin" env GOPATH="$GO_HOME" GOBIN="$GO_HOME/bin" go install "$mod"
     done
+    [[ "$go_found" -eq 1 ]] || skip "no go-installed tools in $GO_HOME/bin"
 else
     skip "go not found"
 fi
 
-# --- npm global tools ------------------------------------------------------
-# maid, semantic-release, typescript, tsx, ts-node -- global npm packages; plus
-# pnpm via corepack (it rides Node, but pin it to latest here).
+# --- npm and pnpm global tools ---------------------------------------------
+# semantic-release, maid and wrangler are npm globals. eslint, prettier,
+# typescript, tsx and ts-node are pnpm globals, which `npm update -g` never
+# sees. pnpm itself is corepack's, so it is re-activated at latest first.
 section "npm global tools"
 if have npm; then
     run "npm update -g" npm update -g
     have corepack && run "corepack pnpm@latest" corepack prepare pnpm@latest --activate
 else
     skip "npm not found"
+fi
+
+section "pnpm global tools"
+if have pnpm; then
+    # --latest, because the roles install each global at its latest release and
+    # the ranges pnpm recorded would otherwise hold them at that major.
+    run "pnpm update -g --latest" pnpm update -g --latest
+else
+    skip "pnpm not found"
 fi
 
 # --- Go toolchain ----------------------------------------------------------
@@ -409,22 +459,39 @@ else
     skip "fnm not found"
 fi
 
-# --- Tier 3: static binaries with no repo/snap/lang-manager ----------------
-# These ship only as a GitHub release asset, so nothing above refreshes them --
-# re-fetch the latest here. Each downloads to a temp path, is checked for the ELF
-# magic, and is only moved into place on success, so a failed or corrupt fetch
-# never breaks the working copy. Only tools already installed are touched, and
-# k9s is Ubuntu-only (Fedora's k9s is the dnf package -- re-fetching would shadow
-# it). Still uncovered: aws-vault and tea -- re-run the playbook to refresh those.
-section "Static binaries (GitHub releases)"
+# --- Release binaries ------------------------------------------------------
+# These ship only as a release asset, with no package repo, snap or language
+# manager to carry them, so the latest is fetched here. A download replaces the
+# working copy only after it matches any published digest and yields an ELF
+# binary, so a failed or corrupt fetch never breaks what is installed.
+#
+# Only a binary already in /usr/local/bin is touched, and only on the distro
+# whose role installs it there, so a tool the other distro packages is never
+# shadowed by a second copy.
+section "Release binaries"
 
-gh_latest_tag() {  # <repo> -> newest release tag (empty on failure)
-    curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
-        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1
-}
+# Holds the source and digest of each binary installed here, so a release that
+# has not moved is recognised without downloading it again.
+STAMP_DIR=/var/lib/hyperi-update
+
+# A GitHub release's download directory, as a refetch template.
+GH_DL='https://github.com/{REPO}/releases/download/{TAG}'
+
+# api.github.com allows 60 anonymous requests an hour per IP, so a token in the
+# environment is sent when there is one, from a 0600 file rather than argv.
+gh_token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+if [[ -n "$gh_token" ]]; then
+    GH_AUTH_HEADER="$(mktemp)"
+    printf 'Authorization: Bearer %s\n' "$gh_token" >"$GH_AUTH_HEADER"
+fi
+unset gh_token
 
 is_elf() {  # <file> -> 0 if it begins with the ELF magic (7f 45 4c 46)
     [[ "$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]]
+}
+
+sha256_of() {  # <file> -> its sha256, empty when unreadable
+    sha256sum "$1" 2>/dev/null | cut -d' ' -f1
 }
 
 # installed_local <name> -> 0 if /usr/local/bin/<name> is a file under
@@ -435,116 +502,272 @@ installed_local() {
     real="$(readlink -e "/usr/local/bin/$1" 2>/dev/null)" && [[ -f "$real" && "$real" == /usr/local/* ]]
 }
 
-# refetch_raw <name> <repo> <asset-template>  -- a bare executable asset.
-# Template may use {TAG} and {ARCH}.
-refetch_raw() {
-    local name="$1" repo="$2" tmpl="$3" tag asset url tmp
-    installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
-    tag="$(gh_latest_tag "$repo")"
-    [[ -n "$tag" ]] || { FAILURES+=("$name (no release tag)"); return; }
-    asset="${tmpl//\{TAG\}/$tag}"; asset="${asset//\{ARCH\}/$ARCH_DEB}"
-    url="https://github.com/$repo/releases/download/$tag/$asset"
-    tmp="$(mktemp)"
-    if curl -fsSL "$url" -o "$tmp" && [[ -s "$tmp" ]] && is_elf "$tmp"; then
-        sudo install -m 0755 "$tmp" "/usr/local/bin/$name" && ok "$name -> $tag" \
-            || FAILURES+=("$name (install)")
-    else
-        FAILURES+=("$name (download)")
+# api_get <url> <file> : fetch a release document, sending the token to GitHub only.
+api_get() {
+    local auth=()
+    if [[ -n "${GH_AUTH_HEADER:-}" && "$1" == https://api.github.com/* ]]; then
+        auth=(-H "@$GH_AUTH_HEADER")
     fi
-    rm -f "$tmp"
+    curl -fsSL "${auth[@]}" "$1" -o "$2" 2>/dev/null
 }
 
-# refetch_targz <name> <repo> <asset-template> <member>  -- extract <member>
-# from a .tar.gz release asset. Template may use {TAG}, {VER} (tag minus a
-# leading v) and {ARCH}.
-refetch_targz() {
-    local name="$1" repo="$2" tmpl="$3" member="$4" tag ver asset url tmp dir
-    installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
-    tag="$(gh_latest_tag "$repo")"
-    [[ -n "$tag" ]] || { FAILURES+=("$name (no release tag)"); return; }
-    ver="${tag#v}"
-    asset="${tmpl//\{TAG\}/$tag}"; asset="${asset//\{VER\}/$ver}"; asset="${asset//\{ARCH\}/$ARCH_DEB}"
-    url="https://github.com/$repo/releases/download/$tag/$asset"
-    tmp="$(mktemp)"; dir="$(mktemp -d)"
-    if curl -fsSL "$url" -o "$tmp" && tar -xzf "$tmp" -C "$dir" "$member" 2>/dev/null \
-        && [[ -s "$dir/$member" ]] && is_elf "$dir/$member"; then
-        sudo install -m 0755 "$dir/$member" "/usr/local/bin/$name" && ok "$name -> $tag" \
-            || FAILURES+=("$name (install)")
-    else
-        FAILURES+=("$name (download)")
+# release_tag <api-url> [<min-age-days>] : the tag of a single release document,
+# or, given an age, of the newest release in a list that is not a draft or a
+# prerelease and was published at least that many days ago. The age rule is the
+# one the roles apply through infrastructure_min_release_age_days.
+release_tag() {
+    local doc tag=''
+    doc="$(mktemp)"
+    if api_get "$1" "$doc"; then
+        tag="$(python3 - "$doc" "${2:-0}" 2>/dev/null <<'PY'
+import json
+import sys
+import time
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    data = json.load(fh)
+if isinstance(data, dict):
+    print(data.get("tag_name", ""))
+else:
+    cutoff = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - int(sys.argv[2]) * 86400)
+    )
+    ready = sorted(
+        (
+            r
+            for r in data
+            if not r.get("draft")
+            and not r.get("prerelease")
+            and r.get("published_at")
+            and r["published_at"] <= cutoff
+        ),
+        key=lambda r: r["published_at"],
+        reverse=True,
+    )
+    print(ready[0]["tag_name"] if ready else "")
+PY
+)"
     fi
-    rm -rf "$tmp" "$dir"
+    rm -f "$doc"
+    printf '%s' "$tag"
 }
 
-# refetch_targz_nested <name> <repo> <asset-template>  -- as refetch_targz, but
-# the binary sits one directory deep in the tarball.
-refetch_targz_nested() {
-    local name="$1" repo="$2" tmpl="$3" tag ver asset url tmp dir
-    installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
-    tag="$(gh_latest_tag "$repo")"
-    [[ -n "$tag" ]] || { FAILURES+=("$name (no release tag)"); return; }
-    ver="${tag#v}"
-    asset="${tmpl//\{TAG\}/$tag}"; asset="${asset//\{VER\}/$ver}"; asset="${asset//\{ARCH\}/$ARCH_DEB}"
-    url="https://github.com/$repo/releases/download/$tag/$asset"
-    tmp="$(mktemp)"; dir="$(mktemp -d)"
-    if curl -fsSL "$url" -o "$tmp" \
-        && tar -xzf "$tmp" -C "$dir" --strip-components=1 --wildcards "*/$name" 2>/dev/null \
-        && [[ -s "$dir/$name" ]] && is_elf "$dir/$name"; then
-        sudo install -m 0755 "$dir/$name" "/usr/local/bin/$name" && ok "$name -> $tag" \
-            || FAILURES+=("$name (install)")
-    else
-        FAILURES+=("$name (download)")
-    fi
-    rm -rf "$tmp" "$dir"
+# published_sum <url> <asset> : the asset's sha256 from a checksum file of
+# "<digest> [*]<name>" lines, or from a file holding one bare digest.
+published_sum() {
+    local sums
+    sums="$(curl -fsSL "$1" 2>/dev/null)" || return 1
+    awk -v a="$2" '
+        { n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n) }
+        length($1) == 64 && $1 ~ /^[0-9a-f]+$/ {
+            if (n == a) { print $1; found = 1; exit }
+            if (NR == 1 && NF == 1) bare = $1
+        }
+        END { if (!found && bare != "") print bare }' <<<"$sums"
 }
 
-# kustomize is a monorepo: /releases/latest can point at a non-CLI component, so
-# pull the newest kustomize CLI asset URL straight from the releases list.
+# is_current <name> <key> / record <name> <key> : read or write the stamp that
+# ties the installed binary to the release it came from.
+is_current() {
+    local line
+    line="$(cat "$STAMP_DIR/$1" 2>/dev/null)" || return 1
+    [[ "$line" == "$2 $(sha256_of "/usr/local/bin/$1")" ]]
+}
+
+record() {
+    sudo mkdir -p "$STAMP_DIR" &&
+        printf '%s %s\n' "$2" "$(sha256_of "/usr/local/bin/$1")" | sudo tee "$STAMP_DIR/$1" >/dev/null
+}
+
+# unpack <format> <dir> <member> : print the path of the binary unpacked from
+# <dir>/asset, failing when the archive does not hold <member>.
+unpack() {
+    local out="$2/out"
+    [[ "$1" == raw ]] && { printf '%s' "$2/asset"; return 0; }
+    mkdir -p "$out"
+    case "$1" in
+        tar)        tar -xzf "$2/asset" -C "$out" "$3" ;;
+        tar-nested) tar -xzf "$2/asset" -C "$out" --strip-components=1 --wildcards "*/$3" ;;
+        zip)        unzip -q -o "$2/asset" "$3" -d "$out" ;;
+        *)          return 1 ;;
+    esac >/dev/null 2>&1 && [[ -s "$out/$3" ]] && printf '%s' "$out/$3"
+}
+
+# fill <template> : expand a template from the repo, tag, arch and asset of the
+# refetch call it runs inside, whose locals bash's dynamic scoping exposes here.
+fill() {
+    local s="$1"
+    s="${s//\{REPO\}/$repo}"; s="${s//\{TAG\}/$tag}"; s="${s//\{VER\}/${tag#v}}"
+    s="${s//\{ARCH\}/$arch}"; s="${s//\{ASSET\}/$asset}"
+    printf '%s' "$s"
+}
+
+# refetch [options] <name> <asset-template> [<member>]
+#   --repo OWNER/NAME  GitHub repo: the tag comes from its API, the asset from its downloads
+#   --api URL          release document to read the tag from, for a forge other than GitHub
+#   --url TEMPLATE     download URL (default: the GitHub release asset)
+#   --sums TEMPLATE    checksum file the download must match
+#   --arch TOKEN       this machine's arch as the asset spells it (default: amd64/arm64)
+#   --min-age DAYS     take the newest GitHub release at least DAYS old
+#   --format FORMAT    raw (default), tar (member at the archive root),
+#                      tar-nested (member one directory down) or zip
+# Templates take {REPO} {TAG} {VER} {ARCH} {ASSET}, where {VER} is the tag
+# without a leading v. <member> defaults to <name>.
+refetch() {
+    local repo='' api='' url_t='' sums_t='' arch="$ARCH_DEB" min_age='' format=raw
+    while [[ "$1" == --* ]]; do
+        case "$1" in
+            --repo)    repo="$2" ;;
+            --api)     api="$2" ;;
+            --url)     url_t="$2" ;;
+            --sums)    sums_t="$2" ;;
+            --arch)    arch="$2" ;;
+            --min-age) min_age="$2" ;;
+            --format)  format="$2" ;;
+            *)         fail "refetch: unknown option $1"; return ;;
+        esac
+        shift 2
+    done
+    local name="$1" asset_t="$2" member="${3:-$1}"
+    local tag='' asset='' url want='' key tmp bin
+
+    installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
+
+    if [[ -n "$min_age" ]]; then
+        api="https://api.github.com/repos/$repo/releases?per_page=30"
+    elif [[ -z "$api" && -n "$repo" ]]; then
+        api="https://api.github.com/repos/$repo/releases/latest"
+    fi
+    if [[ -n "$api" ]]; then
+        tag="$(release_tag "$api" "$min_age")"
+        if [[ -z "$tag" ]]; then
+            fail "$name: no release found${min_age:+ at least $min_age days old}"
+            return
+        fi
+    fi
+
+    asset="$(fill "$asset_t")"
+    [[ -n "$url_t" ]] || url_t="$GH_DL/{ASSET}"
+    url="$(fill "$url_t")"
+    if [[ -n "$sums_t" ]]; then
+        want="$(published_sum "$(fill "$sums_t")" "$asset")"
+        [[ -n "$want" ]] || { fail "$name: no published checksum for $asset"; return; }
+    fi
+    key="$url${want:+ $want}"
+
+    # A bare asset IS the binary, so its published digest settles this without
+    # a stamp, which also catches an asset republished under the same URL.
+    if [[ "$format" == raw && -n "$want" ]]; then
+        if [[ "$(sha256_of "/usr/local/bin/$name")" == "$want" ]]; then
+            ok "$name ${tag:-$asset} is current"
+            return
+        fi
+    elif is_current "$name" "$key"; then
+        ok "$name ${tag:-$asset} is current"
+        return
+    fi
+
+    tmp="$(mktemp -d)"
+    if ! curl -fsSL "$url" -o "$tmp/asset" 2>/dev/null; then
+        fail "$name: download of $asset failed"
+    elif [[ -n "$want" && "$(sha256_of "$tmp/asset")" != "$want" ]]; then
+        fail "$name: $asset does not match its published checksum"
+    elif ! bin="$(unpack "$format" "$tmp" "$member")"; then
+        fail "$name: $member not found in $asset"
+    elif ! is_elf "$bin"; then
+        fail "$name: $asset is not an ELF binary"
+    elif [[ "$(sha256_of "$bin")" == "$(sha256_of "/usr/local/bin/$name")" ]]; then
+        record "$name" "$key"
+        ok "$name ${tag:-$asset} is current"
+    elif sudo install -m 0755 "$bin" "/usr/local/bin/$name"; then
+        record "$name" "$key"
+        ok "$name -> ${tag:-$asset}"
+    else
+        fail "$name: install to /usr/local/bin failed"
+    fi
+    rm -rf "$tmp"
+}
+
+# kustomize is a monorepo whose /releases/latest can be a non-CLI component, so
+# the newest kustomize CLI asset is taken from the releases list instead.
 refetch_kustomize() {
     installed_local kustomize || { skip "kustomize not installed in /usr/local/bin"; return; }
-    local url tmp dir
-    url="$(curl -fsSL "https://api.github.com/repos/kubernetes-sigs/kustomize/releases" 2>/dev/null \
-        | grep -oE "https://[^\"]*/kustomize_v[0-9.]+_linux_${ARCH_DEB}\.tar\.gz" | head -1)"
-    [[ -n "$url" ]] || { FAILURES+=("kustomize (no asset)"); return; }
-    tmp="$(mktemp)"; dir="$(mktemp -d)"
-    if curl -fsSL "$url" -o "$tmp" && tar -xzf "$tmp" -C "$dir" kustomize 2>/dev/null \
-        && [[ -s "$dir/kustomize" ]] && is_elf "$dir/kustomize"; then
-        sudo install -m 0755 "$dir/kustomize" /usr/local/bin/kustomize && ok "kustomize (latest)" \
-            || FAILURES+=("kustomize (install)")
-    else
-        FAILURES+=("kustomize (download)")
+    local doc url=''
+    doc="$(mktemp)"
+    if api_get "https://api.github.com/repos/kubernetes-sigs/kustomize/releases" "$doc"; then
+        url="$(grep -oE "https://[^\"]*/kustomize_v[0-9.]+_linux_${ARCH_DEB}\.tar\.gz" "$doc" | head -1)"
     fi
-    rm -rf "$tmp" "$dir"
+    rm -f "$doc"
+    [[ -n "$url" ]] || { fail "kustomize: no CLI release asset found"; return; }
+    refetch --url "$url" --format tar kustomize "${url##*/}"
 }
 
 if [[ -n "$ARCH_DEB" ]]; then
-    refetch_raw   kind        kubernetes-sigs/kind  "kind-linux-{ARCH}"
-    refetch_raw   argocd      argoproj/argo-cd      "argocd-linux-{ARCH}"
-    refetch_targz kubeconform yannh/kubeconform     "kubeconform-linux-{ARCH}.tar.gz" kubeconform
+    # The other spellings of this machine's arch that release assets use.
+    if [[ "$ARCH_DEB" == arm64 ]]; then
+        ARCH_UNAME=aarch64 ARCH_MIXED=arm64 ARCH_X64=arm64
+        FNM_ASSET=fnm-arm64.zip SD_TARGET=aarch64-unknown-linux-musl
+    else
+        ARCH_UNAME=x86_64 ARCH_MIXED=x86_64 ARCH_X64=x64
+        FNM_ASSET=fnm-linux.zip SD_TARGET=x86_64-unknown-linux-gnu
+    fi
+
+    refetch --repo kubernetes-sigs/kind kind "kind-linux-{ARCH}"
+    refetch --repo argoproj/argo-cd argocd "argocd-linux-{ARCH}"
+    refetch --repo yannh/kubeconform --format tar kubeconform "kubeconform-linux-{ARCH}.tar.gz"
     # kube-linter's amd64 asset carries no arch suffix; arm64 does.
     if [[ "$ARCH_DEB" == arm64 ]]; then
-        refetch_targz kube-linter stackrox/kube-linter "kube-linter-linux_arm64.tar.gz" kube-linter
+        refetch --repo stackrox/kube-linter --format tar kube-linter "kube-linter-linux_arm64.tar.gz"
     else
-        refetch_targz kube-linter stackrox/kube-linter "kube-linter-linux.tar.gz" kube-linter
+        refetch --repo stackrox/kube-linter --format tar kube-linter "kube-linter-linux.tar.gz"
     fi
-    refetch_targz dive        wagoodman/dive        "dive_{VER}_linux_{ARCH}.tar.gz" dive
-    refetch_targz terraform-docs terraform-docs/terraform-docs \
-        "terraform-docs-{TAG}-linux-{ARCH}.tar.gz" terraform-docs
-    refetch_targz_nested golangci-lint golangci/golangci-lint \
+    refetch --repo wagoodman/dive --format tar dive "dive_{VER}_linux_{ARCH}.tar.gz"
+    refetch --repo terraform-docs/terraform-docs --format tar terraform-docs \
+        "terraform-docs-{TAG}-linux-{ARCH}.tar.gz"
+    refetch --repo golangci/golangci-lint --format tar-nested golangci-lint \
         "golangci-lint-{VER}-linux-{ARCH}.tar.gz"
-    # k9s, kustomize and yq: Fedora installs these from dnf (/usr/bin); only
-    # Ubuntu carries the /usr/local/bin binary, so only re-fetch there or we
-    # shadow the dnf copy.
-    if [[ "$PKG_MGR" == apt ]]; then
-        refetch_targz k9s derailed/k9s "k9s_Linux_{ARCH}.tar.gz" k9s
-        refetch_kustomize
-        refetch_raw   yq  mikefarah/yq  "yq_linux_{ARCH}"
-    fi
+    refetch --repo jesseduffield/lazygit --arch "$ARCH_MIXED" --format tar lazygit \
+        "lazygit_{VER}_linux_{ARCH}.tar.gz"
+    refetch --repo rhysd/actionlint --format tar actionlint "actionlint_{VER}_linux_{ARCH}.tar.gz"
+    refetch --repo google/osv-scanner --sums "$GH_DL/osv-scanner_SHA256SUMS" osv-scanner \
+        "osv-scanner_linux_{ARCH}"
+    refetch --repo ByteNess/aws-vault --min-age 7 --sums "$GH_DL/aws-vault_sha256_checksums.txt" \
+        aws-vault "aws-vault-linux-{ARCH}"
+    refetch --repo hyperi-io/git-scrub --format tar-nested git-scrub "git-scrub-{VER}-linux-{ARCH}.tar.gz"
+    refetch --repo mozilla/sccache --arch "$ARCH_UNAME" --format tar-nested --sums "$GH_DL/{ASSET}.sha256" \
+        sccache "sccache-{TAG}-{ARCH}-unknown-linux-musl.tar.gz"
+    refetch --repo Schniz/fnm --format zip fnm "$FNM_ASSET"
+    refetch --api https://gitea.com/api/v1/repos/gitea/tea/releases/latest \
+        --url 'https://dl.gitea.com/tea/{VER}/{ASSET}' --sums 'https://dl.gitea.com/tea/{VER}/{ASSET}.sha256' \
+        tea "tea-{VER}-linux-{ARCH}"
+    refetch --url 'https://downloads.hyperi.io/macbash/latest/{ASSET}' \
+        --sums 'https://downloads.hyperi.io/macbash/latest/{ASSET}.sha256' macbash "macbash-linux-{ARCH}"
+
+    case "$PKG_MGR" in
+        apt)
+            refetch --repo derailed/k9s --format tar k9s "k9s_Linux_{ARCH}.tar.gz"
+            refetch_kustomize
+            refetch --repo mikefarah/yq yq "yq_linux_{ARCH}"
+            refetch --repo hadolint/hadolint --arch "$ARCH_MIXED" --sums "$GH_DL/checksums.sha256" \
+                hadolint "hadolint-linux-{ARCH}"
+            refetch --repo gitleaks/gitleaks --arch "$ARCH_X64" --format tar gitleaks \
+                "gitleaks_{VER}_linux_{ARCH}.tar.gz"
+            refetch --repo nektos/act --arch "$ARCH_MIXED" --format tar act "act_Linux_{ARCH}.tar.gz"
+            ;;
+        dnf)
+            refetch --repo chmln/sd --arch "$SD_TARGET" --format tar-nested sd "sd-{TAG}-{ARCH}.tar.gz"
+            refetch --repo ahmetb/kubectx --min-age 7 --arch "$ARCH_MIXED" --format tar kubectx \
+                "kubectx_{TAG}_linux_{ARCH}.tar.gz"
+            refetch --repo ahmetb/kubectx --min-age 7 --arch "$ARCH_MIXED" --format tar kubens \
+                "kubens_{TAG}_linux_{ARCH}.tar.gz"
+            ;;
+    esac
 else
-    skip "unknown CPU architecture ($(uname -m)) -- skipping static binaries"
+    skip "unknown CPU architecture ($(uname -m)) -- skipping release binaries"
 fi
 
 # --- Claude Code -----------------------------------------------------------
+# The role installs the native build under ~/.local, whose own updater this is.
 # Run as the normal user (NOT under sudo) so it updates ~/.local, not root's.
 section "Claude Code"
 if have claude; then
@@ -554,10 +777,10 @@ else
 fi
 
 # --- Codex CLI -------------------------------------------------------------
-# No apt/dnf repo, no snap, no language manager -- and not a Tier 3 static
-# binary either, because the release asset is a package TREE that has to be
-# staged and symlinked, not a bare executable the refetch_* helpers could drop
-# into /usr/local/bin. So nothing above reaches it.
+# No apt/dnf repo, no snap, no language manager -- and not a release binary
+# either, because the release asset is a package TREE that has to be staged and
+# symlinked, not a bare executable refetch could drop into /usr/local/bin. So
+# nothing above reaches it.
 #
 # Re-running the official installer IS the update path: it resolves the current
 # release, verifies the package tarball against the published

@@ -7,10 +7,12 @@
 # failure: gitleaks scans FULL history, so a secret removed from HEAD still
 # fails `hyperi-ci check`. soe inherits it through meta/dependencies.
 #
-# GitHub release tarball on every platform (Tier 3 -- hyperi-update pulls the
-# latest on each run). It is the only rung: not on crates.io, no git-scrub path
-# on downloads.hyperi.io, and the release's git-scrub.rb is not in the hyperi-io
-# tap. Move macOS to community.general.homebrew once that formula is tapped.
+# GitHub release tarball on every platform (Tier 3). hyperi-update pulls the
+# latest on Linux. On macOS only a re-run of this role does, because the macOS
+# updater leaves everything to brew. It is the only rung: not on crates.io, no
+# git-scrub path on downloads.hyperi.io, and the release's git-scrub.rb is not
+# in the hyperi-io tap. Move macOS to community.general.homebrew once that
+# formula is tapped.
 #
 # The asset unpacks into a directory named after itself, so the extracted binary
 # path carries the version. The tag has a leading `v`; the filename does not.

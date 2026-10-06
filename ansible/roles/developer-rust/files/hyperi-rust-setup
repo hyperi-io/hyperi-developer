@@ -366,8 +366,8 @@ def install_sccache_linux(dry_run: bool, rep: Reporter) -> None:
     """Put the latest upstream sccache release at SCCACHE_BIN.
 
     Re-runs are a no-op once the installed version matches the latest tag, so
-    the same call both installs and upgrades and hyperi-update needs no special
-    case.
+    the same call both installs and upgrades. Between converges hyperi-update
+    refreshes the same binary from the same release assets.
     """
     target = _sccache_target()
     if target is None:

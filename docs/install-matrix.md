@@ -634,13 +634,7 @@ have no OS channel; `hyperi-update` refreshes them via each manager
 `go install ...@latest`, `npm update -g`). E.g. ruff, ty, semgrep, pip-audit,
 cargo-audit, cargo-hack, typos, govulncheck, maid.
 
-**Tier 3 - static binaries.** A handful ship only as a GitHub-release binary with
-no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter,
-aws-vault, dive, tea, terraform-docs, golangci-lint (plus a few tools on
-whichever single distro lacks a package -- k9s, kustomize and yq are Ubuntu-only
-here, since Fedora packages all three). `hyperi-update` re-fetches the latest
-release for these, and skips the ones the running distro installs from a repo so
-the binary cannot shadow the packaged copy.
+**Tier 3 - static binaries.** A handful ship only as a release binary with no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter, dive, terraform-docs, golangci-lint, lazygit, actionlint, osv-scanner, aws-vault, git-scrub, sccache, fnm, tea and macbash on both distros, k9s, kustomize, yq, hadolint, gitleaks and act on Ubuntu, and sd, kubectx and kubens on Fedora. `hyperi-update` re-fetches each one only where the role put it in `/usr/local/bin` on that distro, so the binary cannot shadow a packaged copy. It checks the published digest where the role does, takes aws-vault and Fedora's kubectx at the newest release at least 7 days old as the role does, and keeps a stamp in `/var/lib/hyperi-update` so a release that has not moved is not downloaded again.
 
 golangci-lint is here for a different reason: Fedora does package it, but the
 build trails upstream, and a linter behind the Go toolchain cannot read the

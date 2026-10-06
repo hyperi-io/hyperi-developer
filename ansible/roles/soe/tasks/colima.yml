@@ -4,8 +4,9 @@
 #   - colima: runs docker-ce in a small Virtualization.framework VM -- the same
 #     engine Linux runs natively. Homebrew formula (Tier 1, brew upgrade sweeps it).
 #   - Apple `container`: native per-container micro-VMs on Apple silicon. Ships
-#     ONLY as a signed .pkg on GitHub releases (no brew channel), so it is a
-#     Tier 3 re-fetch -- hyperi-update pulls the latest. Optional: warn, never abort.
+#     ONLY as a signed .pkg on GitHub releases (no brew channel), so a re-run of
+#     this role installs the latest. hyperi-update does not touch it. Optional:
+#     warn, never abort.
 # Both are wrapped warn-and-continue so a single failure does not sink the soe run.
 
 - name: Install colima (Docker daemon for macOS)
