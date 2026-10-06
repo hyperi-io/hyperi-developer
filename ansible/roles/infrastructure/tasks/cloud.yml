@@ -286,36 +286,18 @@
 
 - name: Install aws-vault (Linux)
   block:
-    - name: List the aws-vault releases
-      ansible.builtin.uri:
-        url: "https://api.github.com/repos/{{ infrastructure_aws_vault_repo }}/releases?per_page=30"
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: infrastructure_aws_vault_releases
-      check_mode: false
+    - name: Resolve the aws-vault release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: "{{ infrastructure_aws_vault_repo }}"
 
-    # Sorted rather than trusting the API's order, then cut to the releases past
-    # the cooldown (infrastructure_release_cutoff).
-    - name: List the aws-vault releases past the cooldown
+    - name: Set the aws-vault version and asset
       ansible.builtin.set_fact:
-        infrastructure_aws_vault_candidates: >-
-          {{ infrastructure_aws_vault_releases.json
-             | rejectattr('draft') | rejectattr('prerelease')
-             | selectattr('published_at', 'le', infrastructure_release_cutoff)
-             | sort(attribute='published_at', reverse=true)
-             | map(attribute='tag_name') | list }}
-
-    - name: Check an aws-vault release is past the cooldown
-      ansible.builtin.assert:
-        that: infrastructure_aws_vault_candidates | length > 0
-        fail_msg: >-
-          no {{ infrastructure_aws_vault_repo }} release among the newest 30 is at
-          least {{ infrastructure_min_release_age_days }} days old
-        quiet: true
-
-    - name: Pick the newest aws-vault release past the cooldown
-      ansible.builtin.set_fact:
-        infrastructure_aws_vault_version: "{{ infrastructure_aws_vault_candidates | first }}"
+        infrastructure_aws_vault_version: "{{ github_release_doc.tag_name }}"
         infrastructure_aws_vault_asset: "aws-vault-linux-{{ hyperi_arch_deb }}"
 
     - name: Fetch the aws-vault release checksums
@@ -704,13 +686,14 @@
 
 - name: Install terraform-docs (Linux)
   block:
-    - name: Get latest terraform-docs version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/terraform-docs/terraform-docs/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: terraform_docs_latest
-      check_mode: false
+    - name: Resolve the terraform-docs release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: terraform-docs/terraform-docs
 
     # The asset carries the tag verbatim, v and all:
     # terraform-docs-v0.24.0-linux-amd64.tar.gz. The tarball holds LICENSE,
@@ -719,8 +702,8 @@
       ansible.builtin.unarchive:
         src: >-
           https://github.com/terraform-docs/terraform-docs/releases/download/{{
-          terraform_docs_latest.json.tag_name }}/terraform-docs-{{
-          terraform_docs_latest.json.tag_name }}-linux-{{ hyperi_arch_deb }}.tar.gz
+          github_release_doc.tag_name }}/terraform-docs-{{
+          github_release_doc.tag_name }}-linux-{{ hyperi_arch_deb }}.tar.gz
         dest: /usr/local/bin
         remote_src: true
         include: terraform-docs

@@ -74,17 +74,18 @@
 - name: Install git-scrub (re-fetched GitHub release, Tier 3, Linux)
   when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
   block:
-    - name: Get latest git-scrub version from GitHub API
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/hyperi-io/git-scrub/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: contributor_git_scrub_release
-      check_mode: false
+    - name: Resolve the git-scrub release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: hyperi-io/git-scrub
 
     - name: Resolve the git-scrub tag
       ansible.builtin.set_fact:
-        contributor_git_scrub_ref: "{{ contributor_git_scrub_release.json.tag_name }}"
+        contributor_git_scrub_ref: "{{ github_release_doc.tag_name }}"
 
     # hyperi_arch_deb already spells the architecture the way this release does.
     - name: Build the git-scrub asset name

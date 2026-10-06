@@ -108,14 +108,12 @@
     developer_managed_tools:
       - kind
       - argocd
-      - dive
       - kubeconform
       - kube-linter
       - k9s
       - kustomize
       - kubectx
       - kubens
-      - gron
       - lazygit
       - fnm
       - terraform-docs
@@ -221,7 +219,6 @@
     developer_hand_packages:
       - {name: macbash, distros: [Fedora, Ubuntu]}
       - {name: git-scrub, distros: [Fedora, Ubuntu]}
-      - {name: dive, distros: [Fedora, Ubuntu]}
       - {name: golangci-lint, distros: [Fedora, Ubuntu]}
       - {name: k9s, distros: [Ubuntu]}
     developer_hand_names: >-

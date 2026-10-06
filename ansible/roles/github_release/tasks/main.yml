@@ -1,0 +1,69 @@
+---
+# Resolve the GitHub release a role installs: the newest one at least
+# hyperi_release_min_age_days old, so a compromised or broken release has time
+# to be pulled before it reaches a workstation. Repos owned by an org in
+# hyperi_release_cooldown_exempt are taken as soon as they publish.
+#
+# Newest means the highest version, not the latest published: a project that
+# patches two release lines at once publishes the older line last.
+#
+# Inputs:
+#   github_release_repo       owner/name
+#   github_release_tag_match  regex every candidate tag matches (default: a bare
+#                             dotted version with an optional leading v)
+#   github_release_page_size  releases read from the API (default 30)
+# Output:
+#   github_release_doc        the chosen release document (tag_name, assets, ...)
+#
+# Fails, and never falls back to a younger release, when the API errors or no
+# release is old enough. Every caller sits in a block whose rescue keeps the
+# installed copy and records a deploy warning.
+
+- name: Resolve the release past the cooldown for {{ github_release_repo }}
+  vars:
+    github_release_min_age: >-
+      {{ 0 if github_release_repo.split('/') | first in hyperi_release_cooldown_exempt
+         else hyperi_release_min_age_days | int }}
+    # ISO-8601 UTC, which compares correctly against published_at as a string.
+    github_release_cutoff: >-
+      {{ '%Y-%m-%dT%H:%M:%SZ' | strftime(
+         (now().timestamp() | int) - (github_release_min_age | int) * 86400, utc=true) }}
+    github_release_ready: >-
+      {{ github_release_list.json | default([])
+         | rejectattr('draft') | rejectattr('prerelease')
+         | selectattr('published_at', 'string')
+         | selectattr('published_at', 'le', github_release_cutoff)
+         | selectattr('tag_name', 'match', github_release_tag_match | default('^v?[0-9]+(\.[0-9]+)+$'))
+         | list }}
+  block:
+    - name: List the releases of {{ github_release_repo }}
+      ansible.builtin.uri:
+        url: >-
+          https://api.github.com/repos/{{ github_release_repo }}/releases?per_page={{
+          github_release_page_size | default(30) }}
+        return_content: true
+        headers: "{{ hyperi_github_headers }}"
+      register: github_release_list
+      check_mode: false
+
+    # Sorted on the tag from its first digit, because version_sort cannot compare
+    # a tag with a leading v against one without.
+    - name: Pick the newest release past the cooldown for {{ github_release_repo }}
+      ansible.builtin.set_fact:
+        github_release_doc: >-
+          {{ github_release_ready
+             | selectattr('tag_name', 'match', '^[^0-9]*' ~ (github_release_newest | regex_escape) ~ '$')
+             | first | default({}) }}
+      vars:
+        github_release_newest: >-
+          {{ github_release_ready | map(attribute='tag_name') | map('regex_replace', '^[^0-9]*', '')
+             | community.general.version_sort | last | default('') }}
+
+    - name: Check a release is past the cooldown for {{ github_release_repo }}
+      ansible.builtin.assert:
+        that: github_release_doc.tag_name is defined
+        fail_msg: >-
+          no {{ github_release_repo }} release among the newest
+          {{ github_release_page_size | default(30) }} is at least
+          {{ github_release_min_age }} days old, so the installed copy is kept
+        quiet: true

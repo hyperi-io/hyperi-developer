@@ -70,6 +70,29 @@
         - linear      # Linear CLI — removed by decision 2026-05-01
         - minikube    # superseded by kind
 
+    # DERIVED: k8s.yml put dive in /usr/local/bin on both distros, and Fedora took
+    # gron's release binary there, until both were dropped.
+    - name: Plant the dropped dive and gron release binaries
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "dropped GitHub-release fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - dive
+        - gron
+
+    # DERIVED: utilities.yml installed gron from apt on Ubuntu until it was dropped.
+    - name: Install the dropped gron package (Ubuntu)
+      ansible.builtin.apt:
+        name: gron
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
     # Observed on the reference workstation 2026-10-06: helm v4.1.1, unowned, left by the
     # get.helm.sh download an older revision did. It shadows packaged helm.
     - name: Plant the stale root-owned helm (observed v4.1.1)
@@ -431,7 +454,7 @@
         mode: '0755'
       loop:
         - kind
-        - dive
+        - lazygit
         - argocd
         - macbash
         - git-scrub
@@ -456,7 +479,7 @@
         mode: '0755'
       loop:
         - .local/bin/kind        # shadows /usr/local/bin/kind -- must go
-        - go/bin/dive            # shadows /usr/local/bin/dive -- must go
+        - go/bin/lazygit         # shadows /usr/local/bin/lazygit -- must go
         - .local/bin/kubeconform # no system copy here -- the only one, must stay
         - .local/bin/tinygo-dev  # not a tool the roles manage -- must stay
         - .local/bin/yq          # pip/uv's yq is another program -- must stay
@@ -471,7 +494,7 @@
         force: true
       loop:
         - {name: argocd, src: /usr/local/bin/argocd}
-        - {name: dive, src: /nonexistent/dive}
+        - {name: lazygit, src: /nonexistent/lazygit}
 
     # CONSTRUCTED: a directory that happens to carry a managed tool's name.
     - name: Plant a directory named like a managed tool
@@ -483,8 +506,8 @@
     # Observed on the reference workstation 2026-10-06: the macbash .deb, from no
     # repository, beside the role's /usr/local/bin/macbash. CONSTRUCTED: a
     # git-scrub package another package depends on, a kind package that is not
-    # on the purge list, and a dive package served by a repository -- all three
-    # must stay.
+    # on the purge list, and a k9s package served by a repository -- all three
+    # must stay. Ubuntu offers no k9s of its own.
     - name: Install hand-built duplicate packages (Ubuntu)
       when: ansible_facts['distribution'] == 'Ubuntu'
       block:
@@ -498,7 +521,7 @@
             path: "/root/dup-fixture/{{ item.0 }}/{{ item.1 }}"
             state: directory
             mode: '0755'
-          loop: "{{ ['macbash', 'git-scrub', 'git-scrub-dependant', 'kind', 'dive'] | product(['DEBIAN', 'usr/bin']) | list }}"
+          loop: "{{ ['macbash', 'git-scrub', 'git-scrub-dependant', 'kind', 'k9s'] | product(['DEBIAN', 'usr/bin']) | list }}"
 
         - name: Write the fixture control files
           ansible.builtin.copy:
@@ -516,7 +539,7 @@
             - {name: git-scrub, depends: ''}
             - {name: git-scrub-dependant, depends: git-scrub}
             - {name: kind, depends: ''}
-            - {name: dive, depends: ''}
+            - {name: k9s, depends: ''}
 
         - name: Write the packaged binaries
           ansible.builtin.copy:
@@ -530,7 +553,7 @@
             - git-scrub
             - git-scrub-dependant
             - kind
-            - dive
+            - k9s
 
         - name: Build the fixture packages
           ansible.builtin.command:
@@ -541,7 +564,7 @@
             - git-scrub
             - git-scrub-dependant
             - kind
-            - dive
+            - k9s
 
         - name: Install the hand-installed fixture packages
           ansible.builtin.apt:
@@ -552,7 +575,7 @@
             - git-scrub-dependant
             - kind
 
-        # dive comes from a local repository instead, so a repository offers it.
+        # k9s comes from a local repository instead, so a repository offers it.
         # Under /srv, not /root: apt fetches as the _apt user.
         - name: Create the fixture repository
           ansible.builtin.file:
@@ -560,10 +583,10 @@
             state: directory
             mode: '0755'
 
-        - name: Place the dive package in the fixture repository
+        - name: Place the k9s package in the fixture repository
           ansible.builtin.copy:
-            src: /root/dup-fixture/dive.deb
-            dest: /srv/fixture-repo/dive.deb
+            src: /root/dup-fixture/k9s.deb
+            dest: /srv/fixture-repo/k9s.deb
             remote_src: true
             mode: '0644'
 
@@ -594,9 +617,9 @@
               - APT::Get::List-Cleanup=0
           changed_when: false
 
-        - name: Install dive from the fixture repository
+        - name: Install k9s from the fixture repository
           ansible.builtin.apt:
-            name: dive
+            name: k9s
             state: present
 
     # Fedora: the macbash rpm, from no repository, and golangci-lint from the

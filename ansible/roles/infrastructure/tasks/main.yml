@@ -54,6 +54,15 @@
   tags: ['infrastructure', 'cloud', 'k8s', 'removals']
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
+# What k8s.yml used to install and no longer does. Only the role's own copies
+# go, so it runs with the install rather than behind the removals opt-in.
+- name: Remove the tools this role no longer installs
+  ansible.builtin.include_tasks:
+    file: retired.yml
+    apply:
+      tags: ['infrastructure', 'k8s', 'removals']
+  tags: ['infrastructure', 'k8s', 'removals']
+
 # The `data` group: vector, clickhouse-client, rpk (Redpanda), valkey-cli.
 - name: Install data platform tools (data group)
   ansible.builtin.include_tasks:

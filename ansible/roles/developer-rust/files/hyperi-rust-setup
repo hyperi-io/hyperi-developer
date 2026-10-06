@@ -110,14 +110,20 @@ MACOS_PACKAGES = ("sccache",)  # mold is ELF-only; it cannot link Mach-O.
 # sccache is NOT in LINUX_PACKAGES: Ubuntu ships 0.13.0 against an upstream on
 # 0.17.x, and a wrapper four versions behind is what a developer hits when a
 # hand-run `sccache --show-stats` fails against the server their build started.
-# It comes from the project's own release instead, latest on every run, with the
-# digest checked against the .sha256 upstream publishes beside every asset.
+# It comes from the project's own release instead, the newest at least
+# RELEASE_MIN_AGE_DAYS old on every run, with the digest checked against the
+# .sha256 upstream publishes beside every asset.
 # crates.io stays out of the global rustc-wrapper path, which is the objection
 # that put this on the distro in the first place.
 #
 # macOS keeps brew, which already tracks upstream.
 SCCACHE_REPO = "mozilla/sccache"
 SCCACHE_BIN = Path("/usr/local/bin/sccache")
+
+# A release must be this many days old before it is installed, so a compromised
+# or broken one has time to be pulled. The playbook passes its own
+# hyperi_release_min_age_days; 7 applies when the script is run by hand.
+RELEASE_MIN_AGE_DAYS = int(os.environ.get("HYPERI_RELEASE_MIN_AGE_DAYS") or 7)
 
 # The only tables this script owns; every other table in an existing
 # config.toml is carried across verbatim by split_toml_sections().
@@ -351,6 +357,23 @@ def _github_request(url: str) -> urllib.request.Request:
     return request
 
 
+def _newest_release_past_cooldown(releases: list[dict], min_age_days: int) -> str | None:
+    """The highest-versioned stable release published at least min_age_days ago."""
+    cutoff = datetime.now(timezone.utc).timestamp() - min_age_days * 86400
+    ready = [
+        r["tag_name"]
+        for r in releases
+        if not r.get("draft")
+        and not r.get("prerelease")
+        and r.get("published_at")
+        and re.fullmatch(r"v?\d+(\.\d+)+", r.get("tag_name", ""))
+        and datetime.fromisoformat(r["published_at"].replace("Z", "+00:00")).timestamp() <= cutoff
+    ]
+    if not ready:
+        return None
+    return max(ready, key=lambda tag: tuple(int(n) for n in re.findall(r"\d+", tag)))
+
+
 def _installed_sccache_version() -> str | None:
     """The version of the sccache this script manages, or None if absent."""
     if not SCCACHE_BIN.is_file():
@@ -363,23 +386,29 @@ def _installed_sccache_version() -> str | None:
 
 
 def install_sccache_linux(dry_run: bool, rep: Reporter) -> None:
-    """Put the latest upstream sccache release at SCCACHE_BIN.
+    """Put the newest upstream sccache release past the cooldown at SCCACHE_BIN.
 
-    Re-runs are a no-op once the installed version matches the latest tag, so
-    the same call both installs and upgrades. Between converges hyperi-update
-    refreshes the same binary from the same release assets.
+    Re-runs are a no-op once the installed version matches that tag, so the
+    same call both installs and upgrades. Between converges hyperi-update
+    refreshes the same binary from the same release assets. With no release old
+    enough, the installed copy is left alone.
     """
     target = _sccache_target()
     if target is None:
         rep.warn(f"sccache: no upstream build for {platform.machine()} -- skipping")
         return
 
-    url = f"https://api.github.com/repos/{SCCACHE_REPO}/releases/latest"
+    url = f"https://api.github.com/repos/{SCCACHE_REPO}/releases?per_page=30"
     try:
         with urllib.request.urlopen(_github_request(url), timeout=60) as response:
-            latest = json.load(response)["tag_name"]
-    except (OSError, ValueError, KeyError) as exc:
-        rep.warn(f"sccache: could not read the latest release ({exc}) -- leaving it alone")
+            latest = _newest_release_past_cooldown(json.load(response), RELEASE_MIN_AGE_DAYS)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        rep.warn(f"sccache: could not read the releases ({exc}) -- leaving it alone")
+        return
+    if latest is None:
+        rep.warn(
+            f"sccache: no release is at least {RELEASE_MIN_AGE_DAYS} days old -- leaving it alone"
+        )
         return
 
     current = _installed_sccache_version()

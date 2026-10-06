@@ -1,0 +1,39 @@
+---
+# Tools this role installed and no longer does. Each goes on any run of the
+# role rather than behind the removals opt-in, because only the copy the role
+# put there is touched: the /usr/local/bin binary when it resolves under
+# /usr/local, and the brew formula on macOS.
+#
+#   dive  no release since 2025-05 (wagoodman/dive)
+
+- name: Resolve the retired /usr/local/bin binaries (Linux)
+  ansible.builtin.command:
+    argv: [readlink, -e, "/usr/local/bin/{{ item }}"]
+  loop:
+    - dive
+  register: infrastructure_retired_resolved
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Remove the retired /usr/local/bin binaries (Linux)
+  ansible.builtin.file:
+    path: "/usr/local/bin/{{ item.item }}"
+    state: absent
+  loop: "{{ infrastructure_retired_resolved.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - item.rc | default(1) == 0
+    - item.stdout.startswith('/usr/local/')
+
+- name: Remove the retired Homebrew formulae (macOS)
+  community.general.homebrew:
+    name: [dive]
+    state: absent
+  become: false
+  environment: "{{ homebrew_env }}"
+  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: false

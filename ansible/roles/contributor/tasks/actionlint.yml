@@ -26,18 +26,19 @@
 - name: Install actionlint (Linux)
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   block:
-    - name: Get latest actionlint version from GitHub API
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/rhysd/actionlint/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: contributor_actionlint_release
-      check_mode: false
+    - name: Resolve the actionlint release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: rhysd/actionlint
 
     # Tags carry a leading `v`; the asset name and `-version` output drop it.
     - name: Set actionlint version fact
       ansible.builtin.set_fact:
-        contributor_actionlint_version: "{{ contributor_actionlint_release.json.tag_name | regex_replace('^v', '') }}"
+        contributor_actionlint_version: "{{ github_release_doc.tag_name | regex_replace('^v', '') }}"
 
     - name: Read the installed actionlint version
       ansible.builtin.command:
@@ -52,7 +53,7 @@
     - name: Download and extract actionlint
       ansible.builtin.unarchive:
         src: >-
-          https://github.com/rhysd/actionlint/releases/download/{{ contributor_actionlint_release.json.tag_name
+          https://github.com/rhysd/actionlint/releases/download/{{ github_release_doc.tag_name
           }}/actionlint_{{ contributor_actionlint_version }}_linux_{{ hyperi_arch_deb }}.tar.gz
         dest: /usr/local/bin
         remote_src: true

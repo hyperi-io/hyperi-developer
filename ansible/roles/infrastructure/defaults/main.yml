@@ -33,15 +33,12 @@ azure_cli_supported_suites:
 # and shipped in files/session-manager-plugin.asc.
 infrastructure_ssm_signing_fingerprint: 7959637124CE093AD501D47A2C4D4AFF6F6757EE  # gitleaks:allow -- public key fingerprint
 
-# GitHub-release installs that take the newest release at least this many days
-# old (aws-vault, and kubectx/kubens on Fedora), so a bad release has time to be
-# pulled before it reaches a workstation. The cutoff is an ISO-8601 UTC
-# timestamp, which compares correctly against GitHub's published_at as a string.
-infrastructure_min_release_age_days: 7
-infrastructure_release_cutoff: >-
-  {{ '%Y-%m-%dT%H:%M:%SZ' | strftime(
-     (now().timestamp() | int) - (infrastructure_min_release_age_days | int) * 86400,
-     utc=true) }}
+# The Kubernetes minor kubectl comes from. pkgs.k8s.io publishes one repository
+# per minor, so this picks the repository and the package follows it, up or down,
+# on the next converge. kubectl supports one minor either side of the API
+# server, so set it to match the clusters you work against. v1.37 was the
+# stable minor at https://dl.k8s.io/release/stable.txt on 2026-10-06.
+infrastructure_kubectl_minor: v1.37
 
 # aws-vault on Linux comes from the maintained fork's GitHub releases.
 infrastructure_aws_vault_repo: ByteNess/aws-vault

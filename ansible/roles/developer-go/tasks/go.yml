@@ -218,17 +218,18 @@
 
 - name: Install golangci-lint (Linux)
   block:
-    - name: Get latest golangci-lint version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/golangci/golangci-lint/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: golangci_latest
-      check_mode: false
+    - name: Resolve the golangci-lint release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: golangci/golangci-lint
 
     - name: Resolve the golangci-lint tag
       ansible.builtin.set_fact:
-        golangci_ref: "{{ golangci_latest.json.tag_name }}"
+        golangci_ref: "{{ github_release_doc.tag_name }}"
 
     - name: Download and extract golangci-lint
       ansible.builtin.unarchive:

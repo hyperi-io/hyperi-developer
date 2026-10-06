@@ -162,7 +162,7 @@ reach for instead, are not in that manifest and have no published digest at all.
 |---|---|---|
 | astral suite: uv, ruff, ty (uv bundles `uv audit` + `uv check`) | all | Fedora dnf / macOS brew; Ubuntu has no apt package (see Auto-update) |
 | Python 3.14 for uv (`astral_python_version`), pinned as uv's global default; system `python3` untouched | all | system python3 where it is 3.14+ (Fedora, Ubuntu 26.04), else `uv python install`; `uv python pin --global` per user |
-| CLI utils (jq, gron, bat, fzf, ripgrep, fd, git-delta, moreutils, miller, rsync, tmux, htop, wget, shellcheck, age, parallel, ...) | all | distro repo / brew |
+| CLI utils (jq, bat, fzf, ripgrep, fd, git-delta, moreutils, miller, rsync, tmux, htop, wget, shellcheck, age, parallel, ...) | all | distro repo / brew |
 | sd | all | distro (apt/dnf) / brew |
 | yq (mikefarah; apt `yq` is kislyuk/yq, a different tool) | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
 | lazygit | all | Linux github-binary (Tier 3: re-fetch) / brew |
@@ -295,17 +295,16 @@ table used to say the opposite.
 
 | Tool(s) | Platforms | Method |
 |---|---|---|
-| kubectl | all | vendor-repo (pkgs.k8s.io) / brew |
+| kubectl | all | vendor-repo (pkgs.k8s.io), the minor in `infrastructure_kubectl_minor` / brew |
 | helm | all | Ubuntu vendor-repo (packages.buildkite.com) / Fedora dnf / brew |
-| kubectx, kubens | all | Ubuntu apt universe / Fedora github-binary, newest release at least 7 days old (Fedora packages neither) / brew |
+| kubectx, kubens | all | Ubuntu apt universe / Fedora github-binary (Fedora packages neither) / brew |
 | k9s | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
 | kind, argocd (Tier 3: re-fetch) | all | github-binary / brew |
 | kustomize | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
 | checkov | all | uv-tool (Tier 2) / brew |
 | terraform-docs (Tier 3: re-fetch) | all | github-binary / brew |
-| dive (Tier 3: re-fetch) | all | github-binary / brew |
 | aws-cli v2 | all | Fedora dnf (`awscli2`) / Ubuntu official snap / brew |
-| aws-vault (Tier 3: re-fetch) | all | github-binary from the ByteNess fork, newest release at least 7 days old / brew formula |
+| aws-vault (Tier 3: re-fetch) | all | github-binary from the ByteNess fork / brew formula |
 | opentofu (`tofu`) | all | vendor-repo (packages.opentofu.org), apt AND dnf / brew |
 | openbao | all | vendor-repo (pkgs.openbao.org) / Fedora dnf / brew |
 | azure-cli, google-cloud-cli | all | vendor-repo / cask |
@@ -344,7 +343,7 @@ The one HashiCorp tool installed: BUSL, with no open-source fork, so it is its o
 | gitleaks* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
 | act | all | Fedora COPR / Ubuntu re-fetch (Tier 3) / brew |
 | trivy | all | vendor-repo (official aquasecurity apt/dnf) / brew |
-| hadolint* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
+| hadolint* | all | Linux re-fetch (Tier 3) / brew |
 | pip-audit* | all | uv-tool (Tier 2) / brew |
 | kubeconform*, kube-linter | all | github-binary (Tier 3: re-fetch) / brew |
 | yamllint, ansible-lint, pre-commit | all | distro (apt universe / dnf) / brew |
@@ -526,14 +525,16 @@ this repo, and there is no flag that changes it.
 | Source | Behaviour |
 |---|---|
 | distro or vendor repo | `state: present`, and the repo carries the box forward on `apt`/`dnf upgrade`. |
-| manual binary | `/releases/latest` through the GitHub API, then the matching asset. |
+| manual binary | The newest GitHub release at least `hyperi_release_min_age_days` (7) days old, then the matching asset. |
 | cargo / go tools | `cargo install X`, `go install X@latest`. |
 | go, rustup | The publisher's current release, verified against the checksum it serves beside it. |
 
-Two things are deliberately not versions. **Node's major** (`node_major`) picks
+Three things are deliberately not versions. **Node's major** (`node_major`) picks
 an LTS line rather than a release, and NodeSource's signed repo patches it in
 place. **Rust's edition** comes with whatever stable rustup installs, so edition
-2024 needs no pin.
+2024 needs no pin. **kubectl's minor** (`infrastructure_kubectl_minor`, v1.37 by default) picks the pkgs.k8s.io repository, which publishes one per Kubernetes minor and patches it in place. kubectl supports one minor either side of the API server, so this is the knob for cluster version skew: set it to the minor of the clusters you work against, and the next converge moves the repository and kubectl with it, up or down.
+
+**GitHub releases wait 7 days.** Every tool taken from a GitHub release installs the newest release at least `hyperi_release_min_age_days` old (default 7; set it in `local-config/vars.yml` or with `-e`), so a compromised or broken release has time to be pulled first. With none that old the installed copy stays and the run warns. Nothing newer is ever installed in its place. Releases from the hyperi-io org skip the wait (`hyperi_release_cooldown_exempt`).
 
 `go` and `rustup` keep digest verification while tracking latest, by fetching
 the checksum from the publisher at install time -- `go.dev/dl/?mode=json` carries
@@ -609,7 +610,7 @@ it. Every channel move needs a tombstone for the path it vacated, and the
 `remediation` molecule scenario asserts the replacement is what `which` resolves
 to -- not merely that the new thing installed.
 
-**A hand install leaves a second copy too.** The `removals` tag clears copies of the managed tools in `~/.local/bin` and `~/go/bin` where the managed copy exists and is a different file. A deliberate pin there (an older kubectl, golangci-lint v1) goes too, so pin per project instead. Tools whose name another program also uses (yq, tea, sd, act) are left alone. It also purges the upstream .deb or .rpm of macbash, git-scrub, dive, golangci-lint or k9s installed beside the `/usr/local/bin` copy, unless a repository offers a package of that name.
+**A hand install leaves a second copy too.** The `removals` tag clears copies of the managed tools in `~/.local/bin` and `~/go/bin` where the managed copy exists and is a different file. A deliberate pin there (an older kubectl, golangci-lint v1) goes too, so pin per project instead. Tools whose name another program also uses (yq, tea, sd, act) are left alone. It also purges the upstream .deb or .rpm of macbash, git-scrub, golangci-lint or k9s installed beside the `/usr/local/bin` copy, unless a repository offers a package of that name.
 
 developer-go links `go` and `gofmt` into `/usr/local/bin` on every run, and on a `removals` or `soe` run also removes the distro Go once a working, self-contained `/usr/local/go` is in. developer-rust retires cargo-tarpaulin on every run, and on a `removals` or `soe` run clears cargo-home duplicates and, where the host exports a relocated `CARGO_HOME`, the old `~/.cargo/bin` binaries the effective home also holds. A package something else depends on stays, and the run says which. Its direct dependencies that a purge would orphan are marked manually installed, so `hyperi-update`'s autoremove does not take them later.
 
@@ -629,7 +630,7 @@ all track upstream properly.
 
 **Tier 2 - language-manager tools.** Tools installed by uv / cargo / go / npm / pnpm have no OS channel, so `hyperi-update` refreshes them through each manager: `uv tool upgrade --all`, `rustup update` and `cargo install-update -a --locked`, `go install ...@latest` for the tools in `~/go/bin` (only when the module or the Go toolchain moved), `npm update -g`, and `pnpm update -g --latest`. The pnpm globals (eslint, prettier, typescript, tsx, ts-node) are installed unpinned, so `--latest` moves them to what a fresh converge would install, majors included. `uv python upgrade` moves each uv-managed Python to its newest patch without adding a python or python3 shim, and leaves the superseded patch installed, because uv has no command that removes only those. E.g. ruff, ty, semgrep, pip-audit, cargo-audit, cargo-hack, typos, govulncheck, maid.
 
-**Tier 3 - static binaries.** A handful ship only as a release binary with no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter, dive, terraform-docs, golangci-lint, lazygit, actionlint, osv-scanner, aws-vault, git-scrub, sccache, fnm, tea and macbash on both distros, k9s, kustomize, yq, hadolint, gitleaks and act on Ubuntu, and sd, kubectx and kubens on Fedora. `hyperi-update` re-fetches each one only where the role put it in `/usr/local/bin` on that distro, so the binary cannot shadow a packaged copy. Each download must match the sha256 GitHub publishes for the asset, or the release's checksum file where there is no digest (tea and macbash publish a `.sha256` beside the asset), and is renamed into place so the working copy is never half-written. aws-vault and Fedora's kubectx take the newest release at least 7 days old, as the role does. A stamp in `/var/lib/hyperi-update` stops an unmoved release being downloaded again, and the GitHub API is asked with the last ETag, so with a token set an unchanged release costs no rate limit (an anonymous 304 still counts). When the API refuses, the release document from the last run stands in. On Ubuntu, uv and uvx in `~/.local/bin` are refreshed the same way as the invoking user. gron, a Fedora release binary whose upstream has not released since 2022, is not refreshed.
+**Tier 3 - static binaries.** A handful ship only as a release binary with no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter, terraform-docs, golangci-lint, lazygit, actionlint, osv-scanner, aws-vault, git-scrub, sccache, fnm, hadolint, tea and macbash on both distros, k9s, kustomize, yq, gitleaks and act on Ubuntu, and sd, kubectx and kubens on Fedora. `hyperi-update` re-fetches each one only where the role put it in `/usr/local/bin` on that distro, so the binary cannot shadow a packaged copy. Each download must match the sha256 GitHub publishes for the asset, or the release's checksum file where there is no digest (tea and macbash publish a `.sha256` beside the asset), and is renamed into place so the working copy is never half-written. Each GitHub release is the newest at least 7 days old, as in the roles; `--min-age DAYS` or `HYPERI_RELEASE_MIN_AGE_DAYS` changes that, and with no release old enough the installed copy stays and the summary lists it. A stamp in `/var/lib/hyperi-update` stops an unmoved release being downloaded again, and the GitHub API is asked with the last ETag, so with a token set an unchanged release costs no rate limit (an anonymous 304 still counts). When the API refuses, the release document from the last run stands in. On Ubuntu, uv and uvx in `~/.local/bin` are refreshed the same way as the invoking user.
 
 golangci-lint is here for a different reason: Fedora does package it, but the
 build trails upstream, and a linter behind the Go toolchain cannot read the
