@@ -164,6 +164,7 @@ Generic dev GUI (developer-gui):
 
 Languages (developer-<lang>; --languages [list] or developer-languages for all):
     developer-rust        rustup + cargo tools + protoc/librdkafka build deps
+                          + LLVM: clang, lld, PGO and BOLT tooling
     developer-go          Go + gopls, dlv, golangci-lint, gosec, govulncheck
     developer-python      mypy (opt-in; ruff/ty ship in the base astral suite)
     developer-node        eslint + prettier (Node itself is in the base -- it is
