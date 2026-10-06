@@ -316,9 +316,7 @@ table used to say the opposite.
 Almost every macOS path resolves to brew or a cask. The language managers that
 remain there carry no formula at all: `alint` and `maid` have none, and
 semantic-release needs its plugin set installed alongside it, which only npm
-gives. `git-scrub` is the one release-tarball exception -- its formula exists in
-the release but is not in the hyperi-io tap, so macOS takes the darwin asset
-until it is tapped.
+gives.
 
 Cloudflare publishes no flarectl binary and no distro packages it, so both
 platforms build it from source. It also lives on cloudflare-go's `v0` branch --
@@ -354,7 +352,7 @@ The one HashiCorp tool installed: BUSL, with no open-source fork, so it is its o
 | vulture | all | Ubuntu apt / Fedora uv-tool (Tier 2) / brew |
 | typos | all | cargo (Tier 2) / brew |
 | maid (mermaid validator, used by `/docs`) | all | npm global (Tier 2) |
-| git-scrub (git-history scrubber) | all | github-binary (Tier 3: re-fetch) |
+| git-scrub (git-history scrubber) | all | github-binary (Tier 3: re-fetch) / brew tap |
 | macbash (macOS bash portability checker) | all | Linux downloads.hyperi.io binary (Tier 3, digest-verified) / brew tap |
 
 `hyperi-ci` is a Python tool from PyPI, installed via `uv tool` and refreshed to
@@ -374,7 +372,7 @@ hyperi-ci.
 | Slack | all | vendor-repo / cask |
 | LibreOffice (org office suite) | Linux | distro repo |
 | Nemo, GNOME extensions (gext), fonts | Linux | distro / uv-tool / vendored |
-| colima + Apple `container` (macOS only) | macOS | brew / github-binary |
+| colima + Apple `container` (macOS only; `container` needs Apple silicon and macOS 26) | macOS | brew |
 | Arcane container UI (opt-in `soe_arcane_enabled`; `soe_arcane_long_session` for a year-long login) | all | container image |
 | Local ClickHouse + Redpanda (opt-in `soe_local_services_enabled`) | all | container image |
 | removals / update_command / admin-scripts (opt-in `never`, on for soe) | Linux | tombstones + scripts |

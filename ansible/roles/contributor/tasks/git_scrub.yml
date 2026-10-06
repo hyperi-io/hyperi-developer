@@ -7,17 +7,72 @@
 # failure: gitleaks scans FULL history, so a secret removed from HEAD still
 # fails `hyperi-ci check`. soe inherits it through meta/dependencies.
 #
-# GitHub release tarball on every platform (Tier 3). hyperi-update pulls the
-# latest on Linux. On macOS only a re-run of this role does, because the macOS
-# updater leaves everything to brew. It is the only rung: not on crates.io, no
-# git-scrub path on downloads.hyperi.io, and the release's git-scrub.rb is not
-# in the hyperi-io tap. Move macOS to community.general.homebrew once that
-# formula is tapped.
+# macOS takes the formula in the hyperi-io tap, which each git-scrub release
+# rewrites, so brew upgrade keeps it current. Linux takes the GitHub release
+# tarball (Tier 3) and hyperi-update re-fetches it: not on crates.io and no
+# git-scrub path on downloads.hyperi.io.
 #
 # The asset unpacks into a directory named after itself, so the extracted binary
 # path carries the version. The tag has a leading `v`; the filename does not.
 
-- name: Install git-scrub (re-fetched GitHub release, Tier 3)
+- name: Install git-scrub (macOS)
+  when: ansible_facts['distribution'] == 'MacOSX'
+  block:
+    - name: Tap the hyperi-io formulae (macOS)
+      community.general.homebrew_tap:
+        name: hyperi-io/tap
+        state: present
+      become: false
+      environment: "{{ homebrew_env }}"
+
+    # Earlier runs of this role put the release binary here. On an Intel Mac it
+    # is also the path brew links into, so it has to go before the install.
+    - name: Check for a git-scrub binary from the release tarball (macOS)
+      ansible.builtin.stat:
+        path: /usr/local/bin/git-scrub
+      register: contributor_git_scrub_legacy
+
+    - name: Remove the release-tarball git-scrub binary (macOS)
+      ansible.builtin.file:
+        path: /usr/local/bin/git-scrub
+        state: absent
+      become: true
+      when:
+        - contributor_git_scrub_legacy.stat.exists
+        - not contributor_git_scrub_legacy.stat.islnk
+
+    - name: Install git-scrub via Homebrew (macOS)
+      community.general.homebrew:
+        name: hyperi-io/tap/git-scrub
+        state: present
+      become: false
+      environment: "{{ homebrew_env }}"
+
+    - name: Find release tarballs left by earlier runs (macOS)
+      ansible.builtin.find:
+        paths: /tmp
+        patterns: 'git-scrub-*-darwin-*.tar.gz'
+      register: contributor_git_scrub_tarballs
+
+    - name: Remove release tarballs left by earlier runs (macOS)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ contributor_git_scrub_tarballs.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+  rescue:
+    - name: Record that git-scrub did not install (macOS)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['git-scrub: ' ~ (ansible_failed_result.msg | default('brew tap/install failed'))] }}
+
+- name: Install git-scrub (re-fetched GitHub release, Tier 3, Linux)
+  when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
   block:
     - name: Get latest git-scrub version from GitHub API
       ansible.builtin.uri:
@@ -35,8 +90,7 @@
     - name: Build the git-scrub asset name
       ansible.builtin.set_fact:
         contributor_git_scrub_stem: >-
-          git-scrub-{{ contributor_git_scrub_ref | regex_replace('^v', '') }}-{{
-          'darwin' if ansible_facts['distribution'] == 'MacOSX' else 'linux' }}-{{ hyperi_arch_deb }}
+          git-scrub-{{ contributor_git_scrub_ref | regex_replace('^v', '') }}-linux-{{ hyperi_arch_deb }}
 
     # The tarball is KEPT, and that is what makes the role idempotent: get_url
     # re-reports ok for an unchanged asset, so the extract and install below
@@ -57,14 +111,6 @@
       ansible.builtin.stat:
         path: /usr/local/bin/git-scrub
       register: contributor_git_scrub_installed
-
-    # Root-owned on Linux, absent on a fresh Apple Silicon box.
-    - name: Ensure /usr/local/bin exists
-      ansible.builtin.file:
-        path: /usr/local/bin
-        state: directory
-        mode: '0755'
-      become: true
 
     # A new asset OR a missing binary: the second repairs drift on a box where
     # the tarball is still cached but the binary was removed.
