@@ -127,7 +127,7 @@ without the whole role.
 |---|---|---|---|
 | ai | `ai` | developer-ai | Codex CLI, the Codex plugin for Claude Code |
 | cloudflare | `cloudflare` | infrastructure | flarectl, wrangler |
-| data | `data` | infrastructure | clickhouse-client, rpk, valkey-cli, vector |
+| data | `data` | infrastructure | clickhouse-client, confluent-cli, rpk, valkey-cli, vector |
 | forgejo | `forgejo` / `codeberg` | soe | tea (Forgejo/Gitea CLI) |
 | rdp-client | `rdp-client` | rdp-client | Remmina (Linux), Thincast (macOS) |
 | vpn-clients | `vpn-clients` | vpn-clients | OpenVPN 3, WireGuard, Tunnelblick (macOS) |
@@ -210,7 +210,8 @@ is the meta-role pulling them all.
 | cargo-audit, cargo-hack, cargo-pgo | all | cargo |
 | cargo-machete (unused deps), cargo-semver-checks (API breaks) | all | cargo |
 | cargo-llvm-cov + llvm-tools-preview | all | cargo / rustup |
-| protobuf-compiler, librdkafka-dev | Linux | distro repo |
+| protobuf-compiler | Linux | distro repo |
+| librdkafka1, librdkafka-dev (Fedora: librdkafka-devel) | Linux | vendor-repo (Confluent clients repo) |
 | mold, clang | Linux | distro repo |
 | sccache | all | github-binary, latest each run (Tier 3) / brew |
 | cargo-sweep | all | cargo-binstall / cargo |
@@ -314,7 +315,7 @@ table used to say the opposite.
 | opentofu (`tofu`) | all | vendor-repo (packages.opentofu.org), apt AND dnf / brew |
 | openbao | all | vendor-repo (pkgs.openbao.org) / Fedora dnf / brew |
 | azure-cli, google-cloud-cli | all | vendor-repo / cask |
-| clickhouse-client, rpk, valkey-cli, vector (the `data` group) | Linux; macOS partial | vendor-repo / distro |
+| clickhouse-client, confluent-cli, rpk, valkey-cli, vector (the `data` group) | Linux; macOS partial | vendor-repo / distro |
 | wrangler (the `cloudflare` group) | all | npm-global / brew |
 | flarectl (the `cloudflare` group) | all | `go install` from source / brew |
 

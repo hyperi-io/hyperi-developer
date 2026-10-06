@@ -406,6 +406,10 @@
       {{ ansible_facts['distribution_release']
          if ansible_facts['distribution_release'] in developer_rust_confluent_clients_suites
          else developer_rust_confluent_clients_suites | last }}
+    # Check mode adds no repo, so there is nothing to install from yet.
+    developer_rust_confluent_clients_repo_pending: >-
+      {{ ansible_check_mode and ((developer_rust_confluent_clients_deb_repo | default({})) is changed
+         or (developer_rust_confluent_clients_rpm_repo | default({})) is changed) }}
   block:
     # A minimal Ubuntu ships gpgv but not gpg, which the fingerprint read needs.
     - name: Ensure gpg is present for the fingerprint check
@@ -422,13 +426,16 @@
         dest: "{{ developer_rust_confluent_clients_key }}.unverified"
         mode: '0644'
         force: true
+      register: developer_rust_confluent_clients_key_download
 
+    # Check mode downloads nothing, so there is no new key to read.
     - name: Read the Confluent clients signing key fingerprint
       ansible.builtin.command:
         argv: [gpg, --show-keys, --with-colons, "{{ developer_rust_confluent_clients_key }}.unverified"]
       register: developer_rust_confluent_clients_key_read
       changed_when: false
       check_mode: false
+      when: not (ansible_check_mode and developer_rust_confluent_clients_key_download is changed)
 
     # Fails closed: one primary key, and the pinned one, or nothing is trusted.
     - name: Verify the Confluent clients signing key fingerprint
@@ -441,6 +448,7 @@
           {{ developer_rust_key_fpr or 'missing' }}; expected only
           {{ developer_rust_confluent_clients_key_fingerprint }}
         quiet: true
+      when: not (ansible_check_mode and developer_rust_confluent_clients_key_download is changed)
       vars:
         developer_rust_key_primaries: >-
           {{ developer_rust_confluent_clients_key_read.stdout_lines | select('match', '^pub:') | list | length }}
@@ -456,6 +464,7 @@
         owner: root
         group: root
         mode: '0644'
+      when: not (ansible_check_mode and developer_rust_confluent_clients_key_download is changed)
 
     - name: Add the Confluent clients APT repository (Ubuntu)
       ansible.builtin.deb822_repository:
@@ -466,6 +475,7 @@
         components: main
         signed_by: "{{ developer_rust_confluent_clients_key }}"
         state: present
+      register: developer_rust_confluent_clients_deb_repo
       when: ansible_facts['distribution'] == 'Ubuntu'
 
     # Ubuntu ships librdkafka under the same package names, so the Confluent
@@ -489,7 +499,43 @@
           - librdkafka-dev
         state: latest
         update_cache: true
-      when: ansible_facts['distribution'] == 'Ubuntu'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not developer_rust_confluent_clients_repo_pending
+
+    - name: Check for Fedora's own librdkafka (Fedora)
+      ansible.builtin.command:
+        argv: [rpm, -q, librdkafka]
+      register: developer_rust_fedora_librdkafka
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # librdkafka1 does not provide the name `librdkafka`, so a package that
+    # requires it by name (python3-confluent-kafka does) blocks the swap. Checked
+    # before the repo goes in, so a blocked host keeps a working dnf on every run.
+    - name: Find packages that require Fedora's librdkafka by name (Fedora)
+      ansible.builtin.command:
+        argv: [rpm, -q, --whatrequires, librdkafka, --qf, "%{NAME}\n"]
+      register: developer_rust_librdkafka_dependants
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - developer_rust_fedora_librdkafka.rc == 0
+
+    - name: Keep Fedora's librdkafka while a package requires it by name (Fedora)
+      ansible.builtin.fail:
+        msg: >-
+          kept Fedora's librdkafka (required by name by:
+          {{ developer_rust_librdkafka_dependants.stdout_lines | join(', ') }});
+          Confluent's was not installed
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - developer_rust_fedora_librdkafka.rc == 0
+        - developer_rust_librdkafka_dependants.rc == 0
 
     # Confluent publishes RHEL builds only; Fedora takes the newest EL one,
     # which links against an older glibc than Fedora ships. The priority masks
@@ -504,23 +550,17 @@
         repo_gpgcheck: true
         gpgkey: "file://{{ developer_rust_confluent_clients_key }}"
         priority: '10'
-      when: ansible_facts['distribution'] == 'Fedora'
-
-    - name: Check for Fedora's own librdkafka (Fedora)
-      ansible.builtin.command:
-        argv: [rpm, -q, librdkafka]
-      register: developer_rust_fedora_librdkafka
-      changed_when: false
-      failed_when: false
-      check_mode: false
+      register: developer_rust_confluent_clients_rpm_repo
       when: ansible_facts['distribution'] == 'Fedora'
 
     # Fedora's librdkafka and Confluent's librdkafka1 ship the same library
     # files under different names, so one has to replace the other in a single
     # transaction; packages linked against librdkafka.so.1 stay satisfied.
+    # No --allowerasing: a package that needs Fedora's build by name fails the
+    # swap instead of being removed with it.
     - name: Swap Fedora's librdkafka for Confluent's (Fedora)
       ansible.builtin.command:
-        argv: [dnf, -y, swap, --allowerasing, librdkafka, librdkafka1]
+        argv: [dnf, -y, swap, librdkafka, librdkafka1]
       changed_when: true
       when:
         - ansible_facts['distribution'] == 'Fedora'
@@ -532,9 +572,45 @@
           - librdkafka1
           - librdkafka-devel
         state: latest
-      when: ansible_facts['distribution'] == 'Fedora'
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - not developer_rust_confluent_clients_repo_pending
 
   rescue:
+    # After a key rotation the repo no longer verifies against the trusted
+    # key, and the apt module fails every later cache refresh in the run on it,
+    # where apt-get only warns. The previously trusted key stays.
+    # Deleted as a file: deb822_repository state=absent also deletes the
+    # keyring of the same name, which is the trusted key here.
+    - name: Remove the Confluent clients APT repository after a key mismatch (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/confluent-clients.sources
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Check whether Fedora's librdkafka is still installed (Fedora)
+      ansible.builtin.command:
+        argv: [rpm, -q, librdkafka]
+      register: developer_rust_fedora_librdkafka_kept
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # Also covers a refused swap: with Fedora's librdkafka kept, the
+    # higher-priority Confluent librdkafka-devel would fail dnf upgrades on its
+    # file conflict.
+    - name: Remove the Confluent clients repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: confluent-clients
+        state: absent
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - (ansible_failed_task.action in ['assert', 'ansible.builtin.assert'])
+          or developer_rust_fedora_librdkafka_kept.rc == 0
+
     - name: Record that librdkafka did not install
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
       ansible.builtin.set_fact:

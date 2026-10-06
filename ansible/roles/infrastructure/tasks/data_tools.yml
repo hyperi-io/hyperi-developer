@@ -2,13 +2,13 @@
 # Data platform tools (Vector, ClickHouse, Confluent CLI, rpk, valkey-cli)
 #
 # macOS notes:
-# - Vector: skipped — removed from homebrew-core; would need an unofficial
+# - Vector: skipped -- removed from homebrew-core; would need an unofficial
 #   tap. If you need Vector on Mac, install manually with the tap that
 #   works for your current Vector version.
-# - ClickHouse: skipped — heavyweight, not part of standard Mac dev workflow.
+# - ClickHouse: skipped -- heavyweight, not part of standard Mac dev workflow.
 #   Manual install if needed: `brew install --cask clickhouse-client` or
 #   run via container.
-# - Confluent CLI: INSTALLED on macOS — needs the confluentinc/tap added
+# - Confluent CLI: INSTALLED on macOS -- needs the confluentinc/tap added
 #   first (which is done below).
 
 - name: Skipped data platform tools notice (macOS)
@@ -100,7 +100,7 @@
 
   when: ansible_facts['distribution'] == 'Ubuntu'
 
-# Vector intentionally not installed on macOS — see header comment.
+# Vector intentionally not installed on macOS -- see header comment.
 
 # ============================================================================
 # CLICKHOUSE - Analytics database client
@@ -114,6 +114,10 @@
         {{ '/etc/apt/keyrings/clickhouse.asc' if ansible_facts['distribution'] == 'Ubuntu'
            else '/etc/pki/rpm-gpg/RPM-GPG-KEY-clickhouse' }}
       fingerprint: "{{ infrastructure_clickhouse_key_fingerprint }}"
+    # Check mode adds no repo, so there is nothing to install from yet.
+    infrastructure_clickhouse_repo_pending: >-
+      {{ ansible_check_mode and ((infrastructure_clickhouse_deb_repo | default({})) is changed
+         or (infrastructure_clickhouse_rpm_repo | default({})) is changed) }}
   block:
     # Runs before any apt call: apt reads a leftover .list beside the .sources
     # written below as a second copy of the repo.
@@ -131,13 +135,16 @@
         dest: "{{ infrastructure_clickhouse_key.dest }}.unverified"
         mode: '0644'
         force: true
+      register: infrastructure_clickhouse_key_download
 
+    # Check mode downloads nothing, so there is no new key to read.
     - name: Read the ClickHouse signing key fingerprint
       ansible.builtin.command:
         argv: [gpg, --show-keys, --with-colons, "{{ infrastructure_clickhouse_key.dest }}.unverified"]
       register: infrastructure_clickhouse_key_read
       changed_when: false
       check_mode: false
+      when: not (ansible_check_mode and infrastructure_clickhouse_key_download is changed)
 
     # Fails closed: one primary key, and the pinned one, or nothing is trusted.
     - name: Verify the ClickHouse signing key fingerprint
@@ -149,6 +156,7 @@
           {{ infrastructure_clickhouse_key.url }} holds {{ infrastructure_key_primaries }} key(s), first
           {{ infrastructure_key_fpr or 'missing' }}; expected only {{ infrastructure_clickhouse_key.fingerprint }}
         quiet: true
+      when: not (ansible_check_mode and infrastructure_clickhouse_key_download is changed)
       vars:
         infrastructure_key_primaries: "{{ infrastructure_clickhouse_key_read.stdout_lines | select('match', '^pub:') | list | length }}"
         infrastructure_key_fpr: >-
@@ -162,6 +170,7 @@
         owner: root
         group: root
         mode: '0644'
+      when: not (ansible_check_mode and infrastructure_clickhouse_key_download is changed)
 
     # ClickHouse signs its repo metadata but not its rpms, so gpgcheck stays off
     # and the signed repomd, with the package checksums it lists, vouches for
@@ -175,13 +184,16 @@
         gpgcheck: false
         repo_gpgcheck: true
         gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-clickhouse
+      register: infrastructure_clickhouse_rpm_repo
       when: ansible_facts['distribution'] == 'Fedora'
 
     - name: Install ClickHouse client (Fedora)
       ansible.builtin.dnf:
         name: clickhouse-client
         state: present
-      when: ansible_facts['distribution'] == 'Fedora'
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - not infrastructure_clickhouse_repo_pending
 
     - name: Add ClickHouse APT repository (Ubuntu)
       ansible.builtin.deb822_repository:
@@ -192,6 +204,7 @@
         components: main
         signed_by: /etc/apt/keyrings/clickhouse.asc
         state: present
+      register: infrastructure_clickhouse_deb_repo
       when: ansible_facts['distribution'] == 'Ubuntu'
 
     - name: Install ClickHouse client (Ubuntu)
@@ -199,9 +212,32 @@
         name: clickhouse-client
         state: present
         update_cache: true
-      when: ansible_facts['distribution'] == 'Ubuntu'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not infrastructure_clickhouse_repo_pending
 
   rescue:
+    # After a key rotation the repo no longer verifies against the trusted
+    # key, and the apt module fails every later cache refresh in the run on it,
+    # where apt-get only warns. The previously trusted key stays.
+    # Deleted as a file: deb822_repository state=absent also deletes the
+    # keyring of the same name, which is the trusted key here.
+    - name: Remove the ClickHouse APT repository after a key mismatch (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/clickhouse.sources
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove the ClickHouse repository after a key mismatch (Fedora)
+      ansible.builtin.yum_repository:
+        name: clickhouse-stable
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Fedora'
+
     - name: Record that the ClickHouse client did not install
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
       ansible.builtin.set_fact:
@@ -211,7 +247,7 @@
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-# ClickHouse intentionally not installed on macOS — see header comment.
+# ClickHouse intentionally not installed on macOS -- see header comment.
 
 # ============================================================================
 # CONFLUENT CLI - Kafka client tools
@@ -231,6 +267,10 @@
       fingerprint: >-
         {{ infrastructure_confluent_cli_deb_key_fingerprint if ansible_facts['distribution'] == 'Ubuntu'
            else infrastructure_confluent_cli_rpm_key_fingerprint }}
+    # Check mode adds no repo, so there is nothing to install from yet.
+    infrastructure_confluent_cli_repo_pending: >-
+      {{ ansible_check_mode and ((infrastructure_confluent_cli_deb_repo | default({})) is changed
+         or (infrastructure_confluent_cli_rpm_repo | default({})) is changed) }}
   block:
     # The Confluent Platform repo an older revision configured. Runs before any
     # apt or dnf call so neither reads it again.
@@ -258,13 +298,16 @@
         dest: "{{ infrastructure_confluent_cli_key.dest }}.unverified"
         mode: '0644'
         force: true
+      register: infrastructure_confluent_cli_key_download
 
+    # Check mode downloads nothing, so there is no new key to read.
     - name: Read the Confluent CLI signing key fingerprint
       ansible.builtin.command:
         argv: [gpg, --show-keys, --with-colons, "{{ infrastructure_confluent_cli_key.dest }}.unverified"]
       register: infrastructure_confluent_cli_key_read
       changed_when: false
       check_mode: false
+      when: not (ansible_check_mode and infrastructure_confluent_cli_key_download is changed)
 
     # Fails closed: one primary key, and the pinned one, or nothing is trusted.
     - name: Verify the Confluent CLI signing key fingerprint
@@ -276,6 +319,7 @@
           {{ infrastructure_confluent_cli_key.url }} holds {{ infrastructure_key_primaries }} key(s), first
           {{ infrastructure_key_fpr or 'missing' }}; expected only {{ infrastructure_confluent_cli_key.fingerprint }}
         quiet: true
+      when: not (ansible_check_mode and infrastructure_confluent_cli_key_download is changed)
       vars:
         infrastructure_key_primaries: "{{ infrastructure_confluent_cli_key_read.stdout_lines | select('match', '^pub:') | list | length }}"
         infrastructure_key_fpr: >-
@@ -289,6 +333,7 @@
         owner: root
         group: root
         mode: '0644'
+      when: not (ansible_check_mode and infrastructure_confluent_cli_key_download is changed)
 
     - name: Add the Confluent CLI APT repository (Ubuntu)
       ansible.builtin.deb822_repository:
@@ -299,6 +344,7 @@
         components: main
         signed_by: /etc/apt/keyrings/confluent-cli.asc
         state: present
+      register: infrastructure_confluent_cli_deb_repo
       when: ansible_facts['distribution'] == 'Ubuntu'
 
     # Both the packages and the repo metadata are signed with the same key.
@@ -311,6 +357,7 @@
         gpgcheck: true
         repo_gpgcheck: true
         gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-confluent-cli
+      register: infrastructure_confluent_cli_rpm_repo
       when: ansible_facts['distribution'] == 'Fedora'
 
     # Also drops the Platform repo's lists, so the version read below sees only
@@ -329,9 +376,11 @@
       check_mode: false
       when: ansible_facts['distribution'] == 'Ubuntu'
 
+    # -y imports the repo key on first use; without it dnf skips the repo and
+    # the query comes back empty.
     - name: Read the confluent-cli versions the CLI repo offers (Fedora)
       ansible.builtin.command:
-        argv: [dnf, -q, repoquery, --available, --qf, "%{evr}\n", confluent-cli]
+        argv: [dnf, -y, -q, repoquery, --available, --qf, "%{evr}\n", confluent-cli]
       register: infrastructure_confluent_cli_repoquery
       changed_when: false
       check_mode: false
@@ -349,27 +398,67 @@
       failed_when: false
       check_mode: false
 
-    # A Platform-repo build outranks every CLI-repo version, so the package
-    # manager never replaces it; removing it lets the CLI repo's build in.
-    - name: Remove a confluent-cli the CLI repo does not carry
-      ansible.builtin.package:
-        name: confluent-cli
-        state: absent
-      when:
-        - infrastructure_confluent_cli_installed.rc == 0
-        - infrastructure_confluent_cli_installed.stdout not in infrastructure_confluent_cli_offered
-      vars:
+    - name: Collect the confluent-cli versions the CLI repo offers
+      ansible.builtin.set_fact:
         infrastructure_confluent_cli_offered: >-
           {{ infrastructure_confluent_cli_madison.stdout_lines | map('split', '|') | map(attribute=1) | map('trim') | list
              if ansible_facts['distribution'] == 'Ubuntu'
-             else infrastructure_confluent_cli_repoquery.stdout_lines }}
+             else infrastructure_confluent_cli_repoquery.stdout_lines | unique }}
+
+    # A Platform-repo build outranks every CLI-repo version, so the package
+    # manager never replaces it on its own. Pinning the CLI repo's newest build
+    # with a downgrade swaps the two in one transaction, so a failed download
+    # leaves the old CLI in place.
+    - name: Replace a confluent-cli the CLI repo does not carry (Ubuntu)
+      ansible.builtin.apt:
+        name: "confluent-cli={{ infrastructure_confluent_cli_offered | community.general.version_sort | last }}"
+        allow_downgrade: true
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not infrastructure_confluent_cli_repo_pending
+        - infrastructure_confluent_cli_installed.rc == 0
+        - infrastructure_confluent_cli_offered | length > 0
+        - infrastructure_confluent_cli_installed.stdout not in infrastructure_confluent_cli_offered
+
+    - name: Replace a confluent-cli the CLI repo does not carry (Fedora)
+      ansible.builtin.dnf:
+        name: "confluent-cli-{{ infrastructure_confluent_cli_offered | community.general.version_sort | last }}"
+        allow_downgrade: true
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - not infrastructure_confluent_cli_repo_pending
+        - infrastructure_confluent_cli_installed.rc == 0
+        - infrastructure_confluent_cli_offered | length > 0
+        - infrastructure_confluent_cli_installed.stdout not in infrastructure_confluent_cli_offered
 
     - name: Install Confluent CLI
       ansible.builtin.package:
         name: confluent-cli
         state: present
+      when: not infrastructure_confluent_cli_repo_pending
 
   rescue:
+    # After a key rotation the repo no longer verifies against the trusted
+    # key, and the apt module fails every later cache refresh in the run on it,
+    # where apt-get only warns. The previously trusted key stays.
+    # Deleted as a file: deb822_repository state=absent also deletes the
+    # keyring of the same name, which is the trusted key here.
+    - name: Remove the Confluent CLI APT repository after a key mismatch (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/confluent-cli.sources
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove the Confluent CLI repository after a key mismatch (Fedora)
+      ansible.builtin.yum_repository:
+        name: confluent-cli
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Fedora'
+
     - name: Record that the Confluent CLI did not install
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
       ansible.builtin.set_fact:
@@ -414,6 +503,10 @@
       fingerprint: >-
         {{ infrastructure_redpanda_repo_key_fingerprint if ansible_facts['distribution'] == 'Ubuntu'
            else infrastructure_redpanda_rpm_key_fingerprint }}
+    # Check mode adds no repo, so there is nothing to install from yet.
+    infrastructure_redpanda_repo_pending: >-
+      {{ ansible_check_mode and ((infrastructure_redpanda_deb_repo | default({})) is changed
+         or (infrastructure_redpanda_rpm_repo | default({})) is changed) }}
   block:
     # Staged under a name nothing trusts and forced, so a rejected download is
     # replaced on the next run instead of kept by an If-Modified-Since 304.
@@ -423,13 +516,16 @@
         dest: "{{ infrastructure_redpanda_key.dest }}.unverified"
         mode: '0644'
         force: true
+      register: infrastructure_redpanda_key_download
 
+    # Check mode downloads nothing, so there is no new key to read.
     - name: Read the Redpanda signing key fingerprint
       ansible.builtin.command:
         argv: [gpg, --show-keys, --with-colons, "{{ infrastructure_redpanda_key.dest }}.unverified"]
       register: infrastructure_redpanda_key_read
       changed_when: false
       check_mode: false
+      when: not (ansible_check_mode and infrastructure_redpanda_key_download is changed)
 
     # Fails closed: one primary key, and the pinned one, or nothing is trusted.
     - name: Verify the Redpanda signing key fingerprint
@@ -441,6 +537,7 @@
           {{ infrastructure_redpanda_key.url }} holds {{ infrastructure_key_primaries }} key(s), first
           {{ infrastructure_key_fpr or 'missing' }}; expected only {{ infrastructure_redpanda_key.fingerprint }}
         quiet: true
+      when: not (ansible_check_mode and infrastructure_redpanda_key_download is changed)
       vars:
         infrastructure_key_primaries: "{{ infrastructure_redpanda_key_read.stdout_lines | select('match', '^pub:') | list | length }}"
         infrastructure_key_fpr: >-
@@ -454,6 +551,7 @@
         owner: root
         group: root
         mode: '0644'
+      when: not (ansible_check_mode and infrastructure_redpanda_key_download is changed)
 
     - name: Add the Redpanda APT repository (Ubuntu)
       ansible.builtin.deb822_repository:
@@ -464,6 +562,7 @@
         components: main
         signed_by: /etc/apt/keyrings/redpanda.asc
         state: present
+      register: infrastructure_redpanda_deb_repo
       when: ansible_facts['distribution'] == 'Ubuntu'
 
     # dnf rejects the signature Artifact Registry puts on the yum metadata as
@@ -477,6 +576,7 @@
         gpgcheck: true
         repo_gpgcheck: false
         gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redpanda
+      register: infrastructure_redpanda_rpm_repo
       when: ansible_facts['distribution'] == 'Fedora'
 
     - name: Install rpk (Ubuntu)
@@ -484,13 +584,17 @@
         name: redpanda-rpk
         state: present
         update_cache: true
-      when: ansible_facts['distribution'] == 'Ubuntu'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not infrastructure_redpanda_repo_pending
 
     - name: Install rpk (Fedora)
       ansible.builtin.dnf:
         name: redpanda-rpk
         state: present
-      when: ansible_facts['distribution'] == 'Fedora'
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - not infrastructure_redpanda_repo_pending
 
     # The GitHub zip an older revision unpacked here shadows the packaged rpk on
     # PATH. Reached only once the package above is in, since a failed install
@@ -501,6 +605,27 @@
         state: absent
 
   rescue:
+    # After a key rotation the repo no longer verifies against the trusted
+    # key, and the apt module fails every later cache refresh in the run on it,
+    # where apt-get only warns. The previously trusted key stays.
+    # Deleted as a file: deb822_repository state=absent also deletes the
+    # keyring of the same name, which is the trusted key here.
+    - name: Remove the Redpanda APT repository after a key mismatch (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/redpanda.sources
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove the Redpanda repository after a key mismatch (Fedora)
+      ansible.builtin.yum_repository:
+        name: redpanda
+        state: absent
+      when:
+        - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+        - ansible_facts['distribution'] == 'Fedora'
+
     - name: Record that rpk did not install
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
       ansible.builtin.set_fact:
@@ -512,9 +637,7 @@
 
 - name: Install rpk via Homebrew (macOS)
   block:
-    # TODO verify: the redpanda-data/tap formula name/availability is UNVERIFIED
-    # (flagged in the plan). If the tap or formula has moved this warns, and the
-    # standalone rpk binary from GitHub is the fallback.
+    # A moved tap or formula lands in the rescue as a warning.
     - name: Tap redpanda-data formulae (macOS)
       community.general.homebrew_tap:
         name: redpanda-data/tap
