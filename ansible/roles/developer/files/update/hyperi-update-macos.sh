@@ -4,21 +4,22 @@
 # up on this machine, in one command.
 #
 #   * Homebrew         (formulae + casks: aws, gh, az, kubectl, helm,
-#                       opentofu, openbao, gcloud-cli, ...)
+#                       opentofu, openbao, gcloud-cli, claude-code, codex, ...)
 #   * macOS updates    (softwareupdate)                  -- needs sudo
 #   * uv tools         (gnome-extensions-cli, ...)       -- user
-#   * rustup           (Rust toolchains)                 -- user
+#   * uv Pythons       (patch releases of each minor)    -- user
+#   * rustup           (Rust toolchains, where rustup is used) -- user
 #   * cargo tools      (nextest, deny, cargo-audit, ...) -- user
 #   * go tools         (gopls)                           -- user
 #   * npm globals      (maid, semantic-release, pnpm)    -- user
-#   * Claude Code CLI  (self-installed under ~/.local)   -- user
+#   * pnpm globals     (eslint, prettier, typescript, ...) -- user
 #   * Codex plugin     (claude plugin update)            -- user
 #
-# Tier 3 static binaries (kind, argocd, kubeconform, ...) come from Homebrew
-# formulae on macOS, so the Homebrew section already refreshes them -- the
-# GitHub re-fetch is a Linux-only concern. The Codex CLI is the `codex` cask,
-# so it rides that same section; only its Claude Code plugin, which brew knows
-# nothing about, needs one of its own.
+# The release binaries Linux fetches (kind, argocd, kubeconform, ...) come from
+# Homebrew formulae on macOS, so the Homebrew section already refreshes them.
+# Claude Code and the Codex CLI are casks and ride that same section. Only the
+# Codex plugin for Claude Code, which brew knows nothing about, needs one of its
+# own.
 #
 # Each section is independent and self-guarding: a tool that isn't installed is
 # skipped (printed, not fatal), and a failing step is recorded and reported in
@@ -34,14 +35,17 @@
 #            hyperi-update --install  (create the clickable "Hyperi Update" app)
 #            hyperi-update --help
 
-set -u
-set -o pipefail
+# emulate resets every option to zsh's defaults, so the strict options come after
+# it or a failing `softwareupdate | tee` would report success.
 emulate -L zsh
+setopt nounset pipefail
 
 # Make user-level tools reachable even when launched from the GUI app or a
 # non-login shell (Ansible): brew lives outside the base PATH on both Apple
-# silicon and Intel.
-export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# silicon and Intel, and brew's rustup is keg-only, so its shims are never linked
+# into the brew prefix.
+export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$HOME/go/bin:$PNPM_HOME:$PNPM_HOME/bin:/opt/homebrew/bin:/opt/homebrew/opt/rustup/bin:/usr/local/bin:/usr/local/opt/rustup/bin:$PATH"
 
 ASSUME_YES=0
 
@@ -50,8 +54,8 @@ SELF=${${(%):-%x}:A}
 
 usage() {
     cat <<EOF
-hyperi-update — update Homebrew, macOS, uv tools, rustup, cargo/go/npm tools
-                and Claude Code in one go.
+hyperi-update -- update Homebrew, macOS, uv tools, rustup and cargo/go/npm/pnpm
+                 tools in one go.
 
 Usage:
   hyperi-update            Confirm, then run all updates (prompts once for sudo).
@@ -159,12 +163,12 @@ if (( ! ASSUME_YES )); then
     printf '%s%shyperi-update%s will update EVERYTHING on this Mac:\n\n' "$BOLD" "$BLUE" "$RESET"
     have brew   && printf '  - all Homebrew formulae and casks (including --greedy self-updaters)\n'
     printf '  - macOS system and security updates\n'
-    have uv     && printf '  - uv tools\n'
+    have uv     && printf '  - uv tools and uv-managed Pythons\n'
     have rustup && printf '  - rust toolchains\n'
     have cargo-install-update && printf '  - cargo-installed tools\n'
     have go     && printf '  - go-installed tools (gopls)\n'
     have npm    && printf '  - npm global tools + pnpm\n'
-    have claude && printf '  - Claude Code CLI\n'
+    have pnpm   && printf '  - pnpm global tools\n'
     have claude && printf '  - the Codex plugin for Claude Code, if installed\n'
     [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
@@ -236,8 +240,24 @@ else
     skip "uv not found"
 fi
 
+# --- uv-managed Pythons ----------------------------------------------------
+# Nothing else moves a uv-installed Python to a newer patch. `uv python upgrade`
+# touches only the minors already installed and, without --default, adds no
+# python or python3 shim. The superseded patch stays installed, since uv has no
+# command that removes only those and a venv may still point at it.
+section "uv Pythons"
+if ! have uv; then
+    skip "uv not found"
+elif [[ "$(uv python list --only-installed --managed-python --output-format json 2>/dev/null)" != *'"version"'* ]]; then
+    skip "uv manages no Pythons"
+else
+    run "uv python upgrade" uv python upgrade
+fi
+
 # --- rustup toolchains -----------------------------------------------------
-# rustup itself is updated by brew; this updates the toolchains it manages.
+# Only a Mac that already had rustup keeps it. The role gives every other Mac
+# brew's rust formula, which the Homebrew section updates. `rustup update` moves
+# the toolchains, and rustup itself too unless brew owns it.
 section "rustup toolchains"
 if have rustup; then
     run "rustup update" rustup update
@@ -258,24 +278,30 @@ else
 fi
 
 # --- go-installed tools ----------------------------------------------------
-# No bulk updater for `go install` tools, so re-install @latest the ones that
-# are already present (this adds nothing that was not there before).
-# govulncheck is the brew formula on macOS, so Homebrew above refreshes it, and
-# a `go install` here would put a second copy in ~/go/bin.
+# No bulk updater for `go install` tools, so the one the role puts in ~/go/bin
+# is re-installed @latest. govulncheck, gosec and flarectl are brew formulae on
+# macOS, which the Homebrew section refreshes.
 section "go tools"
+GO_HOME="$HOME/go"
 if have go; then
-    for gt in \
-        "gopls:golang.org/x/tools/gopls@latest"; do
-        bin="${gt%%:*}"; mod="${gt#*:}"
-        have "$bin" && run "go install $bin" go install "$mod"
-    done
+    # "<module> <version>" as built into the binary, so a gopls already at the
+    # module's latest release is not rebuilt.
+    built="$(go version -m "$GO_HOME/bin/gopls" 2>/dev/null | awk '$1 == "mod" {print $2, $3; exit}')"
+    if [[ ! -x "$GO_HOME/bin/gopls" ]]; then
+        skip "gopls not found in $GO_HOME/bin"
+    elif [[ -n "$built" ]] && [[ "$(go list -m -f '{{.Version}}' "${built% *}@latest" 2>/dev/null)" == "${built#* }" ]]; then
+        ok "gopls ${built#* } is current"
+    else
+        run "go install gopls" env GOPATH="$GO_HOME" GOBIN="$GO_HOME/bin" go install golang.org/x/tools/gopls@latest
+    fi
 else
     skip "go not found"
 fi
 
-# --- npm global tools ------------------------------------------------------
-# maid, semantic-release, typescript, tsx, ts-node -- global npm packages; plus
-# pnpm via corepack.
+# --- npm and pnpm global tools ---------------------------------------------
+# semantic-release and maid are npm globals. eslint, prettier, typescript, tsx
+# and ts-node are pnpm globals, which `npm update -g` never sees. pnpm itself is
+# corepack's, so it is re-activated at latest first.
 section "npm global tools"
 if have npm; then
     run "npm update -g" npm update -g
@@ -284,13 +310,13 @@ else
     skip "npm not found"
 fi
 
-# --- Claude Code -----------------------------------------------------------
-# Run as the normal user (NOT under sudo) so it updates ~/.local, not root's.
-section "Claude Code"
-if have claude; then
-    run "claude update" claude update
+section "pnpm global tools"
+if have pnpm; then
+    # --latest, because the roles install each global at its latest release and
+    # the ranges pnpm recorded would otherwise hold them at that major.
+    run "pnpm update -g --latest" pnpm update -g --latest
 else
-    skip "claude not found in PATH"
+    skip "pnpm not found"
 fi
 
 # --- Codex plugin for Claude Code ------------------------------------------

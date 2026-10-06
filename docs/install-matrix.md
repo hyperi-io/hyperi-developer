@@ -172,7 +172,7 @@ reach for instead, are not in that manifest and have no published digest at all.
 | CLI utils (jq, gron, bat, fzf, ripgrep, fd, git-delta, moreutils, miller, rsync, tmux, htop, wget, shellcheck, age, parallel, ...) | all | distro repo / brew |
 | sd | all | distro (apt/dnf) / brew |
 | yq (mikefarah; apt `yq` is kislyuk/yq, a different tool) | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
-| lazygit | all | Fedora COPR / Ubuntu apt (re-fetch on 24.04 LTS) / brew |
+| lazygit | all | Linux github-binary (Tier 3: re-fetch) / brew |
 | docker (Engine on Linux, CLI-only on macOS) | all | vendor-repo / brew |
 | git, git-lfs, git-filter-repo, gh | all | distro/PPA/brew |
 | chrome, brave (opt-in `never`) | all | vendor-repo / cask |
@@ -628,19 +628,9 @@ security, so it holds the version it shipped with for the life of the release
 (see the ladder note above). A vendor repo, a snap and Fedora's own packages
 all track upstream properly.
 
-**Tier 2 - language-manager tools.** Tools installed by uv / cargo / go / npm
-have no OS channel; `hyperi-update` refreshes them via each manager
-(`uv tool upgrade --all`, `rustup update && cargo install-update -a`,
-`go install ...@latest`, `npm update -g`). E.g. ruff, ty, semgrep, pip-audit,
-cargo-audit, cargo-hack, typos, govulncheck, maid.
+**Tier 2 - language-manager tools.** Tools installed by uv / cargo / go / npm / pnpm have no OS channel, so `hyperi-update` refreshes them through each manager: `uv tool upgrade --all`, `rustup update` and `cargo install-update -a --locked`, `go install ...@latest` for the tools in `~/go/bin` (only when the module or the Go toolchain moved), `npm update -g`, and `pnpm update -g --latest`. The pnpm globals (eslint, prettier, typescript, tsx, ts-node) are installed unpinned, so `--latest` moves them to what a fresh converge would install, majors included. `uv python upgrade` moves each uv-managed Python to its newest patch without adding a python or python3 shim, and leaves the superseded patch installed, because uv has no command that removes only those. E.g. ruff, ty, semgrep, pip-audit, cargo-audit, cargo-hack, typos, govulncheck, maid.
 
-**Tier 3 - static binaries.** A handful ship only as a GitHub-release binary with
-no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter,
-aws-vault, dive, tea, terraform-docs, golangci-lint (plus a few tools on
-whichever single distro lacks a package -- k9s, kustomize and yq are Ubuntu-only
-here, since Fedora packages all three). `hyperi-update` re-fetches the latest
-release for these, and skips the ones the running distro installs from a repo so
-the binary cannot shadow the packaged copy.
+**Tier 3 - static binaries.** A handful ship only as a release binary with no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter, dive, terraform-docs, golangci-lint, lazygit, actionlint, osv-scanner, aws-vault, git-scrub, sccache, fnm, tea and macbash on both distros, k9s, kustomize, yq, hadolint, gitleaks and act on Ubuntu, and sd, kubectx and kubens on Fedora. `hyperi-update` re-fetches each one only where the role put it in `/usr/local/bin` on that distro, so the binary cannot shadow a packaged copy. Each download must match the sha256 GitHub publishes for the asset, or the release's checksum file where there is no digest (tea and macbash publish a `.sha256` beside the asset), and is renamed into place so the working copy is never half-written. aws-vault and Fedora's kubectx take the newest release at least 7 days old, as the role does. A stamp in `/var/lib/hyperi-update` stops an unmoved release being downloaded again, and the GitHub API is asked with the last ETag, so with a token set an unchanged release costs no rate limit (an anonymous 304 still counts). When the API refuses, the release document from the last run stands in. On Ubuntu, uv and uvx in `~/.local/bin` are refreshed the same way as the invoking user. gron, a Fedora release binary whose upstream has not released since 2022, is not refreshed.
 
 golangci-lint is here for a different reason: Fedora does package it, but the
 build trails upstream, and a linter behind the Go toolchain cannot read the

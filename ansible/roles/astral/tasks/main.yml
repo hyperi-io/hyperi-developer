@@ -17,7 +17,9 @@
 #   macOS  : brew  -- all three are core formulae
 #   Ubuntu : no apt repo from Astral. uv comes from the upstream tarball
 #            (user-owned in ~/.local/bin); ruff and ty install as uv tools
-#            (also user-owned). hyperi-update refreshes all three.
+#            (also user-owned). hyperi-update refreshes uv and uvx from the
+#            same release, since `uv self update` refuses a copy it did not
+#            install, and ruff and ty with `uv tool upgrade --all`.
 
 # Own copy: meta-dependencies can run this role before any sibling has loaded
 # theirs, and homebrew_env undefined aborts every macOS task below.

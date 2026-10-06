@@ -88,8 +88,10 @@
         path: "/tmp/go{{ go_version }}.linux-{{ hyperi_arch_deb }}.tar.gz"
         state: absent
 
-    # /etc/profile is re-read by every login shell, so the prepend must test
+    # /etc/profile is re-read by every login shell, so each entry must test
     # PATH first or it stacks a copy per nested shell, per tmux pane, per `su -`.
+    # ~/go/bin is appended, not prepended, so a go-installed copy never shadows
+    # a packaged tool of the same name.
     - name: Add the Go toolchain to PATH (system-wide)
       ansible.builtin.copy:
         content: |
@@ -98,6 +100,11 @@
           case ":$PATH:" in
               *":/usr/local/go/bin:"*) ;;
               *) export PATH="/usr/local/go/bin:$PATH" ;;
+          esac
+          # gopls, govulncheck and flarectl are go-installed here, and gosec on Ubuntu.
+          case ":$PATH:" in
+              *":$HOME/go/bin:"*) ;;
+              *) export PATH="$PATH:$HOME/go/bin" ;;
           esac
         dest: /etc/profile.d/hyperi-go.sh
         owner: root
