@@ -393,17 +393,29 @@ def build_table_without_tomllib(text: str) -> dict[str, str]:
     needs, `build-dir` and `rustc-wrapper`, in the `key = "value"` form
     hyperi-rust-setup writes. A value it cannot read is left out, which reads as
     unconfigured rather than as a wrong path to delete under.
+
+    A file this line reader could misread returns nothing at all: a multi-line
+    string can carry a `[build]` line that is not a header, and a repeated key
+    or table is invalid TOML that cargo itself rejects.
     """
+    if "'''" in text or '"""' in text:
+        return {}
     table: dict[str, str] = {}
     in_build = False
+    seen_build = False
     for line in text.splitlines():
         if line.lstrip().startswith("["):
             in_build = _BUILD_HEADER.match(line) is not None
+            if in_build and seen_build:
+                return {}
+            seen_build = seen_build or in_build
             continue
         if not in_build:
             continue
         pair = _STRING_KEY.match(line)
         if pair:
+            if pair.group(1) in table:
+                return {}
             value = pair.group(2) if pair.group(2) is not None else pair.group(3)
             table[pair.group(1)] = value
     return table

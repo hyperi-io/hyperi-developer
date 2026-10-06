@@ -782,6 +782,7 @@
 - name: Look for the uv-managed Python
   ansible.builtin.stat:
     path: "{{ user_home }}/.local/bin/python3.14"
+    follow: true
   register: developer_rust_uv_python
   tags: ['rust-cache']
 
@@ -790,7 +791,9 @@
 - name: Configure the Rust build environment
   ansible.builtin.command:
     cmd: >-
-      {{ developer_rust_uv_python.stat.path if developer_rust_uv_python.stat.exists else 'python3' }}
+      {{ developer_rust_uv_python.stat.path
+         if developer_rust_uv_python.stat.exists and developer_rust_uv_python.stat.executable
+         else 'python3' }}
       /usr/local/bin/hyperi-rust-setup --yes
       --sccache-size {{ rust_cache_sccache_max }}
       --ccache-size {{ rust_cache_ccache_max }}
@@ -824,9 +827,11 @@
   # the playbook's post_tasks report from.
   ansible.builtin.set_fact:
     deploy_warnings: >-
-      {{ deploy_warnings | default([])
-         + ['hyperi-rust-setup: exited ' ~ developer_rust_setup.rc | string ~ ' -- '
-            ~ ((developer_rust_setup.stderr_lines | default([''], true) | last) | trim | truncate(120))] }}
+      {{ (deploy_warnings | default([])
+          + ['hyperi-rust-setup: exited ' ~ developer_rust_setup.rc | string ~ ' -- '
+             ~ ((developer_rust_setup.stderr_lines | default([], true) | last | default('', true)
+                 or developer_rust_setup.msg | default('no output')) | trim | truncate(120))])
+         | unique }}
   when: developer_rust_setup.rc | default(0) != 0
   tags: ['rust-cache']
 

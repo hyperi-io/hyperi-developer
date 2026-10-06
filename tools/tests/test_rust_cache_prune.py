@@ -115,6 +115,21 @@ def test_the_fallback_reads_the_build_table_as_tomllib_does(prune):
     assert prune.build_table_without_tomllib(SETUP_SHAPED_CONFIG) == expected
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A multi-line string whose content looks like a [build] table.
+        "[env]\nNOTE = '''\n[build]\nbuild-dir = \"/home/u/.cache/victim\"\n'''\n",
+        '[build]\nbuild-dir = """/home/u/.cache/x"""\n',
+        # Invalid TOML that a line reader would otherwise resolve to one value.
+        '[build]\nbuild-dir = "/home/u/.cache/a"\nbuild-dir = "/home/u/.cache/b"\n',
+        '[build]\nbuild-dir = "/home/u/.cache/a"\n[env]\nX = "1"\n[build]\njobs = "2"\n',
+    ],
+)
+def test_the_fallback_reads_nothing_from_a_file_it_could_misread(prune, text):
+    assert prune.build_table_without_tomllib(text) == {}
+
+
 def test_a_python_without_tomllib_still_finds_the_pool(prune, tmp_path, monkeypatch):
     cargo_home = write_cargo_config(tmp_path, SETUP_SHAPED_CONFIG)
     monkeypatch.setenv("CARGO_HOME", str(cargo_home))
