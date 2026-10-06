@@ -130,6 +130,8 @@
           ansible.builtin.copy:
             src: "/tmp/{{ contributor_git_scrub_stem }}/git-scrub"
             dest: /usr/local/bin/git-scrub
+            owner: root
+            group: root
             mode: '0755'
             remote_src: true
           become: true

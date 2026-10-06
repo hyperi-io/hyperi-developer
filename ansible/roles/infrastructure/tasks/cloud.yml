@@ -705,6 +705,8 @@
           github_release_doc.tag_name }}/terraform-docs-{{
           github_release_doc.tag_name }}-linux-{{ hyperi_arch_deb }}.tar.gz
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: terraform-docs
         mode: '0755'

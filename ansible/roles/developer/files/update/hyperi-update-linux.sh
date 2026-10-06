@@ -69,10 +69,29 @@ export PATH="$HOME/.local/bin:$CARGO_BIN:/usr/local/go/bin:$HOME/go/bin:$PNPM_HO
 
 ASSUME_YES=0
 
-# A GitHub release binary is refreshed to the newest release at least this many
-# days old, so a compromised or broken release has time to be pulled first. The
-# roles apply the same rule through hyperi_release_min_age_days.
-RELEASE_MIN_AGE="${HYPERI_RELEASE_MIN_AGE_DAYS:-7}"
+# A GitHub release binary is refreshed to the newest release at least
+# RELEASE_MIN_AGE days old, so a compromised or broken release has time to be
+# pulled first, and repos owned by an org in RELEASE_EXEMPT skip the wait. The
+# roles write their own settings to RELEASE_CONF. The environment overrides that
+# file, --min-age overrides both, and 7 and hyperi-io apply when nothing is set.
+RELEASE_CONF=/etc/default/hyperi-update
+env_min_age="${HYPERI_RELEASE_MIN_AGE_DAYS:-}"
+env_exempt="${HYPERI_RELEASE_COOLDOWN_EXEMPT:-}"
+if [[ -r "$RELEASE_CONF" ]]; then
+    # shellcheck source=/dev/null
+    . "$RELEASE_CONF"
+fi
+RELEASE_MIN_AGE="${env_min_age:-${HYPERI_RELEASE_MIN_AGE_DAYS:-7}}"
+RELEASE_EXEMPT="${env_exempt:-${HYPERI_RELEASE_COOLDOWN_EXEMPT:-hyperi-io}}"
+unset env_min_age env_exempt
+
+# A bad configured age falls back to the default rather than stopping an
+# unattended run. Reported once the output helpers exist.
+RELEASE_AGE_NOTE=''
+if [[ ! "$RELEASE_MIN_AGE" =~ ^[0-9]+$ ]]; then
+    RELEASE_AGE_NOTE="release age '$RELEASE_MIN_AGE' is not a whole number of days, falling back to 7"
+    RELEASE_MIN_AGE=7
+fi
 
 usage() {
     cat <<EOF
@@ -85,8 +104,8 @@ Usage:
   hyperi-update --yes          Skip the confirmation. Still prompts for sudo unless
                                you have a cached ticket or passwordless sudo.
   hyperi-update --min-age DAYS Refresh a release binary only to a GitHub release
-                               at least DAYS old (default 7, or
-                               HYPERI_RELEASE_MIN_AGE_DAYS). 0 takes the newest.
+                               at least DAYS old (default: HYPERI_RELEASE_MIN_AGE_DAYS,
+                               then $RELEASE_CONF, then 7). 0 takes the newest.
   hyperi-update --help         Show this help.
 EOF
 }
@@ -96,15 +115,19 @@ while [[ $# -gt 0 ]]; do
         -h|--help)   usage; exit 0 ;;
         -y|--yes)    ASSUME_YES=1 ;;
         --min-age)   [[ $# -ge 2 ]] || { printf 'hyperi-update: --min-age needs a number of days\n' >&2; exit 2; }
-                     RELEASE_MIN_AGE="$2"; shift ;;
-        --min-age=*) RELEASE_MIN_AGE="${1#*=}" ;;
+                     flag_min_age="$2"; shift ;;
+        --min-age=*) flag_min_age="${1#*=}" ;;
         *)           printf 'hyperi-update: unknown option %q\n' "$1" >&2; usage; exit 2 ;;
     esac
     shift
 done
-if [[ ! "$RELEASE_MIN_AGE" =~ ^[0-9]+$ ]]; then
-    printf 'hyperi-update: the release age must be a whole number of days, not %q\n' "$RELEASE_MIN_AGE" >&2
-    exit 2
+if [[ -n "${flag_min_age+set}" ]]; then
+    if [[ ! "$flag_min_age" =~ ^[0-9]+$ ]]; then
+        printf 'hyperi-update: --min-age wants a whole number of days, not %q\n' "$flag_min_age" >&2
+        exit 2
+    fi
+    RELEASE_MIN_AGE="$flag_min_age"
+    RELEASE_AGE_NOTE=''
 fi
 
 # --- pretty output ---------------------------------------------------------
@@ -140,6 +163,10 @@ fail()    { printf '%s    \xe2\x9c\x97 %s%s\n' "$RED" "$1" "$RESET"; FAILURES+=(
 # summary without failing the run.
 WARNINGS=()
 warn()    { printf '%s    ! %s%s\n' "$YELLOW" "$1" "$RESET"; WARNINGS+=("$1"); }
+
+if [[ -n "$RELEASE_AGE_NOTE" ]]; then
+    warn "$RELEASE_AGE_NOTE"
+fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -625,14 +652,17 @@ else:
 PY
 }
 
-# min_age_for <owner/name> : the release age a repo's releases must reach. Our
-# own org's releases ship through our CI gates, so they are taken at once.
+# min_age_for <owner/name> : the release age a repo's releases must reach, 0 for
+# an owner in RELEASE_EXEMPT.
 min_age_for() {
-    if [[ "${1%%/*}" == hyperi-io ]]; then
-        printf '0'
-    else
-        printf '%s' "$RELEASE_MIN_AGE"
-    fi
+    local org
+    for org in $RELEASE_EXEMPT; do
+        if [[ "${1%%/*}" == "$org" ]]; then
+            printf '0'
+            return
+        fi
+    done
+    printf '%s' "$RELEASE_MIN_AGE"
 }
 
 # asset_digest <doc> <asset> [<tag>] : the sha256 GitHub publishes for <asset>
@@ -785,12 +815,14 @@ refetch() {
             return
         fi
         tag="$(release_tag "$doc" "$min_age")"
-        if [[ -z "$tag" && -n "$min_age" ]]; then
+        # Only a release that exists but is too young is a warning. Nothing
+        # matching at any age means the lookup itself is wrong.
+        if [[ -z "$tag" && -n "$min_age" && -n "$(release_tag "$doc" 0)" ]]; then
             warn "$name: no release is at least $min_age days old, kept the installed copy"
             rm -f "$doc"
             return
         elif [[ -z "$tag" ]]; then
-            fail "$name: no release found"
+            fail "$name: no stable release with a version tag found"
             rm -f "$doc"
             return
         fi
@@ -868,21 +900,29 @@ refetch() {
 # because the tag's slash is encoded in it.
 refetch_kustomize() {
     installed_local kustomize || { skip "kustomize not installed in /usr/local/bin"; return; }
-    local doc tag='' url='' digest='' min_age
+    local doc tag='' url='' digest='' min_age api pattern='kustomize/v[0-9]+(\.[0-9]+)+'
+    api='https://api.github.com/repos/kubernetes-sigs/kustomize/releases?per_page=100'
     min_age="$(min_age_for kubernetes-sigs/kustomize)"
     doc="$(mktemp)"
-    if api_get "https://api.github.com/repos/kubernetes-sigs/kustomize/releases?per_page=100" "$doc"; then
-        tag="$(release_tag "$doc" "$min_age" 'kustomize/v[0-9]+(\.[0-9]+)+')"
-        if [[ -z "$tag" ]]; then
-            warn "kustomize: no CLI release is at least $min_age days old, kept the installed copy"
-            rm -f "$doc"
-            return
-        fi
-        url="$(grep -oE "https://[^\"]*/kustomize_${tag#kustomize/}_linux_${ARCH_DEB}\.tar\.gz" "$doc" | head -1)"
-        [[ -n "$url" ]] && digest="$(asset_digest "$doc" "${url##*/}" "$tag")"
+    if ! api_get "$api" "$doc"; then
+        fail "kustomize: could not read the releases from $api"
+        rm -f "$doc"
+        return
     fi
+    tag="$(release_tag "$doc" "$min_age" "$pattern")"
+    if [[ -z "$tag" && -n "$(release_tag "$doc" 0 "$pattern")" ]]; then
+        warn "kustomize: no CLI release is at least $min_age days old, kept the installed copy"
+        rm -f "$doc"
+        return
+    elif [[ -z "$tag" ]]; then
+        fail "kustomize: no stable CLI release found"
+        rm -f "$doc"
+        return
+    fi
+    url="$(grep -oE "https://[^\"]*/kustomize_${tag#kustomize/}_linux_${ARCH_DEB}\.tar\.gz" "$doc" | head -1)"
+    [[ -n "$url" ]] && digest="$(asset_digest "$doc" "${url##*/}" "$tag")"
     rm -f "$doc"
-    [[ -n "$url" ]] || { fail "kustomize: no CLI release asset found"; return; }
+    [[ -n "$url" ]] || { fail "kustomize: $tag has no linux_${ARCH_DEB} asset"; return; }
     if [[ -n "$digest" ]]; then
         refetch --url "$url" --digest "$digest" --format tar kustomize "${url##*/}"
     else

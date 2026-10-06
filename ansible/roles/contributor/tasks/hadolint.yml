@@ -3,7 +3,8 @@
 #
 # Linux takes upstream's GitHub release binary (Tier 3 -- hyperi-update
 # re-fetches it). Ubuntu has no distro/repo/snap channel, and Fedora's dnf
-# package trails upstream by several minors, so both distros share this path.
+# package trails upstream (2.14.0 against 2.15.1 on Fedora 44, 2026-10), so both
+# distros share this path.
 # brew on macOS.
 #
 # hadolint's release assets use x86_64/arm64, NOT amd64/aarch64, so neither

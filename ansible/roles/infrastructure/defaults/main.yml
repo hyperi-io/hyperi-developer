@@ -33,12 +33,15 @@ azure_cli_supported_suites:
 # and shipped in files/session-manager-plugin.asc.
 infrastructure_ssm_signing_fingerprint: 7959637124CE093AD501D47A2C4D4AFF6F6757EE  # gitleaks:allow -- public key fingerprint
 
-# The Kubernetes minor kubectl comes from. pkgs.k8s.io publishes one repository
-# per minor, so this picks the repository and the package follows it, up or down,
-# on the next converge. kubectl supports one minor either side of the API
-# server, so set it to match the clusters you work against. v1.37 was the
-# stable minor at https://dl.k8s.io/release/stable.txt on 2026-10-06.
-infrastructure_kubectl_minor: v1.37
+# The Kubernetes minor kubectl comes from, such as v1.36. pkgs.k8s.io publishes
+# one repository per minor, so this picks the repository and the package
+# follows it, up or down, on the next converge. kubectl supports one minor
+# either side of the API server, so set it to match the clusters you work
+# against. Empty follows the stable minor at https://dl.k8s.io/release/stable.txt.
+#
+# A kubectl held with `apt-mark hold` or `dnf versionlock add` is never moved.
+# The run warns instead, until this matches the held minor or the hold goes.
+infrastructure_kubectl_minor: ''
 
 # aws-vault on Linux comes from the maintained fork's GitHub releases.
 infrastructure_aws_vault_repo: ByteNess/aws-vault

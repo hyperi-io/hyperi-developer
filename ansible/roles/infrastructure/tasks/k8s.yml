@@ -5,70 +5,140 @@
 # ============================================================================
 # KUBECTL - pkgs.k8s.io, one repository per minor (infrastructure_kubectl_minor)
 # ============================================================================
-# The package is pinned to the minor as well as the repository, so changing the
-# var moves kubectl up or down on the next converge rather than leaving the old
-# minor installed until something upgrades it.
+# The package is pinned to the minor as well as the repository, so a new minor
+# moves kubectl up or down on the next converge rather than leaving the old one
+# installed until something upgrades it. An empty infrastructure_kubectl_minor
+# follows the current stable minor at https://dl.k8s.io/release/stable.txt.
+#
+# A kubectl held with `apt-mark hold` or `dnf versionlock` is the owner's own
+# pin, so it is left where it is and the run warns instead.
 
-- name: Check the kubectl minor is a Kubernetes minor
-  ansible.builtin.assert:
-    that: infrastructure_kubectl_minor is match('^v1\\.[0-9]+$')
-    fail_msg: "infrastructure_kubectl_minor must look like v1.37, not {{ infrastructure_kubectl_minor }}"
-    quiet: true
+- name: Install kubectl (Linux)
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  block:
+    - name: Read the current stable Kubernetes release
+      ansible.builtin.uri:
+        url: https://dl.k8s.io/release/stable.txt
+        return_content: true
+      register: infrastructure_kubectl_stable
+      check_mode: false
+      when: not infrastructure_kubectl_minor
 
-# Fedora
-- name: Add Kubernetes repository (Fedora)
-  ansible.builtin.yum_repository:
-    name: kubernetes
-    description: Kubernetes
-    baseurl: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_minor }}/rpm/"
-    enabled: true
-    gpgcheck: true
-    gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_minor }}/rpm/repodata/repomd.xml.key"
-  when: ansible_facts['distribution'] == 'Fedora'
+    - name: Resolve the kubectl minor
+      ansible.builtin.set_fact:
+        infrastructure_kubectl_repo_minor: >-
+          {{ infrastructure_kubectl_minor
+             or (infrastructure_kubectl_stable.content | trim | regex_search('^v[0-9]+[.][0-9]+')) }}
 
-- name: Install kubectl (Fedora)
-  ansible.builtin.dnf:
-    name: "kubectl-{{ infrastructure_kubectl_minor | regex_replace('^v', '') }}.*"
-    state: present
-    allow_downgrade: true
-  when: ansible_facts['distribution'] == 'Fedora'
+    - name: Check the kubectl minor is a Kubernetes minor
+      ansible.builtin.assert:
+        that: infrastructure_kubectl_repo_minor is match('^v1[.][0-9]+$')
+        fail_msg: "infrastructure_kubectl_minor must look like v1.37, not {{ infrastructure_kubectl_repo_minor }}"
+        quiet: true
 
-# Ubuntu
-# Fetched on every run, so a key rotated at a new minor's repository is picked
-# up with the move; an unchanged key leaves the file untouched.
-- name: Add Kubernetes GPG key (Ubuntu)
-  ansible.builtin.get_url:
-    url: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_minor }}/deb/Release.key"
-    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
-    mode: '0644'
-    force: true
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    - name: Check whether kubectl is held
+      ansible.builtin.command:
+        argv: >-
+          {{ ['apt-mark', 'showhold', 'kubectl'] if ansible_facts['distribution'] == 'Ubuntu'
+             else ['dnf', '-q', 'versionlock', 'list'] }}
+      register: infrastructure_kubectl_hold
+      changed_when: false
+      failed_when: false
+      check_mode: false
 
-# A host provisioned by an older revision carries kubernetes.list beside the
-# .sources this writes, and apt then reads the repo twice.
-- name: Remove the legacy Kubernetes .list (Ubuntu)
-  ansible.builtin.file:
-    path: /etc/apt/sources.list.d/kubernetes.list
-    state: absent
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    - name: Read the held kubectl version
+      ansible.builtin.command:
+        argv: >-
+          {{ ['dpkg-query', '-W', '-f', '${Version}', 'kubectl'] if ansible_facts['distribution'] == 'Ubuntu'
+             else ['rpm', '-q', '--qf', '%{VERSION}', 'kubectl'] }}
+      register: infrastructure_kubectl_held_version
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: infrastructure_kubectl_held | bool
+      vars:
+        infrastructure_kubectl_held: >-
+          {{ ('kubectl' in infrastructure_kubectl_hold.stdout_lines | map('trim') | list)
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else ('Package name: kubectl' in infrastructure_kubectl_hold.stdout_lines | map('trim') | list) }}
 
-- name: Add Kubernetes repository (Ubuntu)
-  ansible.builtin.deb822_repository:
-    name: kubernetes
-    types: deb
-    uris: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_minor }}/deb/"
-    suites: "/"
-    signed_by: /etc/apt/keyrings/kubernetes-apt-keyring.asc
-    state: present
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    - name: Add Kubernetes repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: kubernetes
+        description: Kubernetes
+        baseurl: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_repo_minor }}/rpm/"
+        enabled: true
+        gpgcheck: true
+        gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_repo_minor }}/rpm/repodata/repomd.xml.key"
+      when: ansible_facts['distribution'] == 'Fedora'
 
-- name: Install kubectl (Ubuntu)
-  ansible.builtin.apt:
-    name: "kubectl={{ infrastructure_kubectl_minor | regex_replace('^v', '') }}.*"
-    state: present
-    allow_downgrade: true
-    update_cache: true
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    # Fetched on every run, so a key rotated at a new minor's repository arrives
+    # with the move, and an unchanged key leaves the file untouched.
+    - name: Add Kubernetes GPG key (Ubuntu)
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_repo_minor }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        mode: '0644'
+        force: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # A host provisioned by an older revision carries kubernetes.list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy Kubernetes .list (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/kubernetes.list
+        state: absent
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Add Kubernetes repository (Ubuntu)
+      ansible.builtin.deb822_repository:
+        name: kubernetes
+        types: deb
+        uris: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_repo_minor }}/deb/"
+        suites: "/"
+        signed_by: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        state: present
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Install kubectl (Fedora)
+      ansible.builtin.dnf:
+        name: "kubectl-{{ infrastructure_kubectl_repo_minor | regex_replace('^v', '') }}.*"
+        state: present
+        allow_downgrade: true
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - infrastructure_kubectl_held_version is skipped
+
+    - name: Install kubectl (Ubuntu)
+      ansible.builtin.apt:
+        name: "kubectl={{ infrastructure_kubectl_repo_minor | regex_replace('^v', '') }}.*"
+        state: present
+        allow_downgrade: true
+        update_cache: true
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - infrastructure_kubectl_held_version is skipped
+
+    - name: Record that a held kubectl was left on another minor
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kubectl: held at ' ~ (infrastructure_kubectl_held_version.stdout | default('?', true))
+                ~ ', so the ' ~ infrastructure_kubectl_repo_minor ~ ' minor was not applied. Set'
+                ~ ' infrastructure_kubectl_minor to the held minor, or release the hold ('
+                ~ ('apt-mark unhold' if ansible_facts['distribution'] == 'Ubuntu' else 'dnf versionlock delete')
+                ~ ' kubectl).'] }}
+      when:
+        - infrastructure_kubectl_held_version is not skipped
+        - not (infrastructure_kubectl_held_version.stdout | default(''))
+              .startswith(infrastructure_kubectl_repo_minor | regex_replace('^v', '') ~ '.')
+
+  rescue:
+    - name: Record that kubectl did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kubectl: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
 
 
 # ============================================================================
@@ -204,6 +274,8 @@
       ansible.builtin.unarchive:
         src: "https://github.com/derailed/k9s/releases/download/{{ github_release_doc.tag_name }}/k9s_Linux_{{ hyperi_arch_deb }}.tar.gz"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: k9s
         mode: '0755'
@@ -219,7 +291,7 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
 
 # kind, not minikube. kind runs vanilla kubeadm Kubernetes in docker, which is
-# closer to the real clusters our helm/argocd work targets; minikube is its own
+# closer to the real clusters our helm/argocd work targets. minikube is its own
 # opinionated distribution.
 #
 # minikube used to be installed HERE while developer/tasks/removals.yml
@@ -241,6 +313,8 @@
       ansible.builtin.get_url:
         url: "https://github.com/kubernetes-sigs/kind/releases/download/{{ github_release_doc.tag_name }}/kind-linux-{{ hyperi_arch_deb }}"
         dest: /usr/local/bin/kind
+        owner: root
+        group: root
         mode: '0755'
 
   rescue:
@@ -267,6 +341,8 @@
       ansible.builtin.get_url:
         url: "https://github.com/argoproj/argo-cd/releases/download/{{ github_release_doc.tag_name }}/argocd-linux-{{ hyperi_arch_deb }}"
         dest: /usr/local/bin/argocd
+        owner: root
+        group: root
         mode: '0755'
 
   rescue:
@@ -324,6 +400,8 @@
       ansible.builtin.unarchive:
         src: "{{ infrastructure_kustomize_asset_url }}"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: kustomize
         mode: '0755'
@@ -354,6 +432,8 @@
       ansible.builtin.unarchive:
         src: "https://github.com/yannh/kubeconform/releases/download/{{ github_release_doc.tag_name }}/kubeconform-linux-{{ hyperi_arch_deb }}.tar.gz"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: kubeconform
         mode: '0755'
@@ -387,6 +467,8 @@
           https://github.com/stackrox/kube-linter/releases/download/{{ github_release_doc.tag_name
           }}/kube-linter-linux{{ '_arm64' if hyperi_arch_deb == 'arm64' else '' }}.tar.gz
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: kube-linter
         mode: '0755'

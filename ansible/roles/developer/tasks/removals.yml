@@ -624,6 +624,8 @@
 #   linear    — Linear CLI, removed by decision 2026-05-01
 #   jfrog     — removed by decision 2026-05-01
 #   netbird   — removed by decision 2026-05-01
+#   dive      — no release since 2025-05, installed by k8s.yml on both distros
+#   gron      — no release since 2022, the release binary on Fedora
 - name: Remove retired /usr/local/bin binaries
   ansible.builtin.file:
     path: "/usr/local/bin/{{ item }}"
@@ -634,6 +636,8 @@
     - linear
     - jfrog
     - netbird
+    - dive
+    - gron
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # Copies a package now supplies (helm, kubectx, k9s, kustomize, gitleaks) are
@@ -656,6 +660,7 @@
 #                       anyway; it is why removals are dry-run against a real
 #                       host first).
 #   httpie              superseded by curl for our uses
+#   gron                no release since 2022 (Ubuntu installed it from apt)
 #
 # NOT purged, only removed: `purge` would also delete config a developer may
 # have written themselves.
@@ -693,6 +698,7 @@
       - whois
       - tree
       - httpie
+      - gron
     state: absent
     purge: false
     autoremove: false

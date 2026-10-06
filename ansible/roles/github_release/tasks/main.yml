@@ -36,6 +36,13 @@
          | selectattr('tag_name', 'match', github_release_tag_match | default('^v?[0-9]+(\.[0-9]+)+$'))
          | list }}
   block:
+    # A value such as 7d would read as 0 through | int and switch the wait off.
+    - name: Check the release age is a whole number of days
+      ansible.builtin.assert:
+        that: hyperi_release_min_age_days | string is match('^[0-9]+$')
+        fail_msg: "hyperi_release_min_age_days must be a whole number of days, not {{ hyperi_release_min_age_days }}"
+        quiet: true
+
     - name: List the releases of {{ github_release_repo }}
       ansible.builtin.uri:
         url: >-
@@ -65,5 +72,6 @@
         fail_msg: >-
           no {{ github_release_repo }} release among the newest
           {{ github_release_page_size | default(30) }} is at least
-          {{ github_release_min_age }} days old, so the installed copy is kept
+          {{ github_release_min_age }} days old, so nothing was installed or
+          updated and any installed copy stays as it was
         quiet: true

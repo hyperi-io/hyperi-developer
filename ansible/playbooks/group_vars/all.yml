@@ -36,8 +36,8 @@ hyperi_github_env: >-
 # this many days old, so a compromised or broken release has time to be pulled
 # first (roles/github_release). Nothing newer is ever installed in its place:
 # with no release old enough, the installed copy stays and the run warns.
-# hyperi-update applies the same age, overridable there with --min-age or
-# HYPERI_RELEASE_MIN_AGE_DAYS.
+# hyperi-update reads this and the exempt orgs below from
+# /etc/default/hyperi-update, which update_command.yml writes.
 hyperi_release_min_age_days: 7
 
 # Orgs whose releases ship through our own CI gates, so they skip the wait.

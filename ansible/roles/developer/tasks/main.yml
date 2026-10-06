@@ -62,16 +62,6 @@
       tags: ['developer', 'utilities']
   tags: ['developer', 'utilities']
 
-# What utilities.yml used to install and no longer does. Only the role's own
-# copies go, so it runs with the install rather than behind the removals
-# opt-in.
-- name: Remove the tools this role no longer installs
-  ansible.builtin.include_tasks:
-    file: retired.yml
-    apply:
-      tags: ['developer', 'utilities', 'removals']
-  tags: ['developer', 'utilities', 'removals']
-
 - name: Install Git and version control tools
   ansible.builtin.include_tasks:
     file: git.yml

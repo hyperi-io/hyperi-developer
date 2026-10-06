@@ -10,8 +10,7 @@
 # traceroute, tree, httpie. They are either superseded (ss over netstat, curl
 # over httpie, eza/fd over tree) or things a developer box has no business
 # shipping by default (nmap, telnet). Install them yourself if you want them.
-# gron and dive are retired too, but those leave on any run (retired.yml),
-# because only the role's own copies are removed.
+# gron and dive were dropped the same way.
 - name: Install CLI utilities (Fedora)
   ansible.builtin.dnf:
     name:
@@ -152,6 +151,8 @@
       ansible.builtin.get_url:
         url: "https://github.com/mikefarah/yq/releases/download/{{ github_release_doc.tag_name }}/yq_linux_{{ hyperi_arch_deb }}"
         dest: /usr/local/bin/yq
+        owner: root
+        group: root
         mode: '0755'
 
   rescue:
@@ -202,6 +203,8 @@
       ansible.builtin.unarchive:
         src: "https://github.com/chmln/sd/releases/download/{{ github_release_doc.tag_name }}/sd-{{ github_release_doc.tag_name }}-{{ sd_target | trim }}.tar.gz"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         extra_opts:
           - --strip-components=1
@@ -247,6 +250,8 @@
       ansible.builtin.unarchive:
         src: "{{ lazygit_base }}/{{ github_release_doc.tag_name }}/lazygit_{{ lazygit_version }}_linux_{{ lazygit_arch }}.tar.gz"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: lazygit
         mode: '0755'

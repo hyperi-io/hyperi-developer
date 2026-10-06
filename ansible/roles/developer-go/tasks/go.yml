@@ -237,6 +237,8 @@
           https://github.com/golangci/golangci-lint/releases/download/{{ golangci_ref | trim }}/golangci-lint-{{
           golangci_ref | trim | regex_replace('^v', '') }}-linux-{{ hyperi_arch_deb }}.tar.gz
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         extra_opts:
           - --strip-components=1

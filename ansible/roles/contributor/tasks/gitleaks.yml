@@ -84,6 +84,8 @@
           https://github.com/gitleaks/gitleaks/releases/download/{{ contributor_gitleaks_ref | trim }}/gitleaks_{{
           contributor_gitleaks_ref | trim | regex_replace('^v', '') }}_linux_{{ contributor_gitleaks_arch }}.tar.gz
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: gitleaks
         mode: '0755'

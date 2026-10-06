@@ -16,8 +16,9 @@
 #   6. it picks the RIGHT package manager for the distro
 #   7. the reboot check runs and reports (the Fedora path was silently broken:
 #      /run/reboot-required never exists there, so it always said "no reboot")
-#   8. a release age that is not a whole number of days is refused
-#   9. with no GitHub release old enough, a release binary is kept as it was
+#   8. a bad release age is refused from the flag and falls back from config
+#   9. /etc/default/hyperi-update is read, and with no GitHub release old
+#      enough a release binary is kept as it was
 #
 # WHAT IT CANNOT PROVE: containers share the host kernel, so "reboot required"
 # cannot be forced. We assert the check RUNS and reports, not its verdict.
@@ -147,12 +148,13 @@ for image in "${IMAGES[@]}"; do
     # 3. unknown option rejected
     run_case "$image" "unknown option exits 2" '/tmp/hyperi-update --bogus' 2
 
-    # 3a. a release age that is not a whole number of days is rejected, from the
-    #     flag and from the environment alike, before anything runs
+    # 3a. a --min-age that is not a whole number of days is refused before
+    #     anything runs, while a bad configured age only warns and falls back,
+    #     so it cannot stop the weekly timer
     run_case "$image" "--min-age without a value exits 2" '/tmp/hyperi-update --min-age' 2
     run_case "$image" "--min-age with a non-number exits 2" '/tmp/hyperi-update --min-age soon' 2
-    run_case "$image" "a non-number release age in the env exits 2" \
-        'HYPERI_RELEASE_MIN_AGE_DAYS=-1 /tmp/hyperi-update --yes' 2
+    run_case "$image" "a non-number release age in the env falls back to 7" \
+        'printf "n\n" | HYPERI_RELEASE_MIN_AGE_DAYS=-1 /tmp/hyperi-update' 0 'falling back to 7'
 
     # 4. the confirmation exists, and declining does nothing.
     #    "n" on stdin must stop it BEFORE sudo/packages.
@@ -182,15 +184,17 @@ for image in "${IMAGES[@]}"; do
     run_case "$image" "summary printed" \
         '/tmp/hyperi-update --yes' 0 '==> Summary'
 
-    # 10. with no release old enough, a release binary is left exactly as it
-    #     was, the summary says so, and the run still succeeds. One GitHub API
-    #     call per image: kind is the only release binary planted. The Ubuntu
-    #     images ship no curl, which the release lookup needs.
+    # 10. the age the roles write to /etc/default/hyperi-update reaches a run
+    #     with no flag, and with no release old enough a release binary is left
+    #     exactly as it was, the summary says so, and the run still succeeds.
+    #     One GitHub API call per image: kind is the only release binary
+    #     planted. The Ubuntu images ship no curl, which the lookup needs.
     # shellcheck disable=SC2016  # $rc is the container shell's, not this one's
     run_case "$image" "too-young releases keep the installed copy" \
         'command -v curl >/dev/null || { apt-get update -qq && apt-get install -y -qq curl; } >/dev/null 2>&1
          cp /bin/true /usr/local/bin/kind
-         /tmp/hyperi-update --yes --min-age 100000; rc=$?
+         printf "HYPERI_RELEASE_MIN_AGE_DAYS=100000\n" > /etc/default/hyperi-update
+         /tmp/hyperi-update --yes; rc=$?
          [ "$(sha256sum </bin/true)" = "$(sha256sum </usr/local/bin/kind)" ] || { echo "kind was replaced"; exit 9; }
          exit $rc' 0 'kind: no release is at least 100000 days old, kept the installed copy' 'kind was replaced'
 done
