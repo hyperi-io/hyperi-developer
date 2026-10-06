@@ -56,6 +56,20 @@
   become: true
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
   block:
+    # Runs before any apt call, because another source for this repository
+    # with a different key stops apt reading anything.
+    - name: Remove other apt sources for the Claude Code repository (Ubuntu)
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: apt_source_exclusive.yml
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_apt_source_match: 'downloads\.claude\.ai/claude-code/apt'
+        system_cleanup_apt_source_file: /etc/apt/sources.list.d/claude-code.sources
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
     # A minimal Ubuntu ships gpgv but not gpg, which the key check needs, and
     # deb822_repository needs python3-debian.
     - name: Ensure the Claude Code repository prerequisites are present
@@ -116,20 +130,12 @@
         mode: '0644'
       when: not (ansible_check_mode and soe_claude_key_download is changed)
 
-    # Anthropic's documented one-line source for the same repository; apt warns
-    # on every update while both name it.
-    - name: Remove the one-line Claude Code apt source (Ubuntu)
-      ansible.builtin.file:
-        path: /etc/apt/sources.list.d/claude-code.list
-        state: absent
-      when: ansible_facts['distribution'] == 'Ubuntu'
-
     - name: Add the Claude Code apt repository (Ubuntu)
       ansible.builtin.deb822_repository:
         name: claude-code
         types: deb
         uris: "{{ soe_claude_apt_repo_url }}"
-        suites: stable
+        suites: "{{ soe_claude_channel }}"
         components: main
         signed_by: /etc/apt/keyrings/claude-code.asc
         state: present
@@ -166,9 +172,7 @@
         - ansible_facts['distribution'] == 'Fedora'
         - not soe_claude_repo_pending
 
-    # The native copy is removed only once the package copy runs: it sits in
-    # ~/.local/bin, ahead of /usr/bin on the PATH, and would otherwise shadow the
-    # package forever.
+    # The native copy in ~/.local/bin precedes /usr/bin on the PATH, so it goes once the package copy runs.
     - name: Check the packaged Claude Code runs
       ansible.builtin.command:
         argv: [/usr/bin/claude, --version]
@@ -185,8 +189,7 @@
         follow: false
       register: soe_claude_native_launcher
 
-    # Only a launcher pointing into the native installer's versions directory
-    # is one this role's old install wrote; anything else there is the user's.
+    # A launcher linking into the native installer's versions directory is the native install; any other file there is left alone.
     - name: Decide whether a native Claude Code install is to be replaced
       ansible.builtin.set_fact:
         soe_claude_native_found: >-
@@ -194,6 +197,7 @@
              and soe_claude_native_launcher.stat.islnk | default(false)
              and soe_claude_native_launcher.stat.lnk_target is match('^' ~ (user_home ~ '/.local/share/claude/versions/') | regex_escape) }}
 
+    # The staging and locks directories belong to the native updater, which the package build does not run.
     - name: Remove the native Claude Code install the package replaces
       ansible.builtin.file:
         path: "{{ item }}"
@@ -201,27 +205,24 @@
       loop:
         - "{{ user_home }}/.local/bin/claude"
         - "{{ user_home }}/.local/share/claude"
+        - "{{ user_home }}/.cache/claude/staging"
+        - "{{ user_home }}/.local/state/claude/locks"
       when: soe_claude_native_found | bool
 
-    # The native installer records itself in ~/.claude.json, and `claude doctor`
-    # then reports the removed launcher as broken and offers `claude install`,
-    # which would put the shadowing copy back. Only the comma-terminated form
-    # is removed, so the file stays valid JSON. failed_when: a native install
-    # that never started claude has no config file.
+    # A top-level "installMethod": "native" makes `claude doctor` offer `claude install`,
+    # which would restore the shadowing copy; failed_when covers a user with no config file.
     - name: Clear the native install method from the user's Claude Code config
       ansible.builtin.replace:
         path: "{{ user_home }}/.claude.json"
-        regexp: '^\s*"installMethod": "native",\n'
+        regexp: '^  "installMethod": "native",\n'
         replace: ''
       failed_when: false
-      when: soe_claude_native_found | bool
+      when:
+        - soe_claude_package_check.rc == 0
+        - not soe_claude_native_launcher.stat.exists or soe_claude_native_found | bool
 
   rescue:
-    # After a key rotation the repo no longer verifies against the trusted
-    # key, and the apt module fails every later cache refresh in the run on it,
-    # where apt-get only warns. The previously trusted key stays.
-    # Deleted as a file: deb822_repository state=absent also deletes the
-    # keyring of the same name, which is the trusted key here.
+    # Deleted as a file on a key mismatch, leaving the trusted key: deb822_repository state=absent would delete that keyring too.
     - name: Remove the Claude Code apt repository after a key mismatch (Ubuntu)
       ansible.builtin.file:
         path: /etc/apt/sources.list.d/claude-code.sources
@@ -237,6 +238,18 @@
       when:
         - ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
         - ansible_facts['distribution'] == 'Fedora'
+
+    - name: Remove the Claude Code apt source if apt reported a conflicting key (Ubuntu)
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: apt_source_exclusive.yml
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_apt_source_match: 'downloads\.claude\.ai/claude-code/apt'
+        system_cleanup_apt_source_file: /etc/apt/sources.list.d/claude-code.sources
+        system_cleanup_apt_source_failed: "{{ ansible_failed_result }}"
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
     - name: Record that Claude Code did not install (Linux)
       # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator

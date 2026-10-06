@@ -1,0 +1,85 @@
+---
+# Keep one apt source per repository, so apt can always read its sources.
+#
+# apt refuses to read ANY source once two entries for one repository carry
+# different Signed-By values, which is what `add-apt-repository` or a vendor's
+# own install instructions leave beside the .sources a role writes.
+#
+# Inputs:
+#   system_cleanup_apt_source_match       regex naming the repository's host and
+#                                         path, e.g. 'launchpadcontent\.net/git-core/ppa'
+#   system_cleanup_apt_source_file        the .sources file the calling role owns
+#   system_cleanup_apt_source_if_present  (optional) act only while that file
+#                                         exists, for a pass that runs before the
+#                                         owning role decides whether to write it
+#   system_cleanup_apt_source_failed      (optional) the failed result from a
+#                                         rescue; when apt reported the conflict,
+#                                         the role's own file goes instead
+
+- name: Check for the role's own source, {{ system_cleanup_apt_source_file | basename }}
+  ansible.builtin.stat:
+    path: "{{ system_cleanup_apt_source_file }}"
+  register: system_cleanup_apt_source_own
+  when: system_cleanup_apt_source_if_present | default(false) | bool
+
+- name: Decide whether to sweep other sources, {{ system_cleanup_apt_source_file | basename }}
+  ansible.builtin.set_fact:
+    system_cleanup_apt_source_sweep: >-
+      {{ system_cleanup_apt_source_failed is not defined
+         and (not system_cleanup_apt_source_if_present | default(false) | bool
+              or system_cleanup_apt_source_own.stat.exists | default(false)) }}
+
+- name: Find other apt entries for {{ system_cleanup_apt_source_file | basename }}
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns: ['*.list', '*.sources']
+    contains: '^\s*(deb(-src)?\s|URIs:).*{{ system_cleanup_apt_source_match }}'
+  become: true
+  register: system_cleanup_apt_source_others
+  when: system_cleanup_apt_source_sweep | bool
+
+- name: Remove other apt sources for {{ system_cleanup_apt_source_file | basename }}
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  loop: >-
+    {{ system_cleanup_apt_source_others.files | default([]) | map(attribute='path')
+       | reject('equalto', system_cleanup_apt_source_file) | list }}
+  register: system_cleanup_apt_source_removed
+  when: system_cleanup_apt_source_sweep | bool
+
+- name: Remove sources.list entries for {{ system_cleanup_apt_source_file | basename }}
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list
+    regexp: '^\s*deb(-src)?\s.*{{ system_cleanup_apt_source_match }}'
+    state: absent
+  become: true
+  register: system_cleanup_apt_source_list_edit
+  when: system_cleanup_apt_source_sweep | bool
+
+- name: Report the apt sources replaced by {{ system_cleanup_apt_source_file | basename }}
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ (deploy_warnings | default([])
+          + ['Removed ' ~ _gone | join(', ') ~ ': it named the same repository as '
+             ~ system_cleanup_apt_source_file ~ ', and two entries with different keys stop apt reading any source.'])
+         | unique }}
+  vars:
+    _gone: >-
+      {{ system_cleanup_apt_source_removed.results | default([]) | selectattr('changed') | map(attribute='item') | list
+         + (['a line in /etc/apt/sources.list'] if system_cleanup_apt_source_list_edit is changed else []) }}
+  when:
+    - system_cleanup_apt_source_sweep | bool
+    - _gone | length > 0
+
+- name: Remove the role's own source after apt reported a conflicting key, {{ system_cleanup_apt_source_file | basename }}
+  ansible.builtin.file:
+    path: "{{ system_cleanup_apt_source_file }}"
+    state: absent
+  become: true
+  when:
+    - system_cleanup_apt_source_failed is defined
+    - "'Conflicting values set for option Signed-By' in
+       (system_cleanup_apt_source_failed.msg | default('') ~ system_cleanup_apt_source_failed.stderr | default(''))"
