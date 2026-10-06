@@ -106,6 +106,33 @@
     quiet: true
   tags: ['rust-cache', 'rust-governor', 'rust-llvm']
 
+# Compared by device and inode, not by path: ~/.cargo can be a symlink to the
+# relocated home, and then it is the live home, not a stale one.
+- name: Identify the default and the effective cargo homes
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+    get_checksum: false
+  loop:
+    - "{{ user_home }}/.cargo"
+    - "{{ developer_rust_cargo_home }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_rust_cargo_home_dirs
+  tags: ['rust-cache', 'rust-governor', 'rust-llvm']
+
+# True when ~/.cargo is a separate directory from the effective CARGO_HOME:
+# whatever it still holds is left over from before the relocation.
+- name: Note whether ~/.cargo is a stale home beside a relocated one
+  ansible.builtin.set_fact:
+    developer_rust_cargo_home_stale: >-
+      {{ _default.exists and _default.isdir
+         and not (_effective.exists and _effective.dev == _default.dev and _effective.inode == _default.inode) }}
+  vars:
+    _default: "{{ developer_rust_cargo_home_dirs.results[0].stat }}"
+    _effective: "{{ developer_rust_cargo_home_dirs.results[1].stat }}"
+  tags: ['rust-cache', 'rust-governor', 'rust-llvm']
+
 - name: Report where the toolchain was resolved to
   ansible.builtin.debug:
     msg: >-
@@ -177,8 +204,8 @@
             mode: '0755'
             checksum: "sha256:{{ developer_rustup_sha.content.split() | first }}"
 
-        # --no-modify-path: this role already manages the ~/.cargo/bin PATH
-        # entry in .bashrc below, and letting rustup-init add its own leaves two.
+        # --no-modify-path: this role already manages the cargo bin PATH entry
+        # in ~/.profile below, and letting rustup-init add its own leaves two.
         - name: Install the Rust toolchain via rustup-init
           ansible.builtin.command:
             cmd: /tmp/rustup-init -y --default-toolchain stable --no-modify-path
@@ -730,16 +757,6 @@
     ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     or developer_rust_macos_rustup.rc | default(1) == 0
 
-# hyperi-ci prefers tarpaulin over llvm-cov when both are present, so leaving a
-# stale copy behind would keep Linux on the tool macOS cannot run.
-- name: Remove the superseded cargo-tarpaulin
-  ansible.builtin.command:
-    cmd: cargo uninstall cargo-tarpaulin
-    removes: "{{ developer_rust_cargo_home }}/bin/cargo-tarpaulin"
-  environment: "{{ cargo_env }}"
-  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
-  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-
 - name: Install cargo-pgo (profile-guided optimisation)
   ansible.builtin.command:
     cmd: cargo install cargo-pgo --locked
@@ -898,6 +915,19 @@
   tags: ['rust-cache']
 
 # ============================================================
+# Strays: duplicates, retired tools, a superseded ~/.cargo
+# ============================================================
+# After every install above and after hyperi-rust-setup, so each managed copy
+# is in place before the copy it supersedes goes, and the cargo config already
+# names the managed sccache rather than one about to be removed.
+- name: Remove cargo-home strays
+  ansible.builtin.include_tasks:
+    file: strays.yml
+    apply:
+      tags: ['developer-rust', 'rust']
+  tags: ['developer-rust', 'rust']
+
+# ============================================================
 # Post-condition: the toolchain the converge just left behind works
 # ============================================================
 # A rustc-wrapper that does not exist breaks EVERY cargo command on the box
@@ -988,7 +1018,7 @@
       register: developer_rust_retired
       when:
         - rust_retire_superseded_config | default(true) | bool
-        - developer_rust_cargo_home != user_home ~ '/.cargo'
+        - developer_rust_cargo_home_stale | default(false) | bool
 
     # Fatal even on the run that just retired the offending file. The toolchain
     # WAS broken, and a converge that repairs it and then says so is the loud

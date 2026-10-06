@@ -370,6 +370,141 @@
         mode: '0644'
       when: ansible_facts['distribution'] == 'Ubuntu'
 
+    # ------------------------------------------------------------------
+    # HAND-INSTALLED DUPLICATES -- a second copy of a tool the roles install
+    # system-wide, left by a manual install. Each must go only where the
+    # managed copy is in place and is a different file.
+    # ------------------------------------------------------------------
+    # Observed on the reference workstation 2026-10-06: ~/.local/bin/kind
+    # shadowing /usr/local/bin/kind. CONSTRUCTED: the same shadow from ~/go/bin.
+    - name: Plant the managed /usr/local/bin copies the user-level ones shadow
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "managed fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - kind
+        - dive
+        - argocd
+        - macbash
+        - git-scrub
+
+    - name: Create the user-level bin directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+        - "{{ ansible_facts['env']['HOME'] }}/go/bin"
+
+    - name: Plant user-level copies of managed tools
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "hand-installed fixture: {{ item | basename }}"
+        dest: "{{ ansible_facts['env']['HOME'] }}/{{ item }}"
+        mode: '0755'
+      loop:
+        - .local/bin/kind        # shadows /usr/local/bin/kind -- must go
+        - go/bin/dive            # shadows /usr/local/bin/dive -- must go
+        - .local/bin/kubeconform # no system copy here -- the only one, must stay
+        - .local/bin/tinygo-dev  # not a tool the roles manage -- must stay
+
+    # CONSTRUCTED: a user-level link to the managed binary is not a duplicate.
+    - name: Link a user-level argocd to the managed copy
+      ansible.builtin.file:
+        src: /usr/local/bin/argocd
+        dest: "{{ ansible_facts['env']['HOME'] }}/.local/bin/argocd"
+        state: link
+
+    # Observed on the reference workstation 2026-10-06: the macbash .deb, from no
+    # repository, beside the role's /usr/local/bin/macbash. CONSTRUCTED: a
+    # git-scrub package another package depends on, which must stay.
+    - name: Install hand-built duplicate packages (Ubuntu)
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      block:
+        - name: Create the fixture package trees
+          ansible.builtin.file:
+            path: "/root/dup-fixture/{{ item.0 }}/{{ item.1 }}"
+            state: directory
+            mode: '0755'
+          loop: "{{ ['macbash', 'git-scrub', 'git-scrub-dependant'] | product(['DEBIAN', 'usr/bin']) | list }}"
+
+        - name: Write the fixture control files
+          ansible.builtin.copy:
+            content: |
+              Package: {{ item.name }}
+              Version: 1.0.0
+              Architecture: all
+              Maintainer: hyperi-developer fixture <noreply@example.invalid>
+              {% if item.depends %}Depends: {{ item.depends }}
+              {% endif %}Description: Stand-in for a hand-installed package
+            dest: "/root/dup-fixture/{{ item.name }}/DEBIAN/control"
+            mode: '0644'
+          loop:
+            - {name: macbash, depends: ''}
+            - {name: git-scrub, depends: ''}
+            - {name: git-scrub-dependant, depends: git-scrub}
+
+        - name: Write the packaged binaries
+          ansible.builtin.copy:
+            content: |
+              #!/bin/sh
+              echo "hand-installed package fixture: {{ item }}"
+            dest: "/root/dup-fixture/{{ item }}/usr/bin/{{ item }}"
+            mode: '0755'
+          loop:
+            - macbash
+            - git-scrub
+            - git-scrub-dependant
+
+        - name: Build the fixture packages
+          ansible.builtin.command:
+            cmd: "dpkg-deb --build --root-owner-group /root/dup-fixture/{{ item }} /root/dup-fixture/{{ item }}.deb"
+            creates: "/root/dup-fixture/{{ item }}.deb"
+          loop:
+            - macbash
+            - git-scrub
+            - git-scrub-dependant
+
+        - name: Install the fixture packages
+          ansible.builtin.apt:
+            deb: "/root/dup-fixture/{{ item }}.deb"
+          loop:
+            - macbash
+            - git-scrub
+            - git-scrub-dependant
+
+    # Observed on the reference workstation 2026-10-06: golang-go with no reverse
+    # dependencies beside the role's /usr/local/go. A script stands in for the
+    # managed toolchain.
+    - name: Install the distro Go (Ubuntu)
+      ansible.builtin.apt:
+        name: golang-go
+        state: present
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Create the stand-in managed Go tree
+      ansible.builtin.file:
+        path: /usr/local/go/bin
+        state: directory
+        mode: '0755'
+
+    - name: Plant the stand-in managed Go
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "go version go0.0.0-fixture linux/amd64"
+        dest: /usr/local/go/bin/go
+        owner: root
+        group: root
+        mode: '0755'
+
     # The unguarded ~/.bashrc PATH lines are deliberately NOT planted. The tasks
     # that remove them sit in the install path of the developer and
     # developer-rust roles, not under the `removals` tag this scenario

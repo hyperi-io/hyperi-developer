@@ -609,6 +609,8 @@ it. Every channel move needs a tombstone for the path it vacated, and the
 `remediation` molecule scenario asserts the replacement is what `which` resolves
 to -- not merely that the new thing installed.
 
+**A hand install leaves a second copy too.** The `removals` tag clears copies of the managed tools in `~/.local/bin` and `~/go/bin`, and a hand-installed .deb or .rpm that duplicates a `/usr/local/bin` tool, each only where the managed copy exists and is a different file. developer-go removes the distro Go once `/usr/local/go` is in, and developer-rust clears cargo-home duplicates, cargo-tarpaulin and a `~/.cargo/bin` left behind by a relocated `CARGO_HOME`. A package something else depends on stays, and the run says which.
+
 ## Auto-update
 
 Every tool stays current; the mechanism depends on its channel. Three tiers:

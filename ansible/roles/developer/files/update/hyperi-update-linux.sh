@@ -35,9 +35,9 @@
 set -uo pipefail
 
 # Make user-level tools reachable even when launched from a GUI/.desktop entry
-# that doesn't source the login shell (uv/rustup live in ~/.cargo/bin, claude in
-# ~/.local/bin).
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+# that doesn't source the login shell (rustup and the cargo tools live in the
+# cargo home, uv and claude in ~/.local/bin, Go in /usr/local/go/bin).
+export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:/usr/local/go/bin:$PATH"
 
 ASSUME_YES=0
 

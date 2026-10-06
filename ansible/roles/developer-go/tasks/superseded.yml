@@ -1,0 +1,125 @@
+---
+# The distro Go beside the upstream toolchain this role installs in /usr/local/go.
+# /usr/bin/go answers wherever /etc/profile.d has not run -- a cron job, a
+# systemd unit, an IDE launched outside a login shell -- so a build there gets
+# the distro's Go instead of the managed one.
+#
+# Removed only once /usr/local/go/bin/go resolves, only where /usr/bin/go
+# resolves outside /usr/local (a link someone pointed at the managed toolchain is
+# not the distro's), and only when the removal touches nothing beyond the Go
+# packages themselves: a package that needs the distro Go keeps it, and the run
+# says which.
+#
+# Linux only: Homebrew is the managed Go on macOS.
+
+- name: Resolve the managed and the distro Go
+  ansible.builtin.command:
+    argv: [readlink, -e, "{{ item }}"]
+  loop:
+    - /usr/local/go/bin/go
+    - /usr/bin/go
+  register: developer_go_resolved
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Find the packages behind the distro Go
+  when:
+    - developer_go_resolved.results[0].rc == 0
+    - developer_go_resolved.results[1].rc == 0
+    - not developer_go_resolved.results[1].stdout.startswith('/usr/local/')
+  block:
+    # The package that ships the resolved binary (golang-1.26-go on Ubuntu,
+    # golang-bin on Fedora), plus the metapackages that pull it in.
+    - name: Find the package that ships the distro Go
+      ansible.builtin.command:
+        argv: >-
+          {{ (['dpkg-query', '-S'] if ansible_facts['distribution'] == 'Ubuntu'
+              else ['rpm', '-qf', '--qf', '%{NAME}\n']) + [developer_go_resolved.results[1].stdout] }}
+      register: developer_go_owner
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: List the installed distro Go packages
+      ansible.builtin.command:
+        argv: >-
+          {{ (['dpkg-query', '-W', '-f', '${db:Status-Abbrev} ${Package}\n']
+              if ansible_facts['distribution'] == 'Ubuntu'
+              else ['rpm', '-q', '--qf', '%{NAME}\n'])
+             + developer_go_candidates }}
+      register: developer_go_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: developer_go_owner.rc == 0
+      vars:
+        developer_go_owned: "{{ developer_go_owner.stdout_lines | first | regex_replace(':.*$', '') }}"
+        # golang-1.26-go -> golang-1.26-src beside it; Fedora splits bin and src.
+        developer_go_candidates: >-
+          {{ (['golang', 'golang-go', 'golang-src', 'golang-doc', developer_go_owned,
+               developer_go_owned | regex_replace('-go$', '-src'),
+               developer_go_owned | regex_replace('-go$', '-doc')]
+              if ansible_facts['distribution'] == 'Ubuntu'
+              else ['golang', 'golang-src', developer_go_owned]) | unique }}
+
+    # dpkg-query reports `ii ` for an installed package; rpm prints the name of
+    # each installed one and `package X is not installed` for the rest.
+    - name: Collect the distro Go packages to remove
+      ansible.builtin.set_fact:
+        developer_go_distro_pkgs: >-
+          {{ (developer_go_installed.stdout_lines | default([]) | select('match', '^ii ')
+              | map('regex_replace', '^ii +', '') | list)
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else (developer_go_installed.stdout_lines | default([]) | reject('search', ' ') | list) }}
+
+    - name: Simulate removing the distro Go
+      ansible.builtin.command:
+        argv: >-
+          {{ (['apt-get', '-s', 'purge'] if ansible_facts['distribution'] == 'Ubuntu'
+              else ['rpm', '-e', '--test']) + developer_go_distro_pkgs }}
+      register: developer_go_sim
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: developer_go_distro_pkgs | length > 0
+
+    - name: Note what removing the distro Go would also take
+      ansible.builtin.set_fact:
+        developer_go_sim_also: >-
+          {{ developer_go_sim.stdout_lines | default([]) | select('match', '^(Purg|Remv) ')
+             | map('regex_replace', '^\S+ (\S+).*$', '\1')
+             | reject('in', developer_go_distro_pkgs) | list }}
+      when: developer_go_distro_pkgs | length > 0
+
+    - name: Purge the distro Go superseded by /usr/local/go (Ubuntu)
+      ansible.builtin.apt:
+        name: "{{ developer_go_distro_pkgs }}"
+        state: absent
+        purge: true
+        autoremove: false
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - developer_go_distro_pkgs | length > 0
+        - developer_go_sim.rc == 0
+        - developer_go_sim_also | length == 0
+
+    - name: Remove the distro Go superseded by /usr/local/go (Fedora)
+      ansible.builtin.dnf:
+        name: "{{ developer_go_distro_pkgs }}"
+        state: absent
+        autoremove: false
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - developer_go_distro_pkgs | length > 0
+        - developer_go_sim.rc == 0
+
+    - name: Report a distro Go kept because something depends on it
+      ansible.builtin.debug:
+        msg: >-
+          Kept the distro Go ({{ developer_go_distro_pkgs | join(', ') }}) beside
+          /usr/local/go: removing it would also remove
+          {{ developer_go_sim_also | join(', ') if developer_go_sim_also else developer_go_sim.stderr | trim }}.
+      when:
+        - developer_go_distro_pkgs | length > 0
+        - developer_go_sim.rc != 0 or developer_go_sim_also | length > 0

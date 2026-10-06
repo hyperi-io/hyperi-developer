@@ -7,3 +7,13 @@
     apply:
       tags: ['developer-go', 'go']
   tags: ['developer-go', 'go']
+
+# After go.yml, so /usr/local/go is in before the distro Go it supersedes goes.
+# `removals` also reaches it, for a remediation run that installs nothing.
+- name: Remove the distro Go superseded by the managed toolchain
+  ansible.builtin.include_tasks:
+    file: superseded.yml
+    apply:
+      tags: ['developer-go', 'go', 'removals']
+  tags: ['developer-go', 'go', 'removals']
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

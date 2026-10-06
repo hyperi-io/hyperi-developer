@@ -166,13 +166,15 @@ This does not reopen the objection in the SSoT note below: crates.io stays out
 of the global `rustc-wrapper` path. The binary is the project's own release
 artefact, digest-checked, not an unpinned `cargo install`.
 
-**A cargo-installed sccache still shadows it.** `~/.cargo/bin` precedes
-`/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy
-while builds keep using the absolute path in the cargo config. That split is
-what makes a failed `--show-stats` look like a dead cache when every build is
-being cached normally. The prune reports which binary builds use and queries
-that one; the setup tool prints the `cargo uninstall` line. Removing a binary a
-developer installed is their call.
+**A cargo-installed sccache would shadow it.** `~/.cargo/bin` precedes `/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy while builds keep using the absolute path in the cargo config. That split is what makes a failed `--show-stats` look like a dead cache when every build is being cached normally. The role deregisters and removes the cargo copy once the managed one is in place (`tasks/strays.yml`). The setup tool run on its own only prints the `cargo uninstall` line.
+
+**Strays.** After the installs, the role clears what would otherwise run instead of the managed copies, in the effective `CARGO_HOME` and, where `CARGO_HOME` is relocated, in the old `~/.cargo`:
+
+- cargo-home copies of sccache, sd, fnm, uv and uvx, once the managed copy exists and is a different file
+- the retired cargo-tarpaulin
+- binaries in a superseded `~/.cargo/bin` that the effective home also holds (its registry and git caches, install record and anything installed only there stay)
+
+A cargo-installed copy goes through `cargo uninstall --root`, so `cargo install-update` does not reinstall it.
 
 `build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
 says so and leaves the per-project layout alone, so the default stays safe.
@@ -230,10 +232,6 @@ workstation.
 
 **Install mold on macOS.** mold is an ELF linker with no Mach-O backend, so it
 cannot link anything built natively on a Mac.
-
-**Remove a cargo-installed sccache that shadows the packaged one.** The tool
-detects the shadow and prints the `cargo uninstall` line. Removing a binary a
-developer installed themselves is their call.
 
 ## Taking over an existing config
 

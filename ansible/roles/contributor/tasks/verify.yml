@@ -29,7 +29,9 @@
 - name: Check the optional hyperi-ci check tools
   ansible.builtin.command: "{{ item }} --version"
   environment:
-    PATH: "{{ user_home }}/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+    PATH: >-
+      {{ developer_rust_cargo_home | default(user_home ~ '/.cargo') }}/bin:/opt/homebrew/bin:/usr/local/bin:{{
+      user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}
   loop:
     - hyperi-ci
     - semgrep

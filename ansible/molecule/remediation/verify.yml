@@ -264,6 +264,89 @@
         success_msg: "DBeaver flatpak removed"
       when: ansible_facts['distribution'] == 'Ubuntu'
 
+    # ==================================================================
+    # HAND-INSTALLED DUPLICATES -- both directions.
+    # ==================================================================
+    - name: Stat the user-level copies
+      ansible.builtin.stat:
+        path: "{{ ansible_facts['env']['HOME'] }}/{{ item.path }}"
+        follow: false
+      loop:
+        - {path: .local/bin/kind, gone: true}
+        - {path: go/bin/dive, gone: true}
+        - {path: .local/bin/kubeconform, gone: false}
+        - {path: .local/bin/tinygo-dev, gone: false}
+        - {path: .local/bin/argocd, gone: false}
+      loop_control:
+        label: "{{ item.path }}"
+      register: verify_user_copies
+
+    - name: Assert user-level duplicates went and everything else stayed
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists != item.item.gone
+        fail_msg: >-
+          ~/{{ item.item.path }} {{ 'survived beside the managed copy it shadows'
+          if item.item.gone else 'was REMOVED -- it was the only copy, a link to
+          the managed one, or a tool the roles do not manage' }}.
+        success_msg: "~/{{ item.item.path }} {{ 'removed' if item.item.gone else 'left alone' }}"
+      loop: "{{ verify_user_copies.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"
+
+    # The managed copies themselves must never be what goes.
+    - name: Stat the managed copies behind the duplicates
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/bin/kind
+        - /usr/local/bin/dive
+        - /usr/local/bin/argocd
+        - /usr/local/bin/macbash
+        - /usr/local/bin/git-scrub
+        - /usr/local/go/bin/go
+      register: verify_managed_copies
+
+    - name: Assert the managed copies survived
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "{{ item.item }} is gone -- a duplicate sweep removed the managed copy."
+        success_msg: "{{ item.item }} intact"
+      loop: "{{ verify_managed_copies.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Re-read the installed packages (Ubuntu)
+      ansible.builtin.package_facts:
+        manager: auto
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # golang-1.26-go is whichever versioned package /usr/bin/go resolved to.
+    - name: Assert the hand-installed and distro duplicates were purged (Ubuntu)
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.packages.keys() | select('match', item) | list | length == 0
+        fail_msg: "{{ item }} is still installed beside the managed copy it duplicates."
+        success_msg: "{{ item }} purged"
+      loop:
+        - '^macbash$'
+        - '^golang-go$'
+        - '^golang-src$'
+        - '^golang-[0-9.]+-go$'
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Assert a duplicate package with a dependant was kept (Ubuntu)
+      ansible.builtin.assert:
+        that:
+          - "'git-scrub' in ansible_facts.packages"
+          - "'git-scrub-dependant' in ansible_facts.packages"
+        fail_msg: >-
+          The git-scrub package was removed although git-scrub-dependant needs it --
+          removing it took a package nobody asked us to touch.
+        success_msg: "git-scrub kept for its dependant"
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
     # PATH hygiene is NOT asserted here. The tasks that drop the unguarded
     # ~/.bashrc prepends live in the install path of the developer and
     # developer-rust roles, not under the `removals` tag this scenario
