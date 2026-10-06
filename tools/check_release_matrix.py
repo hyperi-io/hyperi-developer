@@ -22,8 +22,6 @@ version-to-codename map, which would be one more copy of the thing being
 checked.
 """
 
-from __future__ import annotations
-
 import argparse
 import re
 import sys

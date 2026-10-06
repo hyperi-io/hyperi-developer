@@ -150,6 +150,50 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
   tags: ['astral', 'ruff', 'ty']
 
+# ============================================================================
+# Python - uv's default interpreter, without touching the system python3
+# ============================================================================
+# A uv-managed build gives Ubuntu 24.04 and macOS the same Python as Fedora and
+# Ubuntu 26.04, adding only a versioned python3.14 to ~/.local/bin. No
+# `--default`: it also puts python3 there, ahead of the system python3 that
+# distro tools and Ansible run on.
+
+- name: Install the default Python for uv
+  ansible.builtin.command:
+    argv: [uv, python, install, "{{ astral_python_version }}"]
+  environment: "{{ astral_uv_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: astral_python_install
+  changed_when: "'already installed' not in (astral_python_install.stderr | default(''))"
+  tags: ['astral', 'uv', 'python']
+
+# Read first because `uv python pin` reports "Pinned" whether or not it changed
+# anything. Exit 2 with no output means no global pin yet.
+- name: Read uv's global Python pin
+  ansible.builtin.command:
+    argv: [uv, python, pin, --global]
+  environment: "{{ astral_uv_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: astral_python_pin
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  tags: ['astral', 'uv', 'python']
+
+# Global, so it applies wherever no project names its own version. A project's
+# .python-version or requires-python still wins.
+- name: Pin uv's global default Python
+  ansible.builtin.command:
+    argv: [uv, python, pin, --global, "{{ astral_python_version }}"]
+  environment: "{{ astral_uv_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  when: astral_python_pin.stdout | trim != astral_python_version
+  changed_when: true
+  tags: ['astral', 'uv', 'python']
+
 - name: Display the Astral suite info
   ansible.builtin.debug:
     msg: |

@@ -1,0 +1,4 @@
+---
+# The Python uv installs and pins as the user's global default. Follows the
+# HyperI floor; a host can override it in local-config/vars.yml.
+astral_python_version: "3.14"

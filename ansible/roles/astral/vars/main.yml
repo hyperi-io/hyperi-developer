@@ -1,0 +1,7 @@
+---
+# Where uv is on PATH for the target user: brew's prefix on macOS, the
+# user-owned ~/.local/bin on Ubuntu, and /usr/bin (already on PATH) on Fedora.
+astral_uv_env:
+  PATH: >-
+    {{ homebrew_env.PATH if ansible_facts['distribution'] == 'MacOSX'
+       else user_home ~ '/.local/bin:' ~ ansible_facts['env'].PATH }}

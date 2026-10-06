@@ -90,7 +90,15 @@ hunting.
 
 It does not touch the cargo registry or the sccache/ccache stores either. Those
 have their own eviction and are reported on only.
+
+Python
+------
+Stdlib only, and runs on the oldest python3 a supported OS ships: 3.9 on macOS,
+where launchd resolves `python3` to the Command Line Tools' /usr/bin/python3.
 """
+
+# Keeps `int | str` annotations unevaluated, which 3.9 cannot evaluate.
+from __future__ import annotations
 
 import argparse
 import fcntl
@@ -361,11 +369,44 @@ def cargo_config() -> dict:
     if not config.is_file():
         return {}
     try:
-        import tomllib
-
-        return tomllib.loads(config.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        text = config.read_text(encoding="utf-8")
+    except OSError:
         return {}
+    try:
+        import tomllib
+    except ImportError:
+        return {"build": build_table_without_tomllib(text)}
+    try:
+        return tomllib.loads(text)
+    except ValueError:
+        return {}
+
+
+_BUILD_HEADER = re.compile(r"^\s*\[\s*build\s*\]\s*(?:#.*)?$")
+_STRING_KEY = re.compile(r"""^\s*([A-Za-z0-9_-]+)\s*=\s*(?:"([^"\\]*)"|'([^']*)')\s*(?:#.*)?$""")
+
+
+def build_table_without_tomllib(text: str) -> dict[str, str]:
+    """The plain string keys of cargo's `[build]` table, for a Python with no tomllib.
+
+    tomllib arrived in 3.11 and macOS ships 3.9. This reads only what the tool
+    needs, `build-dir` and `rustc-wrapper`, in the `key = "value"` form
+    hyperi-rust-setup writes. A value it cannot read is left out, which reads as
+    unconfigured rather than as a wrong path to delete under.
+    """
+    table: dict[str, str] = {}
+    in_build = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("["):
+            in_build = _BUILD_HEADER.match(line) is not None
+            continue
+        if not in_build:
+            continue
+        pair = _STRING_KEY.match(line)
+        if pair:
+            value = pair.group(2) if pair.group(2) is not None else pair.group(3)
+            table[pair.group(1)] = value
+    return table
 
 
 def configured_wrapper() -> Path | None:
