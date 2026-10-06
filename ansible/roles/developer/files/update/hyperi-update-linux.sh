@@ -71,8 +71,9 @@ ASSUME_YES=0
 
 usage() {
     cat <<EOF
-hyperi-update — update system packages, Snap, Flatpak, firmware, uv tools,
-                rustup and Claude Code in one go.
+hyperi-update -- update system packages, Snap, Flatpak, firmware, uv tools
+                 and Pythons, rustup, cargo/go/npm/pnpm tools, the Go
+                 toolchain, release binaries, Claude Code and Codex in one go.
 
 Usage:
   hyperi-update          Confirm, then run all updates (prompts once for sudo).
@@ -120,6 +121,10 @@ fail()    { printf '%s    \xe2\x9c\x97 %s%s\n' "$RED" "$1" "$RESET"; FAILURES+=(
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Every network fetch is bounded, so a stalled mirror cannot hold the weekly
+# timer run open indefinitely.
+CURL_LIMITS=(--connect-timeout 20 --max-time 600)
+
 # --- architecture ----------------------------------------------------------
 # Debian-style token, used by both the Go toolchain section and the static
 # release binaries further down. Decided once, here, rather than in whichever
@@ -159,7 +164,7 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     have go       && printf '  - go-installed tools in ~/go/bin (gopls, govulncheck, gosec, flarectl)\n'
     have npm      && printf '  - npm global tools + pnpm\n'
     have pnpm     && printf '  - pnpm global tools\n'
-    printf '  - release binaries in /usr/local/bin that no package covers\n'
+    printf '  - release binaries in /usr/local/bin that no package covers, and uv in ~/.local/bin on Ubuntu\n'
     have claude   && printf '  - Claude Code CLI\n'
     have codex    && printf '  - Codex CLI (re-run of the official installer)\n'
     have claude   && printf '  - the Codex plugin for Claude Code, if installed\n'
@@ -181,13 +186,29 @@ fi
 #
 # The keepalive only matters when a password was actually entered: NOPASSWD
 # leaves no timestamp to refresh.
-# Stops the keepalive and removes the GitHub token file, however the run ends.
+#
+# cleanup stops the keepalive and removes the GitHub token file, however the run
+# ends. Both start empty, so a value inherited from the caller's environment is
+# never killed or deleted.
+SUDO_KEEPALIVE_PID=''
+GH_AUTH_HEADER=''
 cleanup() {
-    [[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
-    [[ -n "${GH_AUTH_HEADER:-}" ]] && rm -f "$GH_AUTH_HEADER"
+    [[ -n "$SUDO_KEEPALIVE_PID" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null
+    [[ -n "$GH_AUTH_HEADER" ]] && rm -f "$GH_AUTH_HEADER"
     return 0
 }
 trap cleanup EXIT
+
+# api.github.com allows 60 anonymous requests an hour per IP, so a token in the
+# environment is sent when there is one. It goes to curl from a 0600 file rather
+# than argv, and stops being exported so no child process inherits it.
+gh_token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+if [[ -n "$gh_token" ]]; then
+    GH_AUTH_HEADER="$(mktemp)"
+    printf 'Authorization: Bearer %s\n' "$gh_token" >"$GH_AUTH_HEADER"
+fi
+unset gh_token
+export -n GITHUB_TOKEN GH_TOKEN
 
 section "Authenticating (sudo)"
 if sudo -n true 2>/dev/null; then
@@ -292,7 +313,8 @@ fi
 # --- uv-managed Pythons ----------------------------------------------------
 # Nothing else moves a uv-installed Python to a newer patch. `uv python upgrade`
 # touches only the minors already installed and, without --default, adds no
-# python or python3 shim.
+# python or python3 shim. The superseded patch stays installed, since uv has no
+# command that removes only those and a venv may still point at it.
 section "uv Pythons"
 if ! have uv; then
     skip "uv not found"
@@ -330,36 +352,6 @@ elif grep -q '^"cargo-update ' "${CARGO_HOME:-$HOME/.cargo}/.crates.toml" 2>/dev
     fail "cargo-install-update not found in $CARGO_BIN (cargo tools are not being updated)"
 else
     skip "cargo-install-update not found (install the cargo-update crate)"
-fi
-
-# --- go-installed tools ----------------------------------------------------
-# No bulk updater for `go install` tools, so each one the roles put in ~/go/bin
-# is re-installed @latest. Keyed on the binary being in ~/go/bin rather than on
-# PATH, because a dnf gosec or govulncheck would otherwise gain a second copy.
-section "go tools"
-GO_HOME="$HOME/go"
-if have go; then
-    go_found=0
-    for gt in \
-        "gopls:golang.org/x/tools/gopls@latest" \
-        "govulncheck:golang.org/x/vuln/cmd/govulncheck@latest" \
-        "gosec:github.com/securego/gosec/v2/cmd/gosec@latest" \
-        "flarectl:github.com/cloudflare/cloudflare-go/cmd/flarectl@latest"; do
-        bin="${gt%%:*}"; mod="${gt#*:}"
-        [[ -x "$GO_HOME/bin/$bin" ]] || continue
-        go_found=1
-        # "<module> <version>" as built into the binary, so a tool already at the
-        # module's latest release is not rebuilt.
-        built="$(go version -m "$GO_HOME/bin/$bin" 2>/dev/null | awk '$1 == "mod" {print $2, $3; exit}')"
-        if [[ -n "$built" ]] && [[ "$(go list -m -f '{{.Version}}' "${built% *}@latest" 2>/dev/null)" == "${built#* }" ]]; then
-            ok "$bin ${built#* } is current"
-            continue
-        fi
-        run "go install $bin" env GOPATH="$GO_HOME" GOBIN="$GO_HOME/bin" go install "$mod"
-    done
-    [[ "$go_found" -eq 1 ]] || skip "no go-installed tools in $GO_HOME/bin"
-else
-    skip "go not found"
 fi
 
 # --- npm and pnpm global tools ---------------------------------------------
@@ -401,7 +393,7 @@ else
     go_installed="$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}')"
     go_index="$(mktemp)"
 
-    if ! curl -fsSL 'https://go.dev/dl/?mode=json' -o "$go_index" 2>/dev/null; then
+    if ! curl -fsSL "${CURL_LIMITS[@]}" 'https://go.dev/dl/?mode=json' -o "$go_index" 2>/dev/null; then
         skip "could not reach go.dev — leaving ${go_installed:-the current toolchain} in place"
     else
         # The index lists newest first, so the first "version" is latest stable.
@@ -421,7 +413,7 @@ else
 
             if [[ -z "$go_sha" ]]; then
                 fail "Go toolchain: no checksum published for $go_tgz"
-            elif ! curl -fsSL "https://go.dev/dl/${go_tgz}" -o "$go_tmp/$go_tgz"; then
+            elif ! curl -fsSL "${CURL_LIMITS[@]}" "https://go.dev/dl/${go_tgz}" -o "$go_tmp/$go_tgz"; then
                 fail "Go toolchain: download of $go_tgz failed"
             elif ! printf '%s  %s\n' "$go_sha" "$go_tmp/$go_tgz" | sha256sum -c - >/dev/null 2>&1; then
                 fail "Go toolchain: checksum mismatch on $go_tgz"
@@ -438,6 +430,43 @@ else
     fi
 
     rm -f "$go_index"
+fi
+
+# --- go-installed tools ----------------------------------------------------
+# No bulk updater for `go install` tools, so each one the roles put in ~/go/bin
+# is re-installed @latest. Keyed on the binary being in ~/go/bin rather than on
+# PATH, because a dnf gosec or govulncheck would otherwise gain a second copy.
+# After the Go toolchain section, so a toolchain it just moved builds them.
+section "go tools"
+GO_HOME="$HOME/go"
+if have go; then
+    go_found=0
+    # The -X:<experiments> suffix a distro build carries is not part of the release.
+    go_now="$(go env GOVERSION 2>/dev/null)"
+    go_now="${go_now%%-X:*}"
+    for gt in \
+        "gopls:golang.org/x/tools/gopls@latest" \
+        "govulncheck:golang.org/x/vuln/cmd/govulncheck@latest" \
+        "gosec:github.com/securego/gosec/v2/cmd/gosec@latest" \
+        "flarectl:github.com/cloudflare/cloudflare-go/cmd/flarectl@latest"; do
+        bin="${gt%%:*}"; mod="${gt#*:}"
+        [[ -x "$GO_HOME/bin/$bin" ]] || continue
+        go_found=1
+        # A tool is current when it was built by this toolchain from its module's
+        # latest release. The binary records both.
+        build_info="$(go version -m "$GO_HOME/bin/$bin" 2>/dev/null)"
+        built_go="$(awk 'NR == 1 {print $2}' <<<"$build_info")"
+        built="$(awk '$1 == "mod" {print $2, $3; exit}' <<<"$build_info")"
+        if [[ -n "$built" && "${built_go%%-X:*}" == "$go_now" ]] &&
+            [[ "$(go list -m -f '{{.Version}}' "${built% *}@latest" 2>/dev/null)" == "${built#* }" ]]; then
+            ok "$bin ${built#* } is current"
+            continue
+        fi
+        run "go install $bin" env GOPATH="$GO_HOME" GOBIN="$GO_HOME/bin" go install "$mod"
+    done
+    [[ "$go_found" -eq 1 ]] || skip "no go-installed tools in $GO_HOME/bin"
+else
+    skip "go not found"
 fi
 
 # --- fnm Node majors -------------------------------------------------------
@@ -461,30 +490,30 @@ fi
 
 # --- Release binaries ------------------------------------------------------
 # These ship only as a release asset, with no package repo, snap or language
-# manager to carry them, so the latest is fetched here. A download replaces the
-# working copy only after it matches any published digest and yields an ELF
-# binary, so a failed or corrupt fetch never breaks what is installed.
+# manager to carry them, so the latest is fetched here. A download must match
+# the sha256 its release publishes and be an ELF binary, and is then renamed
+# into place, so a failed, truncated or tampered fetch leaves the working copy
+# exactly as it was.
 #
 # Only a binary already in /usr/local/bin is touched, and only on the distro
 # whose role installs it there, so a tool the other distro packages is never
-# shadowed by a second copy.
+# shadowed by a second copy. gron, a release binary on Fedora whose upstream has
+# not released since 2022, is the one such tool left out.
 section "Release binaries"
 
-# Holds the source and digest of each binary installed here, so a release that
-# has not moved is recognised without downloading it again.
+# Holds the source and digest of each binary installed into /usr/local/bin, so a
+# release that has not moved is recognised without downloading it again.
 STAMP_DIR=/var/lib/hyperi-update
+
+# The invoking user's ETags and release documents, plus the stamps for the
+# binaries installed into their own ~/.local/bin.
+USER_STATE="${XDG_CACHE_HOME:-$HOME/.cache}/hyperi-update"
 
 # A GitHub release's download directory, as a refetch template.
 GH_DL='https://github.com/{REPO}/releases/download/{TAG}'
 
-# api.github.com allows 60 anonymous requests an hour per IP, so a token in the
-# environment is sent when there is one, from a 0600 file rather than argv.
-gh_token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
-if [[ -n "$gh_token" ]]; then
-    GH_AUTH_HEADER="$(mktemp)"
-    printf 'Authorization: Bearer %s\n' "$gh_token" >"$GH_AUTH_HEADER"
-fi
-unset gh_token
+# Set by refetch when it replaced a binary, for a caller with a follow-up step.
+REFETCH_REPLACED=0
 
 is_elf() {  # <file> -> 0 if it begins with the ELF magic (7f 45 4c 46)
     [[ "$(head -c 4 "$1" 2>/dev/null | od -An -tx1 | tr -d ' \n')" == "7f454c46" ]]
@@ -502,24 +531,49 @@ installed_local() {
     real="$(readlink -e "/usr/local/bin/$1" 2>/dev/null)" && [[ -f "$real" && "$real" == /usr/local/* ]]
 }
 
-# api_get <url> <file> : fetch a release document, sending the token to GitHub only.
+# api_get <url> <file> : fetch a release document into <file>. The ETag of the
+# last answer is sent back, and GitHub does not count the 304 that comes back
+# for an unchanged document against the rate limit when the request carries a
+# token. An anonymous 304 still counts. When the API refuses outright (the
+# anonymous limit spent, an outage), the document from the last answer stands
+# in, so a tool already current is not reported as a failure. The token goes to
+# GitHub only.
 api_get() {
-    local auth=()
-    if [[ -n "${GH_AUTH_HEADER:-}" && "$1" == https://api.github.com/* ]]; then
+    local key body etag hdr code auth=() cond=()
+    key="$(printf '%s' "$1" | sha256sum | cut -c1-16)"
+    body="$USER_STATE/api/$key.json"
+    etag="$USER_STATE/api/$key.etag"
+    mkdir -p "$USER_STATE/api" 2>/dev/null || return 1
+    if [[ -n "$GH_AUTH_HEADER" && "$1" == https://api.github.com/* ]]; then
         auth=(-H "@$GH_AUTH_HEADER")
     fi
-    curl -fsSL "${auth[@]}" "$1" -o "$2" 2>/dev/null
+    if [[ -s "$body" && -s "$etag" ]]; then
+        cond=(-H "If-None-Match: $(<"$etag")")
+    fi
+    hdr="$(mktemp)"
+    code="$(curl -sSL "${CURL_LIMITS[@]}" "${auth[@]}" "${cond[@]}" -D "$hdr" -o "$2" \
+        -w '%{http_code}' "$1" 2>/dev/null)"
+    case "$code" in
+        304) cp "$body" "$2" ;;
+        200) cp "$2" "$body"
+             sed -n 's/^[Ee][Tt][Aa][Gg]:[[:space:]]*//p' "$hdr" | tr -d '\r' | tail -n 1 >"$etag" ;;
+        *)   if [[ -s "$body" ]]; then
+                 cp "$body" "$2"
+                 skip "GitHub API answered ${code:-nothing}, using the release document from the last run"
+             else
+                 code=''
+             fi ;;
+    esac
+    rm -f "$hdr"
+    [[ -n "$code" ]]
 }
 
-# release_tag <api-url> [<min-age-days>] : the tag of a single release document,
+# release_tag <doc> [<min-age-days>] : the tag of a single release document,
 # or, given an age, of the newest release in a list that is not a draft or a
 # prerelease and was published at least that many days ago. The age rule is the
 # one the roles apply through infrastructure_min_release_age_days.
 release_tag() {
-    local doc tag=''
-    doc="$(mktemp)"
-    if api_get "$1" "$doc"; then
-        tag="$(python3 - "$doc" "${2:-0}" 2>/dev/null <<'PY'
+    python3 - "$1" "${2:-0}" 2>/dev/null <<'PY'
 import json
 import sys
 import time
@@ -546,41 +600,62 @@ else:
     )
     print(ready[0]["tag_name"] if ready else "")
 PY
-)"
-    fi
-    rm -f "$doc"
-    printf '%s' "$tag"
+}
+
+# asset_digest <doc> <asset> [<tag>] : the sha256 GitHub publishes for <asset>
+# in a release document or list, empty where the release predates asset
+# digests. In a list only the release tagged <tag> is read, because an asset
+# name without a version repeats in every release.
+asset_digest() {
+    python3 - "$1" "$2" "${3:-}" 2>/dev/null <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    data = json.load(fh)
+for release in data if isinstance(data, list) else [data]:
+    if sys.argv[3] and release.get("tag_name") != sys.argv[3]:
+        continue
+    for asset in release.get("assets") or []:
+        if asset.get("name") == sys.argv[2]:
+            digest = asset.get("digest") or ""
+            print(digest[7:] if digest.startswith("sha256:") else "")
+            sys.exit(0)
+PY
 }
 
 # published_sum <url> <asset> : the asset's sha256 from a checksum file of
-# "<digest> [*]<name>" lines, or from a file holding one bare digest.
+# "<digest> [*]<name>" lines, or from a file that holds one bare digest and
+# nothing else.
 published_sum() {
     local sums
-    sums="$(curl -fsSL "$1" 2>/dev/null)" || return 1
+    sums="$(curl -fsSL "${CURL_LIMITS[@]}" "$1" 2>/dev/null)" || return 1
     awk -v a="$2" '
         { n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n) }
         length($1) == 64 && $1 ~ /^[0-9a-f]+$/ {
             if (n == a) { print $1; found = 1; exit }
             if (NR == 1 && NF == 1) bare = $1
         }
-        END { if (!found && bare != "") print bare }' <<<"$sums"
+        END { if (!found && NR == 1 && bare != "") print bare }' <<<"$sums"
 }
 
-# is_current <name> <key> / record <name> <key> : read or write the stamp that
-# ties the installed binary to the release it came from.
+# is_current <stamp> <binary> <key> / record <stamp> <binary> <key> : read or
+# write the stamp that ties an installed binary to the release it came from.
+# record runs with refetch's privilege, so a root-owned stamp is written as root.
 is_current() {
     local line
-    line="$(cat "$STAMP_DIR/$1" 2>/dev/null)" || return 1
-    [[ "$line" == "$2 $(sha256_of "/usr/local/bin/$1")" ]]
+    line="$(cat "$1" 2>/dev/null)" || return 1
+    [[ "$line" == "$3 $(sha256_of "$2")" ]]
 }
 
 record() {
-    sudo mkdir -p "$STAMP_DIR" &&
-        printf '%s %s\n' "$2" "$(sha256_of "/usr/local/bin/$1")" | sudo tee "$STAMP_DIR/$1" >/dev/null
+    "${priv[@]}" mkdir -p "${1%/*}" &&
+        printf '%s %s\n' "$3" "$(sha256_of "$2")" | "${priv[@]}" tee "$1" >/dev/null
 }
 
 # unpack <format> <dir> <member> : print the path of the binary unpacked from
-# <dir>/asset, failing when the archive does not hold <member>.
+# <dir>/asset. Fails when the archive does not hold <member> as a regular file,
+# so a symlink member cannot point the install at a file outside the archive.
 unpack() {
     local out="$2/out"
     [[ "$1" == raw ]] && { printf '%s' "$2/asset"; return 0; }
@@ -590,100 +665,165 @@ unpack() {
         tar-nested) tar -xzf "$2/asset" -C "$out" --strip-components=1 --wildcards "*/$3" ;;
         zip)        unzip -q -o "$2/asset" "$3" -d "$out" ;;
         *)          return 1 ;;
-    esac >/dev/null 2>&1 && [[ -s "$out/$3" ]] && printf '%s' "$out/$3"
+    esac >/dev/null 2>&1 || return 1
+    [[ ! -L "$out/$3" && -f "$out/$3" && -s "$out/$3" ]] && printf '%s' "$out/$3"
+}
+
+# place <dir> <name> <file> : install <file> as <dir>/<name> by renaming a
+# sibling into place, so the binary is never missing or half-written.
+place() {
+    if "${priv[@]}" install -m 0755 "$3" "$1/.$2.new" && "${priv[@]}" mv -f "$1/.$2.new" "$1/$2"; then
+        return 0
+    fi
+    "${priv[@]}" rm -f "$1/.$2.new"
+    return 1
 }
 
 # fill <template> : expand a template from the repo, tag, arch and asset of the
 # refetch call it runs inside, whose locals bash's dynamic scoping exposes here.
+# Each replacement is quoted, so a & in a value is never read as the match.
 fill() {
     local s="$1"
-    s="${s//\{REPO\}/$repo}"; s="${s//\{TAG\}/$tag}"; s="${s//\{VER\}/${tag#v}}"
-    s="${s//\{ARCH\}/$arch}"; s="${s//\{ASSET\}/$asset}"
+    s="${s//\{REPO\}/"$repo"}"; s="${s//\{TAG\}/"$tag"}"; s="${s//\{VER\}/"${tag#v}"}"
+    s="${s//\{ARCH\}/"$arch"}"; s="${s//\{ASSET\}/"$asset"}"
     printf '%s' "$s"
 }
 
-# refetch [options] <name> <asset-template> [<member>]
+# refetch [options] <name> <asset-template> [<member>...]
 #   --repo OWNER/NAME  GitHub repo: the tag comes from its API, the asset from its downloads
 #   --api URL          release document to read the tag from, for a forge other than GitHub
 #   --url TEMPLATE     download URL (default: the GitHub release asset)
-#   --sums TEMPLATE    checksum file the download must match
+#   --digest SHA256    the asset's digest, already known to the caller
+#   --sums TEMPLATE    checksum file to use where the release publishes no digest
 #   --arch TOKEN       this machine's arch as the asset spells it (default: amd64/arm64)
 #   --min-age DAYS     take the newest GitHub release at least DAYS old
-#   --format FORMAT    raw (default), tar (member at the archive root),
-#                      tar-nested (member one directory down) or zip
+#   --format FORMAT    raw (default), tar (members at the archive root),
+#                      tar-nested (members one directory down) or zip
+#   --dest DIR         where the binary lives (default /usr/local/bin, as root),
+#                      any other directory is the invoking user's own
 # Templates take {REPO} {TAG} {VER} {ARCH} {ASSET}, where {VER} is the tag
-# without a leading v. <member> defaults to <name>.
+# without a leading v. The members default to <name>, and the first member is
+# the binary that says whether the release is installed already.
 refetch() {
-    local repo='' api='' url_t='' sums_t='' arch="$ARCH_DEB" min_age='' format=raw
-    while [[ "$1" == --* ]]; do
+    local repo='' api='' url_t='' want='' sums_t='' arch="$ARCH_DEB" min_age='' format=raw
+    local dest=/usr/local/bin
+    while [[ "${1:-}" == --* ]]; do
         case "$1" in
             --repo)    repo="$2" ;;
             --api)     api="$2" ;;
             --url)     url_t="$2" ;;
+            --digest)  want="$2" ;;
             --sums)    sums_t="$2" ;;
             --arch)    arch="$2" ;;
             --min-age) min_age="$2" ;;
             --format)  format="$2" ;;
+            --dest)    dest="$2" ;;
             *)         fail "refetch: unknown option $1"; return ;;
         esac
         shift 2
     done
-    local name="$1" asset_t="$2" member="${3:-$1}"
-    local tag='' asset='' url want='' key tmp bin
+    local name="$1" asset_t="$2"
+    shift 2
+    local members=("$@")
+    [[ ${#members[@]} -gt 0 ]] || members=("$name")
+    local tag='' asset='' url key doc tmp label stamp i m bin bins=() priv=()
+    REFETCH_REPLACED=0
 
-    installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
+    if [[ "$dest" == /usr/local/bin ]]; then
+        priv=(sudo)
+        stamp="$STAMP_DIR/$name"
+        installed_local "$name" || { skip "$name not installed in /usr/local/bin"; return; }
+    else
+        stamp="$USER_STATE/stamps/$name"
+        if [[ ! -f "$dest/$name" || -L "$dest/$name" ]]; then
+            skip "$name not installed in $dest"
+            return
+        fi
+    fi
 
     if [[ -n "$min_age" ]]; then
         api="https://api.github.com/repos/$repo/releases?per_page=30"
     elif [[ -z "$api" && -n "$repo" ]]; then
         api="https://api.github.com/repos/$repo/releases/latest"
     fi
+    doc="$(mktemp)"
     if [[ -n "$api" ]]; then
-        tag="$(release_tag "$api" "$min_age")"
+        if ! api_get "$api" "$doc"; then
+            fail "$name: could not read the release from $api"
+            rm -f "$doc"
+            return
+        fi
+        tag="$(release_tag "$doc" "$min_age")"
         if [[ -z "$tag" ]]; then
             fail "$name: no release found${min_age:+ at least $min_age days old}"
+            rm -f "$doc"
             return
         fi
     fi
-
     asset="$(fill "$asset_t")"
     [[ -n "$url_t" ]] || url_t="$GH_DL/{ASSET}"
     url="$(fill "$url_t")"
-    if [[ -n "$sums_t" ]]; then
+    [[ -n "$want" || ! -s "$doc" ]] || want="$(asset_digest "$doc" "$asset" "$tag")"
+    rm -f "$doc"
+    if [[ -z "$want" && -n "$sums_t" ]]; then
         want="$(published_sum "$(fill "$sums_t")" "$asset")"
         [[ -n "$want" ]] || { fail "$name: no published checksum for $asset"; return; }
     fi
     key="$url${want:+ $want}"
+    label="${tag:-$asset}"
 
-    # A bare asset IS the binary, so its published digest settles this without
-    # a stamp, which also catches an asset republished under the same URL.
+    # A bare asset IS the binary, so its digest settles this without a stamp,
+    # which also catches an asset republished under the same URL.
     if [[ "$format" == raw && -n "$want" ]]; then
-        if [[ "$(sha256_of "/usr/local/bin/$name")" == "$want" ]]; then
-            ok "$name ${tag:-$asset} is current"
+        if [[ "$(sha256_of "$dest/$name")" == "$want" ]]; then
+            ok "$name $label is current"
             return
         fi
-    elif is_current "$name" "$key"; then
-        ok "$name ${tag:-$asset} is current"
+    elif is_current "$stamp" "$dest/$name" "$key"; then
+        ok "$name $label is current"
         return
     fi
 
     tmp="$(mktemp -d)"
-    if ! curl -fsSL "$url" -o "$tmp/asset" 2>/dev/null; then
+    if ! curl -fsSL "${CURL_LIMITS[@]}" "$url" -o "$tmp/asset" 2>/dev/null; then
         fail "$name: download of $asset failed"
-    elif [[ -n "$want" && "$(sha256_of "$tmp/asset")" != "$want" ]]; then
-        fail "$name: $asset does not match its published checksum"
-    elif ! bin="$(unpack "$format" "$tmp" "$member")"; then
-        fail "$name: $member not found in $asset"
-    elif ! is_elf "$bin"; then
-        fail "$name: $asset is not an ELF binary"
-    elif [[ "$(sha256_of "$bin")" == "$(sha256_of "/usr/local/bin/$name")" ]]; then
-        record "$name" "$key"
-        ok "$name ${tag:-$asset} is current"
-    elif sudo install -m 0755 "$bin" "/usr/local/bin/$name"; then
-        record "$name" "$key"
-        ok "$name -> ${tag:-$asset}"
+        rm -rf "$tmp"
+        return
+    fi
+    if [[ -n "$want" && "$(sha256_of "$tmp/asset")" != "$want" ]]; then
+        fail "$name: $asset does not match its published sha256"
+        rm -rf "$tmp"
+        return
+    fi
+    for m in "${members[@]}"; do
+        if ! bin="$(unpack "$format" "$tmp" "$m")"; then
+            fail "$name: $m not found in $asset"
+            rm -rf "$tmp"
+            return
+        fi
+        if ! is_elf "$bin"; then
+            fail "$name: $m from $asset is not an ELF binary"
+            rm -rf "$tmp"
+            return
+        fi
+        bins+=("$bin")
+    done
+
+    REFETCH_REPLACED=0
+    for i in "${!members[@]}"; do
+        [[ "$(sha256_of "${bins[$i]}")" == "$(sha256_of "$dest/${members[$i]}")" ]] && continue
+        if ! place "$dest" "${members[$i]}" "${bins[$i]}"; then
+            fail "$name: install of ${members[$i]} into $dest failed"
+            rm -rf "$tmp"
+            return
+        fi
+        REFETCH_REPLACED=1
+    done
+    record "$stamp" "$dest/$name" "$key"
+    if [[ "$REFETCH_REPLACED" -eq 1 ]]; then
+        ok "$name -> $label"
     else
-        fail "$name: install to /usr/local/bin failed"
+        ok "$name $label is current"
     fi
     rm -rf "$tmp"
 }
@@ -692,14 +832,19 @@ refetch() {
 # the newest kustomize CLI asset is taken from the releases list instead.
 refetch_kustomize() {
     installed_local kustomize || { skip "kustomize not installed in /usr/local/bin"; return; }
-    local doc url=''
+    local doc url='' digest=''
     doc="$(mktemp)"
     if api_get "https://api.github.com/repos/kubernetes-sigs/kustomize/releases" "$doc"; then
         url="$(grep -oE "https://[^\"]*/kustomize_v[0-9.]+_linux_${ARCH_DEB}\.tar\.gz" "$doc" | head -1)"
+        [[ -n "$url" ]] && digest="$(asset_digest "$doc" "${url##*/}")"
     fi
     rm -f "$doc"
     [[ -n "$url" ]] || { fail "kustomize: no CLI release asset found"; return; }
-    refetch --url "$url" --format tar kustomize "${url##*/}"
+    if [[ -n "$digest" ]]; then
+        refetch --url "$url" --digest "$digest" --format tar kustomize "${url##*/}"
+    else
+        refetch --url "$url" --format tar kustomize "${url##*/}"
+    fi
 }
 
 if [[ -n "$ARCH_DEB" ]]; then
@@ -712,30 +857,59 @@ if [[ -n "$ARCH_DEB" ]]; then
         FNM_ASSET=fnm-linux.zip SD_TARGET=x86_64-unknown-linux-gnu
     fi
 
-    refetch --repo kubernetes-sigs/kind kind "kind-linux-{ARCH}"
-    refetch --repo argoproj/argo-cd argocd "argocd-linux-{ARCH}"
-    refetch --repo yannh/kubeconform --format tar kubeconform "kubeconform-linux-{ARCH}.tar.gz"
+    # --sums names the checksum file each release also publishes, used only
+    # where the release carries no GitHub digest. kube-linter, fnm and sd
+    # publish none, and yq's lists several hashes per line in its own format.
+    refetch --repo kubernetes-sigs/kind --sums "$GH_DL/{ASSET}.sha256sum" kind "kind-linux-{ARCH}"
+    refetch --repo argoproj/argo-cd --sums "$GH_DL/cli_checksums.txt" argocd "argocd-linux-{ARCH}"
+    refetch --repo yannh/kubeconform --sums "$GH_DL/CHECKSUMS" --format tar kubeconform \
+        "kubeconform-linux-{ARCH}.tar.gz"
     # kube-linter's amd64 asset carries no arch suffix; arm64 does.
     if [[ "$ARCH_DEB" == arm64 ]]; then
         refetch --repo stackrox/kube-linter --format tar kube-linter "kube-linter-linux_arm64.tar.gz"
     else
         refetch --repo stackrox/kube-linter --format tar kube-linter "kube-linter-linux.tar.gz"
     fi
-    refetch --repo wagoodman/dive --format tar dive "dive_{VER}_linux_{ARCH}.tar.gz"
-    refetch --repo terraform-docs/terraform-docs --format tar terraform-docs \
-        "terraform-docs-{TAG}-linux-{ARCH}.tar.gz"
-    refetch --repo golangci/golangci-lint --format tar-nested golangci-lint \
-        "golangci-lint-{VER}-linux-{ARCH}.tar.gz"
-    refetch --repo jesseduffield/lazygit --arch "$ARCH_MIXED" --format tar lazygit \
-        "lazygit_{VER}_linux_{ARCH}.tar.gz"
-    refetch --repo rhysd/actionlint --format tar actionlint "actionlint_{VER}_linux_{ARCH}.tar.gz"
+    refetch --repo wagoodman/dive --sums "$GH_DL/dive_{VER}_checksums.txt" --format tar dive \
+        "dive_{VER}_linux_{ARCH}.tar.gz"
+    refetch --repo terraform-docs/terraform-docs --sums "$GH_DL/terraform-docs-{TAG}.sha256sum" \
+        --format tar terraform-docs "terraform-docs-{TAG}-linux-{ARCH}.tar.gz"
+    refetch --repo golangci/golangci-lint --sums "$GH_DL/golangci-lint-{VER}-checksums.txt" \
+        --format tar-nested golangci-lint "golangci-lint-{VER}-linux-{ARCH}.tar.gz"
+    refetch --repo jesseduffield/lazygit --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" \
+        --format tar lazygit "lazygit_{VER}_linux_{ARCH}.tar.gz"
+    refetch --repo rhysd/actionlint --sums "$GH_DL/actionlint_{VER}_checksums.txt" --format tar \
+        actionlint "actionlint_{VER}_linux_{ARCH}.tar.gz"
     refetch --repo google/osv-scanner --sums "$GH_DL/osv-scanner_SHA256SUMS" osv-scanner \
         "osv-scanner_linux_{ARCH}"
     refetch --repo ByteNess/aws-vault --min-age 7 --sums "$GH_DL/aws-vault_sha256_checksums.txt" \
         aws-vault "aws-vault-linux-{ARCH}"
-    refetch --repo hyperi-io/git-scrub --format tar-nested git-scrub "git-scrub-{VER}-linux-{ARCH}.tar.gz"
+    refetch --repo hyperi-io/git-scrub --sums "$GH_DL/checksums.txt" --format tar-nested git-scrub \
+        "git-scrub-{VER}-linux-{ARCH}.tar.gz"
     refetch --repo mozilla/sccache --arch "$ARCH_UNAME" --format tar-nested --sums "$GH_DL/{ASSET}.sha256" \
         sccache "sccache-{TAG}-{ARCH}-unknown-linux-musl.tar.gz"
+    # The running server keeps the binary it started with, so a new one takes
+    # over only once that server is replaced. The role's user unit is restarted
+    # if it is running, otherwise an on-demand server is stopped and the next
+    # build starts the new binary.
+    if [[ "$REFETCH_REPLACED" -eq 1 ]]; then
+        export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+        if systemctl --user is-active --quiet hyperi-sccache.service 2>/dev/null; then
+            run "restart hyperi-sccache" systemctl --user try-restart hyperi-sccache.service
+        else
+            # Matched on the replaced binary rather than with `sccache
+            # --stop-server`, whose new client cannot always talk to an old server.
+            stale=()
+            for p in $(pgrep -u "$(id -u)" -x sccache 2>/dev/null); do
+                [[ "$(readlink "/proc/$p/exe" 2>/dev/null)" == "/usr/local/bin/sccache (deleted)" ]] && stale+=("$p")
+            done
+            if [[ ${#stale[@]} -gt 0 ]]; then
+                run "stop the sccache server still running the old binary" kill "${stale[@]}"
+            else
+                skip "no sccache server running the old binary"
+            fi
+        fi
+    fi
     refetch --repo Schniz/fnm --format zip fnm "$FNM_ASSET"
     refetch --api https://gitea.com/api/v1/repos/gitea/tea/releases/latest \
         --url 'https://dl.gitea.com/tea/{VER}/{ASSET}' --sums 'https://dl.gitea.com/tea/{VER}/{ASSET}.sha256' \
@@ -745,21 +919,29 @@ if [[ -n "$ARCH_DEB" ]]; then
 
     case "$PKG_MGR" in
         apt)
-            refetch --repo derailed/k9s --format tar k9s "k9s_Linux_{ARCH}.tar.gz"
+            refetch --repo derailed/k9s --sums "$GH_DL/checksums.sha256" --format tar k9s \
+                "k9s_Linux_{ARCH}.tar.gz"
             refetch_kustomize
             refetch --repo mikefarah/yq yq "yq_linux_{ARCH}"
             refetch --repo hadolint/hadolint --arch "$ARCH_MIXED" --sums "$GH_DL/checksums.sha256" \
                 hadolint "hadolint-linux-{ARCH}"
-            refetch --repo gitleaks/gitleaks --arch "$ARCH_X64" --format tar gitleaks \
-                "gitleaks_{VER}_linux_{ARCH}.tar.gz"
-            refetch --repo nektos/act --arch "$ARCH_MIXED" --format tar act "act_Linux_{ARCH}.tar.gz"
+            refetch --repo gitleaks/gitleaks --sums "$GH_DL/gitleaks_{VER}_checksums.txt" \
+                --arch "$ARCH_X64" --format tar gitleaks "gitleaks_{VER}_linux_{ARCH}.tar.gz"
+            refetch --repo nektos/act --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" --format tar \
+                act "act_Linux_{ARCH}.tar.gz"
+            # astral installs uv and uvx from this release into the user's own
+            # ~/.local/bin on Ubuntu, where `uv self update` refuses to act on a
+            # copy it did not install. Fedora and macOS take uv from dnf and brew.
+            refetch --repo astral-sh/uv --dest "$HOME/.local/bin" --arch "$ARCH_UNAME" \
+                --sums "$GH_DL/{ASSET}.sha256" --format tar-nested \
+                uv "uv-{ARCH}-unknown-linux-gnu.tar.gz" uv uvx
             ;;
         dnf)
             refetch --repo chmln/sd --arch "$SD_TARGET" --format tar-nested sd "sd-{TAG}-{ARCH}.tar.gz"
-            refetch --repo ahmetb/kubectx --min-age 7 --arch "$ARCH_MIXED" --format tar kubectx \
-                "kubectx_{TAG}_linux_{ARCH}.tar.gz"
-            refetch --repo ahmetb/kubectx --min-age 7 --arch "$ARCH_MIXED" --format tar kubens \
-                "kubens_{TAG}_linux_{ARCH}.tar.gz"
+            refetch --repo ahmetb/kubectx --min-age 7 --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" \
+                --format tar kubectx "kubectx_{TAG}_linux_{ARCH}.tar.gz"
+            refetch --repo ahmetb/kubectx --min-age 7 --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" \
+                --format tar kubens "kubens_{TAG}_linux_{ARCH}.tar.gz"
             ;;
     esac
 else
@@ -796,7 +978,7 @@ fi
 section "Codex CLI"
 if have codex; then
     codex_installer="$(mktemp)"
-    if curl -fsSL https://chatgpt.com/codex/install.sh -o "$codex_installer"; then
+    if curl -fsSL "${CURL_LIMITS[@]}" https://chatgpt.com/codex/install.sh -o "$codex_installer"; then
         run "codex installer" env CODEX_NON_INTERACTIVE=1 sh "$codex_installer"
     else
         fail "Codex CLI: could not fetch the installer"

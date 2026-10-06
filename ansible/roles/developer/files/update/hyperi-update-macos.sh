@@ -35,9 +35,10 @@
 #            hyperi-update --install  (create the clickable "Hyperi Update" app)
 #            hyperi-update --help
 
-set -u
-set -o pipefail
+# emulate resets every option to zsh's defaults, so the strict options come after
+# it or a failing `softwareupdate | tee` would report success.
 emulate -L zsh
+setopt nounset pipefail
 
 # Make user-level tools reachable even when launched from the GUI app or a
 # non-login shell (Ansible): brew lives outside the base PATH on both Apple
@@ -242,7 +243,8 @@ fi
 # --- uv-managed Pythons ----------------------------------------------------
 # Nothing else moves a uv-installed Python to a newer patch. `uv python upgrade`
 # touches only the minors already installed and, without --default, adds no
-# python or python3 shim.
+# python or python3 shim. The superseded patch stays installed, since uv has no
+# command that removes only those and a venv may still point at it.
 section "uv Pythons"
 if ! have uv; then
     skip "uv not found"

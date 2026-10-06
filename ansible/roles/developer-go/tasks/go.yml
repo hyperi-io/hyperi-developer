@@ -101,7 +101,7 @@
               *":/usr/local/go/bin:"*) ;;
               *) export PATH="/usr/local/go/bin:$PATH" ;;
           esac
-          # gopls, govulncheck, gosec and flarectl are go-installed here.
+          # gopls, govulncheck and flarectl are go-installed here, and gosec on Ubuntu.
           case ":$PATH:" in
               *":$HOME/go/bin:"*) ;;
               *) export PATH="$PATH:$HOME/go/bin" ;;

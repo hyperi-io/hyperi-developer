@@ -81,8 +81,9 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user }}"
 
-# Hand-installed copies of tools the roles install system-wide. ~/.local/bin and
-# ~/go/bin precede /usr/local/bin and /usr/bin on PATH, so a copy left there
+# Hand-installed copies of tools the roles install system-wide. ~/.local/bin
+# precedes /usr/local/bin and /usr/bin on PATH, and so does ~/go/bin wherever a
+# user's own profile prepends it (hyperi-go.sh appends it), so a copy left there
 # shadows the managed install and no update ever reaches it. A deliberate pin
 # of a managed tool there (an older kubectl, golangci-lint v1) goes too.
 #
