@@ -377,6 +377,5 @@ else
     fi
 fi
 
-# Non-zero when any step failed, so the app leaves its window open and a
-# caller sees it.
+# Non-zero when any step failed, so a calling script or scheduler sees it.
 (( ${#FAILURES} == 0 )) || exit 1

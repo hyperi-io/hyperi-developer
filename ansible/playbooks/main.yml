@@ -367,17 +367,18 @@
     - name: Report what did not install
       ansible.builtin.debug:
         msg: |
-          {{ deploy_warnings | length }} thing(s) did not install.
+          {{ deploy_warnings | length }} thing(s) need attention.
 
-          The rest of the environment is set up and usable. These are optional
-          components whose upstream failed; the run continued deliberately.
+          The rest of the environment is set up and usable. Each item below is
+          an optional component that did not install, or something the run left
+          in place because changing it was not safe.
 
           {% for w in deploy_warnings %}
             - {{ w }}
           {% endfor %}
 
-          Re-run to retry them. If one keeps failing, its upstream has probably
-          moved -- that is a bug in this repo, please report it.
+          Re-run to retry a failed install. If one keeps failing, its upstream
+          has probably moved -- that is a bug in this repo, please report it.
       when:
         - deploy_warnings is defined
         - deploy_warnings | length > 0

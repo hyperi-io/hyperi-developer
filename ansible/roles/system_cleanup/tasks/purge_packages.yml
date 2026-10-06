@@ -38,13 +38,14 @@
          | map('regex_replace', '^\S+ (\S+).*$', '\1') | reject('in', system_cleanup_purge_packages) | list }}
 
 - name: Report a package kept because something depends on it, {{ system_cleanup_purge_reason }}
-  ansible.builtin.debug:
-    msg: >-
-      Kept {{ system_cleanup_purge_packages | join(', ') }} ({{ system_cleanup_purge_reason }}):
-      {{ ('removing it would also remove ' ~ system_cleanup_purge_dependants | join(', '))
-         if system_cleanup_purge_dependants
-         else ('the package manager refused the removal: '
-               ~ system_cleanup_purge_sim.stderr | default('') | trim) }}
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ (deploy_warnings | default([])
+          + ['Kept ' ~ system_cleanup_purge_packages | join(', ') ~ ' (' ~ system_cleanup_purge_reason ~ '): '
+             ~ (('removing it would also remove ' ~ system_cleanup_purge_dependants | join(', '))
+                if system_cleanup_purge_dependants
+                else ('the package manager refused the removal: '
+                      ~ system_cleanup_purge_sim.stderr | default('') | trim))]) | unique }}
   when: system_cleanup_purge_sim.rc != 0 or system_cleanup_purge_dependants | length > 0
 
 - name: Remove the packages, {{ system_cleanup_purge_reason }}
@@ -64,12 +65,15 @@
       failed_when: false
       check_mode: false
 
-    # dnf ends a plan it is told not to run with rc 1 and "Operation aborted".
+    # dnf ends a plan it is told not to run with rc 1 and "Operation aborted",
+    # and lists orphans only with clean_requirements_on_remove, which a host's
+    # dnf config can turn off.
     - name: List the packages the removal would orphan
       ansible.builtin.command:
         argv: >-
           {{ (['apt-get', '-s', 'purge', '--autoremove'] if ansible_facts['distribution'] == 'Ubuntu'
-              else ['dnf', 'remove', '--assumeno']) + system_cleanup_purge_packages }}
+              else ['dnf', 'remove', '--assumeno', '--setopt=clean_requirements_on_remove=True'])
+             + system_cleanup_purge_packages }}
       environment: {LC_ALL: C.UTF-8, LANGUAGE: ""}
       become: true
       register: system_cleanup_purge_orphans_after
@@ -140,11 +144,12 @@
                    | map('trim') | select | list) }}
 
     - name: Report a removal stopped because its plan could not be read, {{ system_cleanup_purge_reason }}
-      ansible.builtin.debug:
-        msg: >-
-          Kept {{ system_cleanup_purge_packages | join(', ') }} ({{ system_cleanup_purge_reason }}):
-          the package manager's plan for it could not be read, so what it would
-          orphan is unknown.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ (deploy_warnings | default([])
+              + ['Kept ' ~ system_cleanup_purge_packages | join(', ') ~ ' (' ~ system_cleanup_purge_reason ~ '):'
+                 ~ " the package manager's plan for it could not be read, so what it would orphan is unknown."])
+             | unique }}
       when: not system_cleanup_purge_plan_read | bool
 
     - name: Keep the direct dependencies the removal would orphan
