@@ -78,7 +78,8 @@
 # and a systemd unit actually inherit -- an unexported shell variable is not.
 #
 # Sentinel lines, and `last`, because a profile can print ahead of the answer.
-# `timeout` because a blocking profile would otherwise hang the converge.
+# `timeout` on Linux because a blocking profile would otherwise hang the
+# converge. A stock macOS has no `timeout`, so the Mac branch runs without one.
 - name: Probe the target user's exported cargo and rustup homes
   ansible.builtin.command:
     cmd: >-

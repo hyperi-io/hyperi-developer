@@ -339,7 +339,8 @@
           {{ ansible_facts.packages.keys() | list if ansible_facts['distribution'] == 'Ubuntu'
              else verify_rpms.stdout_lines }}
 
-    # On the golink host /usr/local/go IS the distro tree, so the distro Go
+    # On the golink host /usr/local/go IS the distro tree, and on gosrc its
+    # standard library still links into the distro's, so the distro Go
     # stays. On Fedora the repository golangci-lint requires golang, so it stays
     # there too.
     - name: Assert the hand-installed and distro duplicates were removed
@@ -350,7 +351,7 @@
         success_msg: "{{ item }} removed"
       loop: >-
         {{ ['^macbash$']
-           + ([] if 'golink' in inventory_hostname else
+           + ([] if inventory_hostname is search('golink|gosrc') else
               (['^golang-go$', '^golang-src$', '^golang-[0-9.]+-go$']
                if ansible_facts['distribution'] == 'Ubuntu' else [])) }}
 
@@ -364,9 +365,30 @@
         success_msg: "{{ item }} kept"
       loop: >-
         {{ ((['git-scrub', 'git-scrub-dependant', 'kind', 'dive']
-             + (['golang-go'] if 'golink' in inventory_hostname else []))
+             + (['golang-go'] if inventory_hostname is search('golink|gosrc') else []))
             if ansible_facts['distribution'] == 'Ubuntu'
             else ['golangci-lint', 'golang']) }}
+
+    # A managed Go that still runs `go version` can have lost its standard
+    # library with the distro packages, so it has to build something.
+    - name: Write a program for the managed Go to build
+      ansible.builtin.copy:
+        content: |
+          package main
+
+          func main() { println("ok") }
+        dest: /root/verify-hello.go
+        mode: '0644'
+
+    - name: Build with the managed Go
+      ansible.builtin.command:
+        argv: [/usr/local/go/bin/go, run, /root/verify-hello.go]
+      environment:
+        GOTOOLCHAIN: local
+        GOFLAGS: -mod=mod
+      register: verify_go_build
+      changed_when: false
+      failed_when: verify_go_build.rc != 0
 
     # The Go purge must not leave the compiler toolchain for the updater's
     # unattended autoremove to take.

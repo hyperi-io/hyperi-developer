@@ -6,7 +6,9 @@
 #
 # Removed only when the managed Go is provably this role's and works: the
 # profile drop-in go.yml writes exists, /usr/local/go/bin/go resolves under
-# /usr/local to a different file than /usr/bin/go, and `go version` runs. A
+# /usr/local to a different file than /usr/bin/go, `go version` runs, and its
+# standard library (src/runtime) resolves under /usr/local too -- a tree copied
+# from Ubuntu's keeps src as a link into /usr/share and breaks with the purge. A
 # /usr/local/go linked into the distro tree is the distro Go, and it stays.
 # Only packages named golang* are candidates, so gccgo is never touched.
 #
@@ -18,6 +20,7 @@
   loop:
     - /usr/local/go/bin/go
     - /usr/bin/go
+    - /usr/local/go/src/runtime
   register: developer_go_resolved
   changed_when: false
   failed_when: false
@@ -45,6 +48,8 @@
     - developer_go_resolved.results[0].stdout.startswith('/usr/local/')
     - not developer_go_resolved.results[1].stdout.startswith('/usr/local/')
     - developer_go_resolved.results[0].stdout != developer_go_resolved.results[1].stdout
+    - developer_go_resolved.results[2].rc == 0
+    - developer_go_resolved.results[2].stdout.startswith('/usr/local/')
   block:
     # The package that ships the resolved binary (golang-1.26-go on Ubuntu,
     # golang-bin on Fedora), plus the metapackages that pull it in.

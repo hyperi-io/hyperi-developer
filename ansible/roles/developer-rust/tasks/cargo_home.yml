@@ -1,0 +1,119 @@
+---
+# Where the toolchain actually lives, and the cargo environment every cargo
+# task runs under. Included from rust.yml and from removals.yml, so a
+# `--tags removals` run resolves the same homes an install run does.
+#
+# Everything addresses cargo through these facts, never through a hard-coded
+# ~/.cargo. Cargo reads $CARGO_HOME/config.toml and rustup reads $RUSTUP_HOME,
+# and neither is required to be under the home directory -- a box with a
+# dedicated toolchain volume relocates both. Writing to ~/.cargo on such a host
+# produces a file the tool silently ignores while a stale one stays in effect.
+
+# An explicit role variable, else what the target user's login environment
+# exports (probed in the developer role's init.yml), else the upstream default,
+# so nothing downstream is ever templated blank.
+- name: Resolve the effective cargo and rustup homes
+  ansible.builtin.set_fact:
+    developer_rust_cargo_home: >-
+      {{ rust_cargo_home | default(hyperi_host_cargo_home | default(''), true)
+         | default(user_home ~ '/.cargo', true) | regex_replace('/+$', '') }}
+    developer_rust_rustup_home: >-
+      {{ rust_rustup_home | default(hyperi_host_rustup_home | default(''), true)
+         | default(user_home ~ '/.rustup', true) | regex_replace('/+$', '') }}
+
+# Absolute, and free of the two characters that would break the root-owned
+# unit file this value is templated into: `%` is a systemd specifier and `"`
+# ends the quoted assignment.
+- name: Check the resolved toolchain paths are usable
+  ansible.builtin.assert:
+    that:
+      - developer_rust_cargo_home is match('^/')
+      - developer_rust_rustup_home is match('^/')
+      - developer_rust_cargo_home is not search('[%"]')
+      - developer_rust_rustup_home is not search('[%"]')
+    fail_msg: >-
+      Resolved CARGO_HOME={{ developer_rust_cargo_home }},
+      RUSTUP_HOME={{ developer_rust_rustup_home }} -- not an absolute path, or
+      contains % or ". Set rust_cargo_home/rust_rustup_home explicitly.
+    quiet: true
+
+# Compared by device and inode, not by path: ~/.cargo can be a symlink to the
+# relocated home, and then it is the live home, not a stale one.
+- name: Identify the default, the effective and the host-exported cargo homes
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+    get_checksum: false
+  loop:
+    - "{{ user_home }}/.cargo"
+    - "{{ developer_rust_cargo_home }}"
+    - "{{ hyperi_host_cargo_home | default('', true) or '/nonexistent/hyperi-no-cargo-home' }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_rust_cargo_home_dirs
+
+# ~/.cargo is stale only when it is a separate directory from the effective
+# home AND the host itself exports that effective home: cargo, hyperi-update and
+# every shell then use it, and nothing still reads ~/.cargo. A home set only by
+# rust_cargo_home is not proof -- the host's own cargo may still be ~/.cargo.
+# The exported path matching by name counts too, so a home not created yet on a
+# first run is not mistaken for an undeclared one.
+- name: Note whether ~/.cargo is a stale home beside a relocated one
+  ansible.builtin.set_fact:
+    developer_rust_cargo_home_relocated: "{{ _separate | bool }}"
+    developer_rust_cargo_home_stale: "{{ _separate | bool and _declared | bool }}"
+  vars:
+    _default: "{{ developer_rust_cargo_home_dirs.results[0].stat }}"
+    _effective: "{{ developer_rust_cargo_home_dirs.results[1].stat }}"
+    _host: "{{ developer_rust_cargo_home_dirs.results[2].stat }}"
+    _separate: >-
+      {{ _default.exists and _default.isdir
+         and not (_effective.exists and _effective.dev == _default.dev and _effective.inode == _default.inode) }}
+    _declared: >-
+      {{ (hyperi_host_cargo_home | default('', true) | length > 0
+          and hyperi_host_cargo_home == developer_rust_cargo_home)
+         or (_effective.exists and _host.exists
+             and _effective.dev == _host.dev and _effective.inode == _host.inode) }}
+
+- name: Record that ~/.cargo was left alone beside an undeclared CARGO_HOME
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ (deploy_warnings | default([])
+         + ['cargo home: the role used ' ~ developer_rust_cargo_home ~ ' but the login environment of '
+            ~ actual_user ~ ' exports ' ~ (hyperi_host_cargo_home | default('', true) or 'no CARGO_HOME')
+            ~ ', so ' ~ user_home ~ '/.cargo was neither swept nor had its config.toml retired.'
+            ~ ' Declare CARGO_HOME on the host (for example in /etc/environment) and re-run.']) | unique }}
+  when:
+    - developer_rust_cargo_home_relocated | bool
+    - not developer_rust_cargo_home_stale | bool
+
+- name: Report where the toolchain was resolved to
+  ansible.builtin.debug:
+    msg: >-
+      CARGO_HOME={{ developer_rust_cargo_home }}
+      RUSTUP_HOME={{ developer_rust_rustup_home }}
+    verbosity: 1
+
+- name: Set cargo environment (Linux)
+  ansible.builtin.set_fact:
+    cargo_env:
+      PATH: "{{ developer_rust_cargo_home }}/bin:{{ ansible_facts['env'].PATH }}"
+      CARGO_HOME: "{{ developer_rust_cargo_home }}"
+      RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# /opt/homebrew/opt/rustup/bin leads: brew's rustup never links its shims
+# into /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac.
+- name: Set cargo environment (macOS)
+  ansible.builtin.set_fact:
+    cargo_env:
+      PATH: >-
+        {{ '/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:'
+           ~ developer_rust_cargo_home ~ '/bin:' ~ ansible_facts['env'].PATH }}
+      CARGO_HOME: "{{ developer_rust_cargo_home }}"
+      # Resolves to ~/.rustup when the host says nothing, which is what rustup
+      # would have defaulted to anyway. Carried explicitly so a Mac that
+      # relocates it is not the one platform still hard-coded.
+      RUSTUP_HOME: "{{ developer_rust_rustup_home }}"
+  when: ansible_facts['distribution'] == 'MacOSX'

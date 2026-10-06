@@ -34,8 +34,9 @@ driver:
 # pre_build_image: false so molecule builds an Ansible-compatible layer over the
 # stock image. The base ships no python3, and every module needs one.
 #
-# The golink host differs only in the Go fixture: its /usr/local/go links into
-# the distro tree, so it asserts the distro Go is kept (prepare.yml).
+# The golink and gosrc hosts differ only in the Go fixture: /usr/local/go links
+# into the distro tree, or copies it with its standard library still linked
+# there, so both assert the distro Go is kept (prepare.yml).
 platforms:
   - name: hyperi-remediation-ubuntu
     image: docker.io/library/ubuntu:26.04
@@ -43,6 +44,11 @@ platforms:
     command: /bin/sleep infinity
     privileged: false
   - name: hyperi-remediation-ubuntu-golink
+    image: docker.io/library/ubuntu:26.04
+    pre_build_image: false
+    command: /bin/sleep infinity
+    privileged: false
+  - name: hyperi-remediation-ubuntu-gosrc
     image: docker.io/library/ubuntu:26.04
     pre_build_image: false
     command: /bin/sleep infinity

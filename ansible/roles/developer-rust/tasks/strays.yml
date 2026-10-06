@@ -15,9 +15,16 @@
 # Included twice from rust.yml: the `tools` pass runs before `cargo
 # install-update`, so nothing it deregisters is rebuilt first. The `sccache`
 # pass runs after hyperi-rust-setup has put the managed sccache in place.
+# removals.yml runs the `all` pass for a `--tags removals` run.
+#
+# Removing what the role did not install -- a duplicate, a superseded ~/.cargo
+# -- is a HyperI-fleet action, so it runs only on a `removals` or `soe` run,
+# like the developer role's tombstones. cargo-tarpaulin is retired on every run:
+# this role installed it.
 
 - name: Name the cargo homes to sweep
   ansible.builtin.set_fact:
+    developer_rust_strays_removals: "{{ 'removals' in ansible_run_tags or 'soe' in ansible_run_tags }}"
     developer_rust_swept_homes: >-
       {{ [developer_rust_cargo_home]
          + ([user_home ~ '/.cargo'] if developer_rust_cargo_home_stale | default(false) | bool else []) }}
@@ -30,11 +37,15 @@
 # script put uv and uvx in the cargo home. sd and fnm are crates of tools the
 # developer role installs system-wide.
 - name: Remove cargo-home copies of managed tools (Linux)
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - developer_rust_strays_removals | bool
   vars:
     developer_rust_managed_dupes: >-
       {{ [{'bin': 'sccache', 'crate': 'sccache', 'managed': ['/usr/local/bin/sccache']}]
          if developer_rust_strays_pass == 'sccache' else
+         ([{'bin': 'sccache', 'crate': 'sccache', 'managed': ['/usr/local/bin/sccache']}]
+          if developer_rust_strays_pass == 'all' else []) +
          [{'bin': 'sd', 'crate': 'sd', 'managed': ['/usr/local/bin/sd', '/usr/bin/sd']},
           {'bin': 'fnm', 'crate': 'fnm', 'managed': ['/usr/local/bin/fnm']},
           {'bin': 'uv', 'managed': [user_home ~ '/.local/bin/uv', '/usr/bin/uv']},
@@ -71,10 +82,11 @@
         label: "{{ item.0 }}/bin/{{ item.1.bin }}"
       register: developer_rust_dupe_uninstall
       changed_when: "'Removing' in developer_rust_dupe_uninstall.stderr | default('')"
-      # A binary cargo has no record of is left to the file removal below.
+      # A binary cargo has no record of, or no cargo to run, is left to the file removal below.
       failed_when: >-
         developer_rust_dupe_uninstall.rc != 0
         and 'did not match any packages' not in developer_rust_dupe_uninstall.stderr | default('')
+        and 'No such file' not in developer_rust_dupe_uninstall.msg | default('')
       when:
         - item.1.crate is defined
         - developer_rust_dupe_path in developer_rust_dupe_ids
@@ -120,11 +132,12 @@
   loop: "{{ developer_rust_swept_homes }}"
   register: developer_rust_tarpaulin_uninstall
   changed_when: "'Removing' in developer_rust_tarpaulin_uninstall.stderr | default('')"
-  # A binary cargo has no record of is left to the file removal below.
+  # A binary cargo has no record of, or no cargo to run, is left to the file removal below.
   failed_when: >-
     developer_rust_tarpaulin_uninstall.rc | default(0) != 0
     and 'did not match any packages' not in developer_rust_tarpaulin_uninstall.stderr | default('')
-  when: developer_rust_strays_pass == 'tools'
+    and 'No such file' not in developer_rust_tarpaulin_uninstall.msg | default('')
+  when: developer_rust_strays_pass in ['tools', 'all']
 
 - name: Remove the superseded cargo-tarpaulin
   ansible.builtin.file:
@@ -133,7 +146,7 @@
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
   loop: "{{ developer_rust_swept_homes }}"
-  when: developer_rust_strays_pass == 'tools'
+  when: developer_rust_strays_pass in ['tools', 'all']
 
 # ============================================================
 # What a relocated CARGO_HOME left in ~/.cargo
@@ -146,7 +159,8 @@
 # installed only there stay: they may be the developer's own.
 - name: Remove binaries the effective cargo home supersedes
   when:
-    - developer_rust_strays_pass == 'tools'
+    - developer_rust_strays_pass in ['tools', 'all']
+    - developer_rust_strays_removals | bool
     - developer_rust_cargo_home_stale | default(false) | bool
   vars:
     developer_rust_stale_names: >-
@@ -231,6 +245,7 @@
       failed_when: >-
         developer_rust_stale_uninstall.rc != 0
         and 'did not match any packages' not in developer_rust_stale_uninstall.stderr | default('')
+        and 'No such file' not in developer_rust_stale_uninstall.msg | default('')
       when:
         - item.1.split() | length > 0
         - item.1.split() | difference(developer_rust_superseded) | length == 0

@@ -22,3 +22,15 @@
     apply:
       tags: ['developer-rust', 'rust-governor']
   tags: ['developer-rust', 'rust-governor']
+
+# A `--tags removals` run reaches the cargo-home sweep here, since rust.yml is
+# not selected by that tag. An install run sweeps from rust.yml instead.
+- name: Remove cargo-home strays (opt-in)
+  ansible.builtin.include_tasks:
+    file: removals.yml
+    apply:
+      tags: ['removals', 'never']
+  tags: ['removals', 'never']
+  when:
+    - "'removals' in ansible_run_tags"
+    - "'developer-rust' not in ansible_run_tags and 'rust' not in ansible_run_tags"

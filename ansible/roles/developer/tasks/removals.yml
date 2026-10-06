@@ -93,9 +93,9 @@
 # link points at. A bin directory that is itself a link, or that resolves
 # outside the user's home, is not swept.
 #
-# Names another tool also uses are not listed: pip's yq, Ubuntu's tea, sd and
-# act are different programs, and a uv or pipx tool would be restored by its
-# own updater anyway.
+# yq, tea, sd and act are not listed: those names are common for unrelated
+# programs a user installs, such as the pip/pipx yq, and a pipx or uv tool would
+# be restored by its own updater anyway.
 #
 # Cargo homes are left to developer-rust, which knows the effective CARGO_HOME
 # and deregisters a cargo-installed copy so `cargo install-update` does not

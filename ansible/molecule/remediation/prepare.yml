@@ -599,11 +599,30 @@
             disable_gpg_check: true
             state: present
 
+    # The package-building tools would keep gcc, binutils and libc6-dev (or
+    # glibc-devel) installed whatever happens to Go, so the Go purge below
+    # could never orphan them. They go before Go comes in.
+    - name: Remove the package-building tools (Ubuntu)
+      ansible.builtin.apt:
+        name: dpkg-dev
+        state: absent
+        purge: true
+        autoremove: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove the package-building tools (Fedora)
+      ansible.builtin.dnf:
+        name: rpm-build
+        state: absent
+        autoremove: true
+      when: ansible_facts['distribution'] == 'Fedora'
+
     # Observed on the reference workstation 2026-10-06: the distro Go with no
     # reverse dependencies beside the role's /usr/local/go. The distro's own
-    # tree is copied into /usr/local/go, so `go version` runs as the role's
-    # would. The golink host instead links /usr/local/go INTO the distro tree,
-    # which is the distro Go and must stay.
+    # tree is copied into /usr/local/go with every link dereferenced, so it is
+    # a self-contained toolchain as the role's would be. Two hosts keep the
+    # distro Go: on golink /usr/local/go links into the distro tree, and on
+    # gosrc it is a plain copy whose src still links into /usr/share.
     - name: Install the distro Go
       ansible.builtin.package:
         name: "{{ 'golang-go' if ansible_facts['distribution'] == 'Ubuntu' else 'golang' }}"
@@ -617,7 +636,11 @@
 
     - name: Copy the distro Go tree into /usr/local/go
       ansible.builtin.command:
-        argv: [cp, -a, "{{ prepare_distro_go.stdout | dirname | dirname }}", /usr/local/go]
+        argv:
+          - cp
+          - "{{ '-a' if 'gosrc' in inventory_hostname else '-aL' }}"
+          - "{{ prepare_distro_go.stdout | dirname | dirname }}"
+          - /usr/local/go
         creates: /usr/local/go
       when: "'golink' not in inventory_hostname"
 
@@ -627,6 +650,37 @@
         dest: /usr/local/go
         state: link
       when: "'golink' in inventory_hostname"
+
+    # The fixture has to reach the orphan path it exists to test: removing the
+    # distro Go must, by itself, leave gcc for an autoremove to take.
+    - name: Find the installed distro Go packages
+      ansible.builtin.shell:
+        cmd: >-
+          {{ "set -o pipefail; dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'golang*' | sed -n 's/^ii  *//p'"
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else "rpm -q --qf '%{NAME}\n' golang golang-bin golang-src" }}
+        executable: /bin/bash
+      register: prepare_go_packages
+      changed_when: false
+
+    - name: Simulate removing the distro Go with its orphans
+      ansible.builtin.command:
+        argv: >-
+          {{ (['apt-get', '-s', 'purge', '--autoremove'] if ansible_facts['distribution'] == 'Ubuntu'
+              else ['dnf', 'remove', '--assumeno']) + prepare_go_packages.stdout_lines }}
+      environment: {LC_ALL: C.UTF-8}
+      register: prepare_go_orphans
+      changed_when: false
+      failed_when: false
+
+    - name: Assert removing the distro Go would orphan gcc
+      ansible.builtin.assert:
+        that:
+          - prepare_go_orphans.stdout is search('(?m)^(Remv|Purg) gcc |^ gcc ')
+        fail_msg: >-
+          Removing the distro Go would not orphan gcc here, so the Go purge's
+          orphan handling is not exercised by this fixture.
+        quiet: true
 
     # DERIVED: developer-go/tasks/go.yml writes this beside the toolchain.
     - name: Plant the managed Go's profile drop-in

@@ -376,3 +376,7 @@ else
         read -r "pause?    Press Enter to close." || true
     fi
 fi
+
+# Non-zero when any step failed, so the app leaves its window open and a
+# caller sees it.
+(( ${#FAILURES} == 0 )) || exit 1

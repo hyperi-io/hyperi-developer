@@ -611,7 +611,7 @@ to -- not merely that the new thing installed.
 
 **A hand install leaves a second copy too.** The `removals` tag clears copies of the managed tools in `~/.local/bin` and `~/go/bin` where the managed copy exists and is a different file. A deliberate pin there (an older kubectl, golangci-lint v1) goes too, so pin per project instead. Tools whose name another program also uses (yq, tea, sd, act) are left alone. It also purges the upstream .deb or .rpm of macbash, git-scrub, dive, golangci-lint or k9s installed beside the `/usr/local/bin` copy, unless a repository offers a package of that name.
 
-developer-go removes the distro Go once a working `/usr/local/go` is in and links `go` and `gofmt` into `/usr/local/bin`. developer-rust clears cargo-home duplicates, cargo-tarpaulin and, where the host exports a relocated `CARGO_HOME`, the old `~/.cargo/bin` binaries the effective home also holds. A package something else depends on stays, and the run says which. Packages a purge would orphan are marked manually installed, so `hyperi-update`'s autoremove does not take them later.
+developer-go links `go` and `gofmt` into `/usr/local/bin` on every run, and on a `removals` or `soe` run also removes the distro Go once a working, self-contained `/usr/local/go` is in. developer-rust retires cargo-tarpaulin on every run, and on a `removals` or `soe` run clears cargo-home duplicates and, where the host exports a relocated `CARGO_HOME`, the old `~/.cargo/bin` binaries the effective home also holds. A package something else depends on stays, and the run says which. Its direct dependencies that a purge would orphan are marked manually installed, so `hyperi-update`'s autoremove does not take them later.
 
 ## Auto-update
 

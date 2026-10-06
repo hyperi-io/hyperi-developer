@@ -37,13 +37,24 @@ set -uo pipefail
 # A GUI launch or a timer does not run the login shell, so a CARGO_HOME or
 # RUSTUP_HOME declared there is missing here. Ask the login shell for it, or
 # every cargo step below would act on ~/.cargo instead of the real home.
-for var in CARGO_HOME RUSTUP_HOME; do
-    if [[ -z "${!var:-}" ]]; then
-        val="$(timeout 30 bash -lc "printenv $var" 2>/dev/null | tail -n 1)"
-        [[ -n "$val" ]] && export "$var=$val"
-    fi
-done
-unset var val
+#
+# The answer is read from sentinel lines, because a profile can print too, and
+# only an absolute path is taken. It goes through a file rather than a pipe: a
+# child a profile left in the background keeps a pipe open past the timeout.
+if [[ -z "${CARGO_HOME:-}" || -z "${RUSTUP_HOME:-}" ]]; then
+    login_env="$(mktemp)"
+    # The login shell expands these, not this one.
+    # shellcheck disable=SC2016
+    timeout 30 bash -lc 'printf "HYPERI_ENV CARGO_HOME=%s\nHYPERI_ENV RUSTUP_HOME=%s\n" "$(printenv CARGO_HOME)" "$(printenv RUSTUP_HOME)"' \
+        >"$login_env" 2>/dev/null </dev/null
+    for var in CARGO_HOME RUSTUP_HOME; do
+        [[ -n "${!var:-}" ]] && continue
+        val="$(sed -n "s/^HYPERI_ENV $var=//p" "$login_env" | tail -n 1)"
+        [[ "$val" == /* ]] && export "$var=$val"
+    done
+    rm -f "$login_env"
+    unset login_env var val
+fi
 CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
 
 # Make user-level tools reachable even when launched from a GUI/.desktop entry
@@ -270,11 +281,11 @@ fi
 # Updates the Rust toolchains. NOTE: cargo-installed binaries (nextest, deny,
 # bacon, ...) are not refreshed by rustup; reinstall them with cargo if needed.
 section "rustup toolchains"
-# A cargo home with no rustup means the toolchain is not where the
-# environment says it is, which is a fault to report, not a tool to skip.
+# rustup proxies in the cargo home with no rustup on PATH means the toolchain is
+# not where the environment says it is, which is a fault to report, not a skip.
 if have rustup; then
     run "rustup update" rustup update
-elif [[ -d "$CARGO_BIN" ]]; then
+elif [[ -e "$CARGO_BIN/cargo" ]]; then
     fail "rustup not found in $CARGO_BIN"
 else
     skip "rustup not found"
@@ -290,7 +301,7 @@ fi
 section "cargo tools"
 if have cargo-install-update; then
     run "cargo install-update -a --locked" cargo install-update -a --locked
-elif [[ -d "$CARGO_BIN" ]]; then
+elif grep -q '^"cargo-update ' "${CARGO_HOME:-$HOME/.cargo}/.crates.toml" 2>/dev/null; then
     fail "cargo-install-update not found in $CARGO_BIN (cargo tools are not being updated)"
 else
     skip "cargo-install-update not found (install the cargo-update crate)"
@@ -674,3 +685,6 @@ else
         read -r -p "    Press Enter to close." _ || true
     fi
 fi
+
+# Non-zero when any step failed, so a systemd unit or a caller sees it.
+[[ ${#FAILURES[@]} -eq 0 ]] || exit 1

@@ -166,12 +166,11 @@ This does not reopen the objection in the SSoT note below: crates.io stays out
 of the global `rustc-wrapper` path. The binary is the project's own release
 artefact, digest-checked, not an unpinned `cargo install`.
 
-**A cargo-installed sccache would shadow it.** The cargo bin directory precedes `/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy while builds keep using the absolute path in the cargo config. That split is what makes a failed `--show-stats` look like a dead cache when every build is being cached normally. On Linux the role deregisters and removes the cargo copy once the managed one is in place (`tasks/strays.yml`). The setup tool run on its own only prints the `cargo uninstall` line.
+**A cargo-installed sccache would shadow it.** The cargo bin directory precedes `/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy while builds keep using the absolute path in the cargo config. That split is what makes a failed `--show-stats` look like a dead cache when every build is being cached normally. On Linux a `removals` or `soe` run deregisters and removes the cargo copy once the managed one is in place (`tasks/strays.yml`). The setup tool run on its own only prints the `cargo uninstall` line.
 
-**Strays.** The role clears what would otherwise run instead of the managed copies:
+**Strays.** cargo-tarpaulin is retired on every run. The rest runs only on a `removals` or `soe` run, because it removes what the role did not install:
 
 - cargo-home copies of sccache, sd, fnm, uv and uvx, once the managed copy exists and is a different file (Linux only)
-- the retired cargo-tarpaulin
 - where `CARGO_HOME` is relocated, binaries in the old `~/.cargo/bin` that the effective home also holds
 
 A cargo-installed copy goes through `cargo uninstall --root`, so `cargo install-update` does not reinstall it, and a `~/.cargo` package whose binaries all go is deregistered there too. The registry and git caches and anything installed only in `~/.cargo` stay on disk. They drop off PATH once the relocation is in effect, because the shell profile and the SOE PATH drop-in name `${CARGO_HOME:-$HOME/.cargo}/bin`.
