@@ -3,6 +3,49 @@
 Rendered by CI and committed back at the end of a release -- do not edit by
 hand. Release notes also appear on the GitHub Releases page, one per tag.
 
+## [2.24.13](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.12...v2.24.13) (2026-10-07)
+
+### Bug Fixes
+
+* add git-scrub and macbash, and clear the open issue residuals ([#70](https://github.com/hyperi-io/hyperi-developer/issues/70)) ([06035f1](https://github.com/hyperi-io/hyperi-developer/commit/06035f10ef14e54538de6e3ef442f05447b1e3db)), closes [#62](https://github.com/hyperi-io/hyperi-developer/issues/62) [#69](https://github.com/hyperi-io/hyperi-developer/issues/69) [#61](https://github.com/hyperi-io/hyperi-developer/issues/61) [#59](https://github.com/hyperi-io/hyperi-developer/issues/59)
+* add packer as its own opt-in role ([#112](https://github.com/hyperi-io/hyperi-developer/issues/112)) ([38f3646](https://github.com/hyperi-io/hyperi-developer/commit/38f3646d40523cb33702fda8b75b7a242f632f1b))
+* **ansible:** load the shared vars for every inventory ([7d17f23](https://github.com/hyperi-io/hyperi-developer/commit/7d17f23dca4294fcc12a375ddc3f2ca27479c8e8))
+* apply the user-level settings for every human account, not just one ([#65](https://github.com/hyperi-io/hyperi-developer/issues/65)) ([82a7295](https://github.com/hyperi-io/hyperi-developer/commit/82a72958b1ca7917d6531bc9a5488d7f438639c0))
+* **ci:** read classification, move npm opt-out ([#98](https://github.com/hyperi-io/hyperi-developer/issues/98)) ([456cd59](https://github.com/hyperi-io/hyperi-developer/commit/456cd5984eead5e25db0560540e55e3dec247701))
+* **ci:** state the reason for the warn-level npm audit gate ([#97](https://github.com/hyperi-io/hyperi-developer/issues/97)) ([cab7acd](https://github.com/hyperi-io/hyperi-developer/commit/cab7acd579599df711356050546c1909b4941506))
+* claude and ghostty from signed vendor repos ([#113](https://github.com/hyperi-io/hyperi-developer/issues/113)) ([9c44e7b](https://github.com/hyperi-io/hyperi-developer/commit/9c44e7b1d6136ae080ff63317138ab0a86335cf2))
+* clear duplicate copies of managed tools ([#107](https://github.com/hyperi-io/hyperi-developer/issues/107)) ([eab8b8d](https://github.com/hyperi-io/hyperi-developer/commit/eab8b8df51aefede17033eaab3abf1cf1493458b))
+* clear shadowed binaries and frozen installs ([#103](https://github.com/hyperi-io/hyperi-developer/issues/103)) ([eaf3224](https://github.com/hyperi-io/hyperi-developer/commit/eaf3224b96485505080059df7d9dc902b239864e))
+* create the dconf directory before region.yml writes into it ([#58](https://github.com/hyperi-io/hyperi-developer/issues/58)) ([4468511](https://github.com/hyperi-io/hyperi-developer/commit/446851190fe969e85172a95927ed3be2d16c3315)), closes [#54](https://github.com/hyperi-io/hyperi-developer/issues/54)
+* **developer-ai:** opt-in Codex agent tooling ([75c95b9](https://github.com/hyperi-io/hyperi-developer/commit/75c95b99e2b8aaeecc3958b038e961594259cbf4))
+* **developer-rust:** add LLVM, PGO and BOLT as standard ([#105](https://github.com/hyperi-io/hyperi-developer/issues/105)) ([d95ad82](https://github.com/hyperi-io/hyperi-developer/commit/d95ad8258ab553e8167fbe01af435593c4acf4e4))
+* **developer-rust:** bound the build pool against free space, not just the clock ([#77](https://github.com/hyperi-io/hyperi-developer/issues/77)) ([ee099d7](https://github.com/hyperi-io/hyperi-developer/commit/ee099d70fc6efea32b9ed6d1dfd3b97485d9c635))
+* **developer-rust:** bound the pool by free space ([#95](https://github.com/hyperi-io/hyperi-developer/issues/95)) ([fd60029](https://github.com/hyperi-io/hyperi-developer/commit/fd6002992cb8e33d2e2116c44299b2b60250e291))
+* **developer-rust:** defer CPU by nice and weight, drop the build semaphore ([af2ebc6](https://github.com/hyperi-io/hyperi-developer/commit/af2ebc6f4f5899f3c762117e4e2e36e89bb15f67)), closes [#90](https://github.com/hyperi-io/hyperi-developer/issues/90)
+* **developer-rust:** derive CARGO_HOME from the host ([19e4632](https://github.com/hyperi-io/hyperi-developer/commit/19e46329262cf9324325a76577c3c7aeb693eb83))
+* **developer-rust:** install a C compiler before the first cargo install ([ccaf305](https://github.com/hyperi-io/hyperi-developer/commit/ccaf305d5b5e7cc1e219a655948f44904dd6c69b))
+* **developer-rust:** let the build cache live on a dedicated volume ([#82](https://github.com/hyperi-io/hyperi-developer/issues/82)) ([f675874](https://github.com/hyperi-io/hyperi-developer/commit/f675874c12bc6cf5916384c9f4aa977b35b9290e))
+* **developer:** retire stale /usr/local/bin/helm ([#101](https://github.com/hyperi-io/hyperi-developer/issues/101)) ([34f1e74](https://github.com/hyperi-io/hyperi-developer/commit/34f1e74479c947b10ffde11ee0862c9650edb862))
+* drop ts-node, which breaks on typescript 7 ([#116](https://github.com/hyperi-io/hyperi-developer/issues/116)) ([4db8546](https://github.com/hyperi-io/hyperi-developer/commit/4db8546c6f2cba0df15f991c78f80ef203b128c0))
+* govern rust builds so concurrent compiles cannot OOM the host ([#56](https://github.com/hyperi-io/hyperi-developer/issues/56)) ([36c61c9](https://github.com/hyperi-io/hyperi-developer/commit/36c61c9986b4d7ce2920897dcf2324cd66c23a07))
+* **infrastructure:** move Helm off baltocdn ([#100](https://github.com/hyperi-io/hyperi-developer/issues/100)) ([26d63ff](https://github.com/hyperi-io/hyperi-developer/commit/26d63ffed2bfb7622b7298d4624aff3c88d7e065))
+* **infrastructure:** rpk, Confluent and librdkafka from vendor repos ([#104](https://github.com/hyperi-io/hyperi-developer/issues/104)) ([ed5b5d0](https://github.com/hyperi-io/hyperi-developer/commit/ed5b5d089053250335560ce0410af9c1985a101f))
+* **install:** resolve every tool version at install time, and upgrade on re-run ([#81](https://github.com/hyperi-io/hyperi-developer/issues/81)) ([ce9950f](https://github.com/hyperi-io/hyperi-developer/commit/ce9950f07b679e58d62f944dc9ffb0f84e3bb3bd))
+* make python 3.14 the default ([#110](https://github.com/hyperi-io/hyperi-developer/issues/110)) ([ed74099](https://github.com/hyperi-io/hyperi-developer/commit/ed740993bbba75ffb3e5b5c1cac2854816a6dd30))
+* move role files to the roles whose tasks copy them ([#53](https://github.com/hyperi-io/hyperi-developer/issues/53)) ([22e9501](https://github.com/hyperi-io/hyperi-developer/commit/22e950159dff8694461b86655f4d2fef132f38f5))
+* never mint an RDP password over credentials grd already holds ([#60](https://github.com/hyperi-io/hyperi-developer/issues/60)) ([056d8f8](https://github.com/hyperi-io/hyperi-developer/commit/056d8f8ae1708e963b61c453b7c3bfdb155804a3))
+* realign hyperi-update with how tools install ([#111](https://github.com/hyperi-io/hyperi-developer/issues/111)) ([52eda5b](https://github.com/hyperi-io/hyperi-developer/commit/52eda5b3b44f2e0f832e37c9afffa6b75cb6db33))
+* remove five files nothing references ([#66](https://github.com/hyperi-io/hyperi-developer/issues/66)) ([e1b68dd](https://github.com/hyperi-io/hyperi-developer/commit/e1b68dd44f9734bbc3c3f4ac8349ee804ff6a3ae))
+* repair what a real macOS run exposed, and align the update scripts ([#57](https://github.com/hyperi-io/hyperi-developer/issues/57)) ([7d1dfc1](https://github.com/hyperi-io/hyperi-developer/commit/7d1dfc1f80706afcdde23aea5f13a90ae2638e2c))
+* show disk usage in the top bar alongside CPU and memory ([#67](https://github.com/hyperi-io/hyperi-developer/issues/67)) ([12733eb](https://github.com/hyperi-io/hyperi-developer/commit/12733eba63e2a066d16993598e48e2f5b0dc5fbe))
+* stop inventing an Arcane password and keep the seeded login ([#68](https://github.com/hyperi-io/hyperi-developer/issues/68)) ([1509b4d](https://github.com/hyperi-io/hyperi-developer/commit/1509b4d43533bec32b1941c4c2bd2fc84307d824))
+* take container and git-scrub from brew on mac ([#114](https://github.com/hyperi-io/hyperi-developer/issues/114)) ([d1dfc8d](https://github.com/hyperi-io/hyperi-developer/commit/d1dfc8d53b512296bd13254a81f00867f90604f2))
+* target user-level settings at the desktop user, not the connecting account ([#64](https://github.com/hyperi-io/hyperi-developer/issues/64)) ([f192214](https://github.com/hyperi-io/hyperi-developer/commit/f192214ec217332b4d3980d7ef06727c311da7ed)), closes [#62](https://github.com/hyperi-io/hyperi-developer/issues/62)
+* **tests:** snapshot-reset harness for Proxmox VMs ([dd2d7fe](https://github.com/hyperi-io/hyperi-developer/commit/dd2d7fe521b32408b73bae64605b9c7ea966ac44))
+* **ubuntu:** stop vendor packages breaking apt ([#99](https://github.com/hyperi-io/hyperi-developer/issues/99)) ([e4871e0](https://github.com/hyperi-io/hyperi-developer/commit/e4871e03caaab1e817cef9caf3088bbce8d638ab))
+* wait 7 days for github releases, drop dive ([#115](https://github.com/hyperi-io/hyperi-developer/issues/115)) ([64f913a](https://github.com/hyperi-io/hyperi-developer/commit/64f913ae27827301f3b0d801162d001f37327c77))
+* warn and continue when an optional component fails, and tombstone what 741e4b2 left ([#55](https://github.com/hyperi-io/hyperi-developer/issues/55)) ([1709593](https://github.com/hyperi-io/hyperi-developer/commit/17095932456c363220a23e42fdc2d4f385cb6708))
+
 ## [2.24.12](https://github.com/hyperi-io/hyperi-developer/compare/v2.24.11...v2.24.12) (2026-08-25)
 
 ### Bug Fixes
