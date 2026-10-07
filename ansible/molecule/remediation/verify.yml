@@ -25,6 +25,8 @@
         - bw          # Bitwarden — removed by decision
         - linear      # Linear CLI — removed by decision
         - minikube    # superseded by kind
+        - dive        # dropped, unmaintained since 2025-05
+        - gron        # dropped, dormant since 2022
       register: verify_gone
 
     - name: Assert retired artefacts were removed
@@ -64,6 +66,7 @@
         - tree
         - httpie
         - docker-desktop
+        - gron
       loop_control:
         label: "{{ item }}"
       when: ansible_facts['distribution'] == 'Ubuntu'
@@ -291,11 +294,11 @@
         follow: false
       loop:
         - {path: .local/bin/kind, gone: true}
-        - {path: go/bin/dive, gone: true}
+        - {path: go/bin/lazygit, gone: true}
         - {path: .local/bin/kubeconform, gone: false}
         - {path: .local/bin/tinygo-dev, gone: false}
         - {path: .local/bin/argocd, gone: false}
-        - {path: .local/bin/dive, gone: false}
+        - {path: .local/bin/lazygit, gone: false}
         - {path: .local/bin/kubectx, gone: false}
         - {path: .local/bin/yq, gone: false}
       loop_control:
@@ -321,7 +324,7 @@
         path: "{{ item }}"
       loop:
         - /usr/local/bin/kind
-        - /usr/local/bin/dive
+        - /usr/local/bin/lazygit
         - /usr/local/bin/argocd
         - /usr/local/bin/macbash
         - /usr/local/bin/git-scrub
@@ -382,7 +385,7 @@
           is offered by a repository, or is the only Go.
         success_msg: "{{ item }} kept"
       loop: >-
-        {{ ((['git-scrub', 'git-scrub-dependant', 'kind', 'dive']
+        {{ ((['git-scrub', 'git-scrub-dependant', 'kind', 'k9s']
              + (['golang-go'] if inventory_hostname is search('golink|gosrc') else []))
             if ansible_facts['distribution'] == 'Ubuntu'
             else ['golangci-lint', 'golang']) }}

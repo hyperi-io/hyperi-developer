@@ -60,17 +60,18 @@
 
 - name: Install Gitleaks (Ubuntu)
   block:
-    - name: Get latest Gitleaks version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/gitleaks/gitleaks/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: contributor_gitleaks_latest
-      check_mode: false
+    - name: Resolve the Gitleaks release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: gitleaks/gitleaks
 
     - name: Resolve the Gitleaks tag
       ansible.builtin.set_fact:
-        contributor_gitleaks_ref: "{{ contributor_gitleaks_latest.json.tag_name }}"
+        contributor_gitleaks_ref: "{{ github_release_doc.tag_name }}"
 
     # gitleaks calls amd64 "x64"; arm64 keeps its own name.
     - name: Map the architecture to the Gitleaks asset token
@@ -83,6 +84,8 @@
           https://github.com/gitleaks/gitleaks/releases/download/{{ contributor_gitleaks_ref | trim }}/gitleaks_{{
           contributor_gitleaks_ref | trim | regex_replace('^v', '') }}_linux_{{ contributor_gitleaks_arch }}.tar.gz
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: gitleaks
         mode: '0755'

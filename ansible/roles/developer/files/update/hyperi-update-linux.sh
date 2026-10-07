@@ -28,8 +28,9 @@
 # the summary without aborting the rest. At the end, if the system needs it, you
 # get a reboot prompt (default: No).
 #
-# Run with:  hyperi-update          (confirms, then prompts once for sudo)
-#            hyperi-update --yes    (no confirmation — for scripts/Ansible)
+# Run with:  hyperi-update                (confirms, then prompts once for sudo)
+#            hyperi-update --yes          (no confirmation — for scripts/Ansible)
+#            hyperi-update --min-age DAYS (release-age cooldown, default 7)
 #            hyperi-update --help
 
 set -uo pipefail
@@ -68,6 +69,30 @@ export PATH="$HOME/.local/bin:$CARGO_BIN:/usr/local/go/bin:$HOME/go/bin:$PNPM_HO
 
 ASSUME_YES=0
 
+# A GitHub release binary is refreshed to the newest release at least
+# RELEASE_MIN_AGE days old, so a compromised or broken release has time to be
+# pulled first, and repos owned by an org in RELEASE_EXEMPT skip the wait. The
+# roles write their own settings to RELEASE_CONF. The environment overrides that
+# file, --min-age overrides both, and 7 and hyperi-io apply when nothing is set.
+RELEASE_CONF=/etc/default/hyperi-update
+env_min_age="${HYPERI_RELEASE_MIN_AGE_DAYS:-}"
+env_exempt="${HYPERI_RELEASE_COOLDOWN_EXEMPT:-}"
+if [[ -r "$RELEASE_CONF" ]]; then
+    # shellcheck source=/dev/null
+    . "$RELEASE_CONF"
+fi
+RELEASE_MIN_AGE="${env_min_age:-${HYPERI_RELEASE_MIN_AGE_DAYS:-7}}"
+RELEASE_EXEMPT="${env_exempt:-${HYPERI_RELEASE_COOLDOWN_EXEMPT:-hyperi-io}}"
+unset env_min_age env_exempt
+
+# A bad configured age falls back to the default rather than stopping an
+# unattended run. Reported once the output helpers exist.
+RELEASE_AGE_NOTE=''
+if [[ ! "$RELEASE_MIN_AGE" =~ ^[0-9]+$ ]]; then
+    RELEASE_AGE_NOTE="release age '$RELEASE_MIN_AGE' is not a whole number of days, falling back to 7"
+    RELEASE_MIN_AGE=7
+fi
+
 usage() {
     cat <<EOF
 hyperi-update -- update system packages, Snap, Flatpak, firmware, uv tools
@@ -75,19 +100,35 @@ hyperi-update -- update system packages, Snap, Flatpak, firmware, uv tools
                  toolchain, release binaries, Claude Code and Codex in one go.
 
 Usage:
-  hyperi-update          Confirm, then run all updates (prompts once for sudo).
-  hyperi-update --yes    Skip the confirmation. Still prompts for sudo unless
-                         you have a cached ticket or passwordless sudo.
-  hyperi-update --help   Show this help.
+  hyperi-update                Confirm, then run all updates (prompts once for sudo).
+  hyperi-update --yes          Skip the confirmation. Still prompts for sudo unless
+                               you have a cached ticket or passwordless sudo.
+  hyperi-update --min-age DAYS Refresh a release binary only to a GitHub release
+                               at least DAYS old (default: HYPERI_RELEASE_MIN_AGE_DAYS,
+                               then $RELEASE_CONF, then 7). 0 takes the newest.
+  hyperi-update --help         Show this help.
 EOF
 }
 
-case "${1:-}" in
-    -h|--help) usage; exit 0 ;;
-    -y|--yes)  ASSUME_YES=1 ;;
-    "")        ;;
-    *)         printf 'hyperi-update: unknown option %q\n' "$1" >&2; usage; exit 2 ;;
-esac
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)   usage; exit 0 ;;
+        -y|--yes)    ASSUME_YES=1 ;;
+        --min-age)   [[ $# -ge 2 ]] || { printf 'hyperi-update: --min-age needs a number of days\n' >&2; exit 2; }
+                     flag_min_age="$2"; shift ;;
+        --min-age=*) flag_min_age="${1#*=}" ;;
+        *)           printf 'hyperi-update: unknown option %q\n' "$1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+if [[ -n "${flag_min_age+set}" ]]; then
+    if [[ ! "$flag_min_age" =~ ^[0-9]+$ ]]; then
+        printf 'hyperi-update: --min-age wants a whole number of days, not %q\n' "$flag_min_age" >&2
+        exit 2
+    fi
+    RELEASE_MIN_AGE="$flag_min_age"
+    RELEASE_AGE_NOTE=''
+fi
 
 # --- pretty output ---------------------------------------------------------
 if [[ -t 1 ]]; then
@@ -117,6 +158,15 @@ run() {
 # fail <label> : record a failure the same way run() does, for steps that are
 # not a single command (multi-step fetch-verify-replace sequences).
 fail()    { printf '%s    \xe2\x9c\x97 %s%s\n' "$RED" "$1" "$RESET"; FAILURES+=("$1"); }
+
+# warn <label> : a step that left things as they were on purpose, listed in the
+# summary without failing the run.
+WARNINGS=()
+warn()    { printf '%s    ! %s%s\n' "$YELLOW" "$1" "$RESET"; WARNINGS+=("$1"); }
+
+if [[ -n "$RELEASE_AGE_NOTE" ]]; then
+    warn "$RELEASE_AGE_NOTE"
+fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -488,15 +538,16 @@ fi
 
 # --- Release binaries ------------------------------------------------------
 # These ship only as a release asset, with no package repo, snap or language
-# manager to carry them, so the latest is fetched here. A download must match
+# manager to carry them, so they are fetched here: from GitHub, the newest
+# release at least RELEASE_MIN_AGE days old, and with none that old the
+# installed copy stays and the run warns. A download must match
 # the sha256 its release publishes and be an ELF binary, and is then renamed
 # into place, so a failed, truncated or tampered fetch leaves the working copy
 # exactly as it was.
 #
 # Only a binary already in /usr/local/bin is touched, and only on the distro
 # whose role installs it there, so a tool the other distro packages is never
-# shadowed by a second copy. gron, a release binary on Fedora whose upstream has
-# not released since 2022, is the one such tool left out.
+# shadowed by a second copy.
 section "Release binaries"
 
 # Holds the source and digest of each binary installed into /usr/local/bin, so a
@@ -566,13 +617,16 @@ api_get() {
     [[ -n "$code" ]]
 }
 
-# release_tag <doc> [<min-age-days>] : the tag of a single release document,
-# or, given an age, of the newest release in a list that is not a draft or a
-# prerelease and was published at least that many days ago. The age rule is the
-# one the roles apply through infrastructure_min_release_age_days.
+# release_tag <doc> [<min-age-days> [<tag-regex>]] : the tag of a single
+# release document, or, from a list, the highest version that is not a draft or
+# a prerelease, matches <tag-regex> (default: a dotted version, v optional) and
+# was published at least <min-age-days> ago. Highest version rather than latest
+# published, because a project patching two release lines publishes the older
+# one last. The roles apply the same rule (roles/github_release).
 release_tag() {
-    python3 - "$1" "${2:-0}" 2>/dev/null <<'PY'
+    python3 - "$1" "${2:-0}" "${3:-}" 2>/dev/null <<'PY'
 import json
+import re
 import sys
 import time
 
@@ -584,20 +638,31 @@ else:
     cutoff = time.strftime(
         "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - int(sys.argv[2]) * 86400)
     )
-    ready = sorted(
-        (
-            r
-            for r in data
-            if not r.get("draft")
-            and not r.get("prerelease")
-            and r.get("published_at")
-            and r["published_at"] <= cutoff
-        ),
-        key=lambda r: r["published_at"],
-        reverse=True,
-    )
-    print(ready[0]["tag_name"] if ready else "")
+    pattern = re.compile(sys.argv[3] or r"v?[0-9]+(\.[0-9]+)+")
+    ready = [
+        r["tag_name"]
+        for r in data
+        if not r.get("draft")
+        and not r.get("prerelease")
+        and r.get("published_at")
+        and r["published_at"] <= cutoff
+        and pattern.fullmatch(r.get("tag_name") or "")
+    ]
+    print(max(ready, key=lambda t: [int(n) for n in re.findall(r"[0-9]+", t)]) if ready else "")
 PY
+}
+
+# min_age_for <owner/name> : the release age a repo's releases must reach, 0 for
+# an owner in RELEASE_EXEMPT.
+min_age_for() {
+    local org
+    for org in $RELEASE_EXEMPT; do
+        if [[ "${1%%/*}" == "$org" ]]; then
+            printf '0'
+            return
+        fi
+    done
+    printf '%s' "$RELEASE_MIN_AGE"
 }
 
 # asset_digest <doc> <asset> [<tag>] : the sha256 GitHub publishes for <asset>
@@ -688,13 +753,13 @@ fill() {
 }
 
 # refetch [options] <name> <asset-template> [<member>...]
-#   --repo OWNER/NAME  GitHub repo: the tag comes from its API, the asset from its downloads
+#   --repo OWNER/NAME  GitHub repo: the tag is the newest release past the
+#                      cooldown (min_age_for), the asset from its downloads
 #   --api URL          release document to read the tag from, for a forge other than GitHub
 #   --url TEMPLATE     download URL (default: the GitHub release asset)
 #   --digest SHA256    the asset's digest, already known to the caller
 #   --sums TEMPLATE    checksum file to use where the release publishes no digest
 #   --arch TOKEN       this machine's arch as the asset spells it (default: amd64/arm64)
-#   --min-age DAYS     take the newest GitHub release at least DAYS old
 #   --format FORMAT    raw (default), tar (members at the archive root),
 #                      tar-nested (members one directory down) or zip
 #   --dest DIR         where the binary lives (default /usr/local/bin, as root),
@@ -713,7 +778,6 @@ refetch() {
             --digest)  want="$2" ;;
             --sums)    sums_t="$2" ;;
             --arch)    arch="$2" ;;
-            --min-age) min_age="$2" ;;
             --format)  format="$2" ;;
             --dest)    dest="$2" ;;
             *)         fail "refetch: unknown option $1"; return ;;
@@ -739,10 +803,9 @@ refetch() {
         fi
     fi
 
-    if [[ -n "$min_age" ]]; then
+    if [[ -n "$repo" && -z "$api" ]]; then
         api="https://api.github.com/repos/$repo/releases?per_page=30"
-    elif [[ -z "$api" && -n "$repo" ]]; then
-        api="https://api.github.com/repos/$repo/releases/latest"
+        min_age="$(min_age_for "$repo")"
     fi
     doc="$(mktemp)"
     if [[ -n "$api" ]]; then
@@ -752,8 +815,14 @@ refetch() {
             return
         fi
         tag="$(release_tag "$doc" "$min_age")"
-        if [[ -z "$tag" ]]; then
-            fail "$name: no release found${min_age:+ at least $min_age days old}"
+        # Only a release that exists but is too young is a warning. Nothing
+        # matching at any age means the lookup itself is wrong.
+        if [[ -z "$tag" && -n "$min_age" && -n "$(release_tag "$doc" 0)" ]]; then
+            warn "$name: no release is at least $min_age days old, kept the installed copy"
+            rm -f "$doc"
+            return
+        elif [[ -z "$tag" ]]; then
+            fail "$name: no stable release with a version tag found"
             rm -f "$doc"
             return
         fi
@@ -826,18 +895,34 @@ refetch() {
     rm -rf "$tmp"
 }
 
-# kustomize is a monorepo whose /releases/latest can be a non-CLI component, so
-# the newest kustomize CLI asset is taken from the releases list instead.
+# kustomize is a monorepo whose releases include non-CLI components, so only its
+# kustomize/vX tags are candidates, and the asset URL is read from the release
+# because the tag's slash is encoded in it.
 refetch_kustomize() {
     installed_local kustomize || { skip "kustomize not installed in /usr/local/bin"; return; }
-    local doc url='' digest=''
+    local doc tag='' url='' digest='' min_age api pattern='kustomize/v[0-9]+(\.[0-9]+)+'
+    api='https://api.github.com/repos/kubernetes-sigs/kustomize/releases?per_page=100'
+    min_age="$(min_age_for kubernetes-sigs/kustomize)"
     doc="$(mktemp)"
-    if api_get "https://api.github.com/repos/kubernetes-sigs/kustomize/releases" "$doc"; then
-        url="$(grep -oE "https://[^\"]*/kustomize_v[0-9.]+_linux_${ARCH_DEB}\.tar\.gz" "$doc" | head -1)"
-        [[ -n "$url" ]] && digest="$(asset_digest "$doc" "${url##*/}")"
+    if ! api_get "$api" "$doc"; then
+        fail "kustomize: could not read the releases from $api"
+        rm -f "$doc"
+        return
     fi
+    tag="$(release_tag "$doc" "$min_age" "$pattern")"
+    if [[ -z "$tag" && -n "$(release_tag "$doc" 0 "$pattern")" ]]; then
+        warn "kustomize: no CLI release is at least $min_age days old, kept the installed copy"
+        rm -f "$doc"
+        return
+    elif [[ -z "$tag" ]]; then
+        fail "kustomize: no stable CLI release found"
+        rm -f "$doc"
+        return
+    fi
+    url="$(grep -oE "https://[^\"]*/kustomize_${tag#kustomize/}_linux_${ARCH_DEB}\.tar\.gz" "$doc" | head -1)"
+    [[ -n "$url" ]] && digest="$(asset_digest "$doc" "${url##*/}" "$tag")"
     rm -f "$doc"
-    [[ -n "$url" ]] || { fail "kustomize: no CLI release asset found"; return; }
+    [[ -n "$url" ]] || { fail "kustomize: $tag has no linux_${ARCH_DEB} asset"; return; }
     if [[ -n "$digest" ]]; then
         refetch --url "$url" --digest "$digest" --format tar kustomize "${url##*/}"
     else
@@ -868,8 +953,6 @@ if [[ -n "$ARCH_DEB" ]]; then
     else
         refetch --repo stackrox/kube-linter --format tar kube-linter "kube-linter-linux.tar.gz"
     fi
-    refetch --repo wagoodman/dive --sums "$GH_DL/dive_{VER}_checksums.txt" --format tar dive \
-        "dive_{VER}_linux_{ARCH}.tar.gz"
     refetch --repo terraform-docs/terraform-docs --sums "$GH_DL/terraform-docs-{TAG}.sha256sum" \
         --format tar terraform-docs "terraform-docs-{TAG}-linux-{ARCH}.tar.gz"
     refetch --repo golangci/golangci-lint --sums "$GH_DL/golangci-lint-{VER}-checksums.txt" \
@@ -880,7 +963,7 @@ if [[ -n "$ARCH_DEB" ]]; then
         actionlint "actionlint_{VER}_linux_{ARCH}.tar.gz"
     refetch --repo google/osv-scanner --sums "$GH_DL/osv-scanner_SHA256SUMS" osv-scanner \
         "osv-scanner_linux_{ARCH}"
-    refetch --repo ByteNess/aws-vault --min-age 7 --sums "$GH_DL/aws-vault_sha256_checksums.txt" \
+    refetch --repo ByteNess/aws-vault --sums "$GH_DL/aws-vault_sha256_checksums.txt" \
         aws-vault "aws-vault-linux-{ARCH}"
     refetch --repo hyperi-io/git-scrub --sums "$GH_DL/checksums.txt" --format tar-nested git-scrub \
         "git-scrub-{VER}-linux-{ARCH}.tar.gz"
@@ -909,6 +992,8 @@ if [[ -n "$ARCH_DEB" ]]; then
         fi
     fi
     refetch --repo Schniz/fnm --format zip fnm "$FNM_ASSET"
+    refetch --repo hadolint/hadolint --arch "$ARCH_MIXED" --sums "$GH_DL/checksums.sha256" \
+        hadolint "hadolint-linux-{ARCH}"
     refetch --api https://gitea.com/api/v1/repos/gitea/tea/releases/latest \
         --url 'https://dl.gitea.com/tea/{VER}/{ASSET}' --sums 'https://dl.gitea.com/tea/{VER}/{ASSET}.sha256' \
         tea "tea-{VER}-linux-{ARCH}"
@@ -921,8 +1006,6 @@ if [[ -n "$ARCH_DEB" ]]; then
                 "k9s_Linux_{ARCH}.tar.gz"
             refetch_kustomize
             refetch --repo mikefarah/yq yq "yq_linux_{ARCH}"
-            refetch --repo hadolint/hadolint --arch "$ARCH_MIXED" --sums "$GH_DL/checksums.sha256" \
-                hadolint "hadolint-linux-{ARCH}"
             refetch --repo gitleaks/gitleaks --sums "$GH_DL/gitleaks_{VER}_checksums.txt" \
                 --arch "$ARCH_X64" --format tar gitleaks "gitleaks_{VER}_linux_{ARCH}.tar.gz"
             refetch --repo nektos/act --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" --format tar \
@@ -936,9 +1019,9 @@ if [[ -n "$ARCH_DEB" ]]; then
             ;;
         dnf)
             refetch --repo chmln/sd --arch "$SD_TARGET" --format tar-nested sd "sd-{TAG}-{ARCH}.tar.gz"
-            refetch --repo ahmetb/kubectx --min-age 7 --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" \
+            refetch --repo ahmetb/kubectx --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" \
                 --format tar kubectx "kubectx_{TAG}_linux_{ARCH}.tar.gz"
-            refetch --repo ahmetb/kubectx --min-age 7 --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" \
+            refetch --repo ahmetb/kubectx --sums "$GH_DL/checksums.txt" --arch "$ARCH_MIXED" \
                 --format tar kubens "kubens_{TAG}_linux_{ARCH}.tar.gz"
             ;;
     esac
@@ -1016,6 +1099,10 @@ if [[ ${#FAILURES[@]} -eq 0 ]]; then
 else
     printf '%s%s    Completed with %d issue(s):%s\n' "$BOLD" "$RED" "${#FAILURES[@]}" "$RESET"
     for f in "${FAILURES[@]}"; do printf '%s      - %s%s\n' "$RED" "$f" "$RESET"; done
+fi
+if [[ ${#WARNINGS[@]} -gt 0 ]]; then
+    printf '%s    Left as it was (%d):%s\n' "$YELLOW" "${#WARNINGS[@]}" "$RESET"
+    for w in "${WARNINGS[@]}"; do printf '%s      - %s%s\n' "$YELLOW" "$w" "$RESET"; done
 fi
 
 # --- Reboot prompt (only if required) --------------------------------------

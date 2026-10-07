@@ -16,6 +16,9 @@
 #   6. it picks the RIGHT package manager for the distro
 #   7. the reboot check runs and reports (the Fedora path was silently broken:
 #      /run/reboot-required never exists there, so it always said "no reboot")
+#   8. a bad release age is refused from the flag and falls back from config
+#   9. /etc/default/hyperi-update is read, and with no GitHub release old
+#      enough a release binary is kept as it was
 #
 # WHAT IT CANNOT PROVE: containers share the host kernel, so "reboot required"
 # cannot be forced. We assert the check RUNS and reports, not its verdict.
@@ -145,6 +148,14 @@ for image in "${IMAGES[@]}"; do
     # 3. unknown option rejected
     run_case "$image" "unknown option exits 2" '/tmp/hyperi-update --bogus' 2
 
+    # 3a. a --min-age that is not a whole number of days is refused before
+    #     anything runs, while a bad configured age only warns and falls back,
+    #     so it cannot stop the weekly timer
+    run_case "$image" "--min-age without a value exits 2" '/tmp/hyperi-update --min-age' 2
+    run_case "$image" "--min-age with a non-number exits 2" '/tmp/hyperi-update --min-age soon' 2
+    run_case "$image" "a non-number release age in the env falls back to 7" \
+        'printf "n\n" | HYPERI_RELEASE_MIN_AGE_DAYS=-1 /tmp/hyperi-update' 0 'falling back to 7'
+
     # 4. the confirmation exists, and declining does nothing.
     #    "n" on stdin must stop it BEFORE sudo/packages.
     run_case "$image" "confirm: declining does nothing" \
@@ -172,6 +183,23 @@ for image in "${IMAGES[@]}"; do
     # 9. summary always printed
     run_case "$image" "summary printed" \
         '/tmp/hyperi-update --yes' 0 '==> Summary'
+
+    # 10. the age the roles write to /etc/default/hyperi-update reaches a run
+    #     with no flag, and with no release old enough a release binary is left
+    #     exactly as it was, the summary says so, and the run still succeeds.
+    #     One GitHub API call per image: kind is the only release binary
+    #     planted. The base images lack curl or python3, which the lookup needs
+    #     and every provisioned host has. The installs read /dev/null, because
+    #     this script arrives on stdin and apt would otherwise consume the rest.
+    # shellcheck disable=SC2016  # $rc is the container shell's, not this one's
+    run_case "$image" "too-young releases keep the installed copy" \
+        '{ command -v curl && command -v python3; } >/dev/null ||
+           { { apt-get update -qq && apt-get install -y -qq curl python3; } || dnf install -y -q curl python3; } </dev/null >/dev/null 2>&1
+         cp /bin/true /usr/local/bin/kind
+         printf "HYPERI_RELEASE_MIN_AGE_DAYS=100000\n" > /etc/default/hyperi-update
+         /tmp/hyperi-update --yes; rc=$?
+         [ "$(sha256sum </bin/true)" = "$(sha256sum </usr/local/bin/kind)" ] || { echo "kind was replaced"; exit 9; }
+         exit $rc' 0 'kind: no release is at least 100000 days old, kept the installed copy' 'kind was replaced'
 done
 
 printf '\n========================================\n'

@@ -52,17 +52,18 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
   tags: ['astral', 'uv']
   block:
-    - name: Get latest uv version from GitHub API
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/astral-sh/uv/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: uv_latest_release
-      check_mode: false
+    - name: Resolve the uv release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: astral-sh/uv
 
     - name: Set uv version fact
       ansible.builtin.set_fact:
-        uv_version: "{{ uv_latest_release.json.tag_name }}"
+        uv_version: "{{ github_release_doc.tag_name }}"
 
     # uv publishes a gnu build for both arches, so the libc token does not move.
     - name: Determine uv binary architecture
@@ -103,9 +104,27 @@
         - not ansible_check_mode
         - ((astral_uv_installed.stdout | default('')).split() + ['', ''])[1] != uv_version
 
-# No rescue: ruff and ty below are installed by `uv tool install`, so warning
-# past a missing uv only moves the abort to a task that reports it as a missing
-# command.
+  # A host that already has uv keeps it and warns. One without it still fails
+  # here: ruff and ty below are installed by `uv tool install`, so warning past
+  # a missing uv only moves the abort to a task that reports a missing command.
+  rescue:
+    - name: Check for an installed uv
+      ansible.builtin.stat:
+        path: "{{ user_home }}/.local/bin/uv"
+      register: astral_uv_present
+
+    - name: Fail without a uv to fall back on
+      ansible.builtin.fail:
+        msg: "uv: {{ ansible_failed_result.msg | default('install failed') }}"
+      when: not (astral_uv_present.stat.executable | default(false))
+
+    - name: Record that uv was not updated
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['uv: ' ~ (ansible_failed_result.msg | default('update failed'))] }}
 
 # ============================================================================
 # ruff + ty - repo-managed on Fedora/macOS; uv tools on Ubuntu

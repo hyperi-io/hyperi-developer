@@ -10,9 +10,7 @@
 # traceroute, tree, httpie. They are either superseded (ss over netstat, curl
 # over httpie, eza/fd over tree) or things a developer box has no business
 # shipping by default (nmap, telnet). Install them yourself if you want them.
-# gron is NOT here: Fedora packages it nowhere, and one absent name fails the
-# whole dnf transaction, taking the other twenty packages with it. It gets its
-# own task below.
+# gron and dive were dropped the same way.
 - name: Install CLI utilities (Fedora)
   ansible.builtin.dnf:
     name:
@@ -45,7 +43,6 @@
   ansible.builtin.apt:
     name:
       - jq
-      - gron                  # make JSON greppable
       - bat
       - fzf
       - ripgrep
@@ -85,7 +82,6 @@
   community.general.homebrew:
     name:
       - jq
-      - gron                  # make JSON greppable
       - bat
       - fzf
       - ripgrep
@@ -97,8 +93,6 @@
       # parallel is the SOE tool, so sponge/ts/vipe are forgone on macOS.
       # Debian splits them apart, so Linux keeps both.
       - lazygit               # git TUI
-      - dive                  # docker image layer explorer (brew-core has it;
-                              # Linux takes a GitHub binary, see k8s.yml)
       - trufflehog            # secret scanner
       - miller                # data processing (mlr command)
       - rsync
@@ -117,45 +111,6 @@
   environment: "{{ homebrew_env }}"
   become: false
   when: ansible_facts['distribution'] == 'MacOSX'
-
-# gron - apt on Ubuntu (0.7.1, matching upstream), release binary on Fedora,
-# Homebrew on macOS. Upstream is dormant at 0.7.1, so the frozen-universe
-# objection does not apply here.
-#
-# The asset puts the arch BEFORE the version and uses .tgz:
-# gron-linux-amd64-0.7.1.tgz.
-- name: Install gron (Fedora)
-  block:
-    - name: Get latest gron version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/tomnomnom/gron/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: developer_gron_latest
-      check_mode: false
-
-    - name: Download and extract gron
-      ansible.builtin.unarchive:
-        src: >-
-          https://github.com/tomnomnom/gron/releases/download/{{ developer_gron_latest.json.tag_name }}/gron-linux-{{
-          hyperi_arch_deb }}-{{ developer_gron_latest.json.tag_name | regex_replace('^v', '') }}.tgz
-        dest: /usr/local/bin
-        remote_src: true
-        include: gron
-        mode: '0755'
-      when: not ansible_check_mode
-
-  rescue:
-    - name: Record that gron did not install (Fedora)
-      # noqa: var-naming[no-role-prefix] -- deploy_warnings is deliberately not
-      # role-prefixed: it is the shared accumulator playbooks/main.yml reports
-      # from. See docs/resilient-deploy.md.
-      ansible.builtin.set_fact:
-        deploy_warnings: >-
-          {{ deploy_warnings | default([])
-             + ['gron: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
-
-  when: ansible_facts['distribution'] == 'Fedora'
 
 # yq - dnf on Fedora, binary download on Ubuntu, Homebrew on macOS.
 #
@@ -183,10 +138,21 @@
 
 - name: Install yq (Ubuntu)
   block:
+    - name: Resolve the yq release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: mikefarah/yq
+
     - name: Download yq
       ansible.builtin.get_url:
-        url: "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_{{ hyperi_arch_deb }}"
+        url: "https://github.com/mikefarah/yq/releases/download/{{ github_release_doc.tag_name }}/yq_linux_{{ hyperi_arch_deb }}"
         dest: /usr/local/bin/yq
+        owner: root
+        group: root
         mode: '0755'
 
   rescue:
@@ -213,12 +179,14 @@
 # sd - sane sed replacement (binary download for Fedora, apt for Ubuntu)
 - name: Install sd (Fedora)
   block:
-    - name: Get latest sd version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/chmln/sd/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: sd_release
+    - name: Resolve the sd release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: chmln/sd
 
     # sd is the one that punishes a naive arch swap. Its arm64 build is
     # MUSL-ONLY -- there is no aarch64-unknown-linux-gnu asset, and asking for
@@ -233,8 +201,10 @@
 
     - name: Download and extract sd
       ansible.builtin.unarchive:
-        src: "https://github.com/chmln/sd/releases/download/{{ sd_release.json.tag_name }}/sd-{{ sd_release.json.tag_name }}-{{ sd_target | trim }}.tar.gz"
+        src: "https://github.com/chmln/sd/releases/download/{{ github_release_doc.tag_name }}/sd-{{ github_release_doc.tag_name }}-{{ sd_target | trim }}.tar.gz"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         extra_opts:
           - --strip-components=1
@@ -258,27 +228,30 @@
 # set, so install the GitHub release binary on both Linux distros (macOS gets it
 # from brew above). Asset is lazygit_<ver>_linux_<arch>.tar.gz with the binary
 # at the archive root; the tag carries a leading v the filename drops, and the
-# arch token is x86_64/arm64 (cf. dive's v-strip, act's arch mix).
+# arch token is x86_64/arm64 (cf. act's arch mix).
 - name: Install lazygit (Linux binary)
   block:
-    - name: Get latest lazygit version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/jesseduffield/lazygit/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: lazygit_release
-      check_mode: false
+    - name: Resolve the lazygit release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: jesseduffield/lazygit
 
     - name: Set the lazygit asset facts
       ansible.builtin.set_fact:
-        lazygit_version: "{{ lazygit_release.json.tag_name | regex_replace('^v', '') }}"
+        lazygit_version: "{{ github_release_doc.tag_name | regex_replace('^v', '') }}"
         lazygit_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
         lazygit_base: https://github.com/jesseduffield/lazygit/releases/download
 
     - name: Download and extract lazygit
       ansible.builtin.unarchive:
-        src: "{{ lazygit_base }}/{{ lazygit_release.json.tag_name }}/lazygit_{{ lazygit_version }}_linux_{{ lazygit_arch }}.tar.gz"
+        src: "{{ lazygit_base }}/{{ github_release_doc.tag_name }}/lazygit_{{ lazygit_version }}_linux_{{ lazygit_arch }}.tar.gz"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: lazygit
         mode: '0755'

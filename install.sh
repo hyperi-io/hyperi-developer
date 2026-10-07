@@ -177,7 +177,7 @@ Infrastructure (infrastructure):
     azure             Azure CLI
     gcloud            Google Cloud CLI
     k8s               kubectl, helm, kubectx/kubens, k9s, kind, argocd,
-                      kustomize, kubeconform, kube-linter, dive
+                      kustomize, kubeconform, kube-linter
     data              data group: clickhouse-client, rpk, valkey-cli, vector
     cloudflare        cloudflare group: flarectl, wrangler (flarectl builds
                       from source; Linux needs developer-go)

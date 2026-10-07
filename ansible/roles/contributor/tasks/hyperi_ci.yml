@@ -143,7 +143,8 @@
 # ============================================================================
 # hyperi-ci calls it for Rust and TypeScript dependency audits. brew has it; no
 # distro packages it, so both Linuxes take the official google/osv-scanner
-# release binary (Tier 3 -- hyperi-update pulls the latest on each run).
+# release binary (Tier 3 -- hyperi-update pulls the newest past the release-age
+# cooldown on each run).
 #
 # Not the `osv-scanner` snap: it is published strict, so `classic: true` is not
 # honoured and the confined build can read only $HOME. Repos under /projects are
@@ -169,17 +170,18 @@
   when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
   block:
     # Same shape as kubeconform in the infrastructure role.
-    - name: Get latest osv-scanner version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/google/osv-scanner/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: contributor_osv_latest
-      check_mode: false
+    - name: Resolve the osv-scanner release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: google/osv-scanner
 
     - name: Resolve the osv-scanner tag
       ansible.builtin.set_fact:
-        contributor_osv_ref: "{{ contributor_osv_latest.json.tag_name }}"
+        contributor_osv_ref: "{{ github_release_doc.tag_name }}"
         contributor_osv_asset: "osv-scanner_linux_{{ hyperi_arch_deb }}"
 
     - name: Fetch the osv-scanner release checksums

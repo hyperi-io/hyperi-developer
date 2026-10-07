@@ -138,13 +138,14 @@
 
 - name: Install fnm and the previous Node major (Linux)
   block:
-    - name: Get the latest fnm version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/Schniz/fnm/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: developer_fnm_latest
-      check_mode: false
+    - name: Resolve the fnm release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: Schniz/fnm
 
     - name: Ensure unzip is present (Ubuntu)
       ansible.builtin.apt:
@@ -166,7 +167,7 @@
       ansible.builtin.unarchive:
         src: >-
           https://github.com/Schniz/fnm/releases/download/{{
-          developer_fnm_latest.json.tag_name }}/{{ fnm_asset }}
+          github_release_doc.tag_name }}/{{ fnm_asset }}
         dest: /usr/local/bin
         remote_src: true
         include:

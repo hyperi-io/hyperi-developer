@@ -69,6 +69,8 @@
   ansible.builtin.copy:
     src: vaapi-check
     dest: /usr/local/bin/vaapi-check
+    owner: root
+    group: root
     mode: '0755'
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

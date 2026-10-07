@@ -1,9 +1,11 @@
 ---
 # hadolint - Dockerfile linter (blocking gate for `hyperi-ci check`).
 #
-# Fedora ships it in dnf (OS-swept). Ubuntu has no distro/repo/snap channel, so
-# it stays a re-fetched GitHub release (Tier 3 -- hyperi-update pulls the latest
-# on each run). brew on macOS.
+# Linux takes upstream's GitHub release binary (Tier 3 -- hyperi-update
+# re-fetches it). Ubuntu has no distro/repo/snap channel, and Fedora's dnf
+# package trails upstream (2.14.0 against 2.15.1 on Fedora 44, 2026-10), so both
+# distros share this path.
+# brew on macOS.
 #
 # hadolint's release assets use x86_64/arm64, NOT amd64/aarch64, so neither
 # shared arch token fits -- map explicitly like act does.
@@ -21,49 +23,27 @@
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================
-# FEDORA - dnf package
+# LINUX - re-fetched GitHub binary (Tier 3)
 # ============================================================================
 
-- name: Install hadolint (Fedora)
-  block:
-    - name: Install hadolint via dnf (Fedora)
-      ansible.builtin.dnf:
-        name: hadolint
-        state: present
-
-  rescue:
-    - name: Record that hadolint did not install (Fedora)
-      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
-      # accumulator reported by playbooks/main.yml post_tasks.
-      ansible.builtin.set_fact:
-        deploy_warnings: >-
-          {{ deploy_warnings | default([])
-             + ['hadolint: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
-
-  when: ansible_facts['distribution'] == 'Fedora'
-
-# ============================================================================
-# UBUNTU - re-fetched GitHub binary (Tier 3)
-# ============================================================================
-
-- name: Install hadolint (Ubuntu)
+- name: Install hadolint (Linux)
   block:
     - name: Determine the hadolint asset architecture
       ansible.builtin.set_fact:
         contributor_hadolint_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
 
-    # Same shape as gitleaks.yml in this role.
-    - name: Get latest hadolint version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/hadolint/hadolint/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: contributor_hadolint_latest
-      check_mode: false
+    - name: Resolve the hadolint release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: hadolint/hadolint
 
     - name: Resolve the hadolint tag
       ansible.builtin.set_fact:
-        contributor_hadolint_ref: "{{ contributor_hadolint_latest.json.tag_name }}"
+        contributor_hadolint_ref: "{{ github_release_doc.tag_name }}"
         contributor_hadolint_asset: "hadolint-linux-{{ contributor_hadolint_arch }}"
 
     - name: Fetch the hadolint release checksums
@@ -84,7 +64,7 @@
     # Without a checksum get_url keeps whatever already sits at dest, so a new
     # release never landed. The digest comes from the same release, so it detects
     # a change and a truncated download; it is not a provenance check.
-    - name: Download hadolint binary (Ubuntu)
+    - name: Download hadolint binary (Linux)
       ansible.builtin.get_url:
         url: "https://github.com/hadolint/hadolint/releases/download/{{ contributor_hadolint_ref }}/{{ contributor_hadolint_asset }}"
         dest: /usr/local/bin/hadolint
@@ -93,12 +73,38 @@
         group: root
         mode: '0755'
 
+    # The dnf package older revisions installed. Inside the block, so it goes
+    # only once the binary above is in place to replace it.
+    - name: Check for the superseded hadolint package (Fedora)
+      ansible.builtin.command:
+        argv: [rpm, -q, hadolint]
+      register: contributor_hadolint_rpm
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Remove the superseded hadolint package (Fedora)
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: purge_packages.yml
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_purge_packages: [hadolint]
+        system_cleanup_purge_reason: the hadolint package superseded by the release binary
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - contributor_hadolint_rpm.rc == 0
+
   rescue:
-    - name: Record that hadolint did not install (Ubuntu)
-      # noqa: var-naming[no-role-prefix] -- shared accumulator, see note above.
+    - name: Record that hadolint did not install (Linux)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
              + ['hadolint: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
-  when: ansible_facts['distribution'] == 'Ubuntu'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

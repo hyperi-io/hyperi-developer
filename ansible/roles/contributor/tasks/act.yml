@@ -31,59 +31,41 @@
 # UBUNTU - Install via binary from GitHub releases
 # ============================================================================
 # Tier 3: Ubuntu has no distro/vendor-repo/snap channel for act, so it stays a
-# re-fetched GitHub release -- hyperi-update pulls the latest on each run.
+# re-fetched GitHub release -- hyperi-update pulls the newest past the
+# release-age cooldown on each run.
 
 - name: Install act (Ubuntu)
   block:
-    - name: Get latest act version from GitHub API
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/nektos/act/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: act_release
-      check_mode: false
-
-    - name: Set act version fact
-      ansible.builtin.set_fact:
-        act_version: "{{ act_release.json.tag_name }}"
+    - name: Resolve the act release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: nektos/act
 
     # act does NOT use one naming scheme across arches: amd64 is `x86_64`,
     # arm64 is `arm64` (not `aarch64`). So neither shared token fits both, and
     # a substring swap on either would 404. Verified against the real release.
     - name: Determine the act asset architecture
       ansible.builtin.set_fact:
-        act_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
+        contributor_act_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
 
-    - name: Download act binary tarball
-      ansible.builtin.get_url:
-        url: "https://github.com/nektos/act/releases/download/{{ act_version }}/act_Linux_{{ act_arch }}.tar.gz"
-        dest: /tmp/act.tar.gz
-        mode: '0644'
-
-    - name: Extract act binary
+    # Straight from the URL, as gitleaks does: unarchive reports a change only
+    # when the binary differs, and no root-written file sits at a fixed /tmp path.
+    - name: Download and extract act
       ansible.builtin.unarchive:
-        src: /tmp/act.tar.gz
-        dest: /tmp
+        src: >-
+          https://github.com/nektos/act/releases/download/{{ github_release_doc.tag_name
+          }}/act_Linux_{{ contributor_act_arch }}.tar.gz
+        dest: /usr/local/bin
         remote_src: true
-      when: not ansible_check_mode
-
-    - name: Install act binary
-      ansible.builtin.copy:
-        src: /tmp/act
-        dest: /usr/local/bin/act
+        include: act
+        owner: root
+        group: root
         mode: '0755'
-        remote_src: true
       when: not ansible_check_mode
-
-    - name: Remove act installation files
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /tmp/act.tar.gz
-        - /tmp/act
-        - /tmp/LICENSE
-        - /tmp/README.md
 
   rescue:
     - name: Record that act did not install (Ubuntu)

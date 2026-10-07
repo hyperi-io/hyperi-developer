@@ -2,7 +2,8 @@
 # Every tool resolves its version at install time, so a run in four months
 # installs what is current in four months.
 #
-# Manual binaries query `/releases/latest`. Cargo tools install unversioned. Go
+# Manual binaries take the newest GitHub release past the release-age cooldown
+# below. Cargo tools install unversioned. Go
 # and rustup fetch the current version with the checksum published beside it.
 #
 # What remains below is a selection rather than a version -- a Node LTS line,
@@ -30,6 +31,23 @@ hyperi_github_headers: >-
 # to a different uid, so a task `environment:` is the only way it reaches them.
 hyperi_github_env: >-
   {{ {'GITHUB_TOKEN': hyperi_github_token} if hyperi_github_token else {} }}
+
+# Every tool taken from a GitHub release installs the newest release at least
+# this many days old, so a compromised or broken release has time to be pulled
+# first (roles/github_release). Nothing newer is ever installed in its place:
+# with no release old enough, the installed copy stays and the run warns.
+# hyperi-update reads this and the exempt orgs below from
+# /etc/default/hyperi-update, which update_command.yml writes.
+hyperi_release_min_age_days: 7
+
+# Orgs whose releases ship through our own CI gates, so they skip the wait.
+hyperi_release_cooldown_exempt:
+  - hyperi-io
+
+# The release-age rule as a process environment, for the scripts that look up
+# their own releases.
+hyperi_release_env:
+  HYPERI_RELEASE_MIN_AGE_DAYS: "{{ hyperi_release_min_age_days | string }}"
 
 # ============================================================================
 # Core component versions -- the ONE place to bump them

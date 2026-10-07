@@ -1,76 +1,144 @@
 ---
-# Kubernetes tools installation (kubectl, k9s, kubectx/kubens, kind, ArgoCD, dive)
+# Kubernetes tools installation (kubectl, k9s, kubectx/kubens, kind, ArgoCD,
+# kustomize, kubeconform, kube-linter)
 
 # ============================================================================
-# KUBECTL - Dynamic version detection
+# KUBECTL - pkgs.k8s.io, one repository per minor (infrastructure_kubectl_minor)
 # ============================================================================
+# The package is pinned to the minor as well as the repository, so a new minor
+# moves kubectl up or down on the next converge rather than leaving the old one
+# installed until something upgrades it. An empty infrastructure_kubectl_minor
+# follows the current stable minor at https://dl.k8s.io/release/stable.txt.
+#
+# A kubectl held with `apt-mark hold` or `dnf versionlock` is the owner's own
+# pin, so it is left where it is and the run warns instead.
 
-- name: Detect latest stable Kubernetes version
-  ansible.builtin.uri:
-    url: https://dl.k8s.io/release/stable.txt
-    return_content: true
-  register: k8s_stable_version
-  delegate_to: localhost
-  become: false
-  check_mode: false
+- name: Install kubectl (Linux)
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  block:
+    - name: Read the current stable Kubernetes release
+      ansible.builtin.uri:
+        url: https://dl.k8s.io/release/stable.txt
+        return_content: true
+      register: infrastructure_kubectl_stable
+      check_mode: false
+      when: not infrastructure_kubectl_minor
 
-- name: Extract Kubernetes minor version
-  ansible.builtin.set_fact:
-    k8s_version: "{{ k8s_stable_version.content | trim | regex_replace('^v([0-9]+\\.[0-9]+).*', '\\1') }}"
+    - name: Resolve the kubectl minor
+      ansible.builtin.set_fact:
+        infrastructure_kubectl_repo_minor: >-
+          {{ infrastructure_kubectl_minor
+             or (infrastructure_kubectl_stable.content | trim | regex_search('^v[0-9]+[.][0-9]+')) }}
 
-- name: Display detected Kubernetes version
-  ansible.builtin.debug:
-    msg: "Using Kubernetes {{ k8s_version }}"
+    - name: Check the kubectl minor is a Kubernetes minor
+      ansible.builtin.assert:
+        that: infrastructure_kubectl_repo_minor is match('^v1[.][0-9]+$')
+        fail_msg: "infrastructure_kubectl_minor must look like v1.37, not {{ infrastructure_kubectl_repo_minor }}"
+        quiet: true
 
-# Fedora
-- name: Add Kubernetes repository (Fedora)
-  ansible.builtin.yum_repository:
-    name: kubernetes
-    description: Kubernetes
-    baseurl: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/"
-    enabled: true
-    gpgcheck: true
-    gpgkey: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/repodata/repomd.xml.key"
-  when: ansible_facts['distribution'] == 'Fedora'
+    - name: Check whether kubectl is held
+      ansible.builtin.command:
+        argv: >-
+          {{ ['apt-mark', 'showhold', 'kubectl'] if ansible_facts['distribution'] == 'Ubuntu'
+             else ['dnf', '-q', 'versionlock', 'list'] }}
+      register: infrastructure_kubectl_hold
+      changed_when: false
+      failed_when: false
+      check_mode: false
 
-- name: Install kubectl (Fedora)
-  ansible.builtin.dnf:
-    name: kubectl
-    state: present
-  when: ansible_facts['distribution'] == 'Fedora'
+    - name: Read the held kubectl version
+      ansible.builtin.command:
+        argv: >-
+          {{ ['dpkg-query', '-W', '-f', '${Version}', 'kubectl'] if ansible_facts['distribution'] == 'Ubuntu'
+             else ['rpm', '-q', '--qf', '%{VERSION}', 'kubectl'] }}
+      register: infrastructure_kubectl_held_version
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: infrastructure_kubectl_held | bool
+      vars:
+        infrastructure_kubectl_held: >-
+          {{ ('kubectl' in infrastructure_kubectl_hold.stdout_lines | map('trim') | list)
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else ('Package name: kubectl' in infrastructure_kubectl_hold.stdout_lines | map('trim') | list) }}
 
-# Ubuntu
-- name: Add Kubernetes GPG key (Ubuntu)
-  ansible.builtin.get_url:
-    url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/Release.key"
-    dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
-    mode: '0644'
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    - name: Add Kubernetes repository (Fedora)
+      ansible.builtin.yum_repository:
+        name: kubernetes
+        description: Kubernetes
+        baseurl: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_repo_minor }}/rpm/"
+        enabled: true
+        gpgcheck: true
+        gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_repo_minor }}/rpm/repodata/repomd.xml.key"
+      when: ansible_facts['distribution'] == 'Fedora'
 
-# A host provisioned by an older revision carries kubernetes.list beside the
-# .sources this writes, and apt then reads the repo twice.
-- name: Remove the legacy Kubernetes .list (Ubuntu)
-  ansible.builtin.file:
-    path: /etc/apt/sources.list.d/kubernetes.list
-    state: absent
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    # Fetched on every run, so a key rotated at a new minor's repository arrives
+    # with the move, and an unchanged key leaves the file untouched.
+    - name: Add Kubernetes GPG key (Ubuntu)
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_repo_minor }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        mode: '0644'
+        force: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Add Kubernetes repository (Ubuntu)
-  ansible.builtin.deb822_repository:
-    name: kubernetes
-    types: deb
-    uris: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/"
-    suites: "/"
-    signed_by: /etc/apt/keyrings/kubernetes-apt-keyring.asc
-    state: present
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    # A host provisioned by an older revision carries kubernetes.list beside the
+    # .sources this writes, and apt then reads the repo twice.
+    - name: Remove the legacy Kubernetes .list (Ubuntu)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/kubernetes.list
+        state: absent
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
-- name: Install kubectl (Ubuntu)
-  ansible.builtin.apt:
-    name: kubectl
-    state: present
-    update_cache: true
-  when: ansible_facts['distribution'] == 'Ubuntu'
+    - name: Add Kubernetes repository (Ubuntu)
+      ansible.builtin.deb822_repository:
+        name: kubernetes
+        types: deb
+        uris: "https://pkgs.k8s.io/core:/stable:/{{ infrastructure_kubectl_repo_minor }}/deb/"
+        suites: "/"
+        signed_by: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        state: present
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Install kubectl (Fedora)
+      ansible.builtin.dnf:
+        name: "kubectl-{{ infrastructure_kubectl_repo_minor | regex_replace('^v', '') }}.*"
+        state: present
+        allow_downgrade: true
+      when:
+        - ansible_facts['distribution'] == 'Fedora'
+        - infrastructure_kubectl_held_version is skipped
+
+    - name: Install kubectl (Ubuntu)
+      ansible.builtin.apt:
+        name: "kubectl={{ infrastructure_kubectl_repo_minor | regex_replace('^v', '') }}.*"
+        state: present
+        allow_downgrade: true
+        update_cache: true
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - infrastructure_kubectl_held_version is skipped
+
+    - name: Record that a held kubectl was left on another minor
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kubectl: held at ' ~ (infrastructure_kubectl_held_version.stdout | default('?', true))
+                ~ ', so the ' ~ infrastructure_kubectl_repo_minor ~ ' minor was not applied. Set'
+                ~ ' infrastructure_kubectl_minor to the held minor, or release the hold ('
+                ~ ('apt-mark unhold' if ansible_facts['distribution'] == 'Ubuntu' else 'dnf versionlock delete')
+                ~ ' kubectl).'] }}
+      when:
+        - infrastructure_kubectl_held_version is not skipped
+        - not (infrastructure_kubectl_held_version.stdout | default(''))
+              .startswith(infrastructure_kubectl_repo_minor | regex_replace('^v', '') ~ '.')
+
+  rescue:
+    - name: Record that kubectl did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kubectl: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
 
 
 # ============================================================================
@@ -98,38 +166,20 @@
 - name: Install kubectx and kubens (Fedora)
   when: ansible_facts['distribution'] == 'Fedora'
   block:
-    - name: List the kubectx releases
-      ansible.builtin.uri:
-        url: "https://api.github.com/repos/{{ infrastructure_kubectx_repo }}/releases?per_page=30"
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: infrastructure_kubectx_releases
-      check_mode: false
-
-    # Sorted rather than trusting the API's order, then cut to the releases past
-    # the cooldown (infrastructure_release_cutoff).
-    - name: List the kubectx releases past the cooldown
-      ansible.builtin.set_fact:
-        infrastructure_kubectx_candidates: >-
-          {{ infrastructure_kubectx_releases.json
-             | rejectattr('draft') | rejectattr('prerelease')
-             | selectattr('published_at', 'le', infrastructure_release_cutoff)
-             | sort(attribute='published_at', reverse=true)
-             | map(attribute='tag_name') | list }}
-
-    - name: Check a kubectx release is past the cooldown
-      ansible.builtin.assert:
-        that: infrastructure_kubectx_candidates | length > 0
-        fail_msg: >-
-          no {{ infrastructure_kubectx_repo }} release among the newest 30 is at
-          least {{ infrastructure_min_release_age_days }} days old
-        quiet: true
+    - name: Resolve the kubectx release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: "{{ infrastructure_kubectx_repo }}"
 
     # Assets carry the tag verbatim (kubectx_v0.11.0_linux_x86_64.tar.gz) and
     # name the arches x86_64 and arm64; `--version` prints the bare version.
-    - name: Pick the newest kubectx release past the cooldown
+    - name: Set the kubectx tag and asset architecture
       ansible.builtin.set_fact:
-        infrastructure_kubectx_tag: "{{ infrastructure_kubectx_candidates | first }}"
+        infrastructure_kubectx_tag: "{{ github_release_doc.tag_name }}"
         infrastructure_kubectx_arch: "{{ 'arm64' if hyperi_arch_deb == 'arm64' else 'x86_64' }}"
 
     # The bash scripts older revisions installed have no --version and treat it
@@ -203,188 +253,233 @@
 # LINUX - GitHub-release binaries (Tier 3: hyperi-update re-fetches these)
 # ============================================================================
 # No apt/dnf repo, snap, or language manager ships these, so they come from
-# GitHub releases and hyperi-update re-pulls the latest each run. k9s is here
-# for Ubuntu only (Fedora took the dnf package above).
-- name: Install Kubernetes CLI tools via binary download (Linux)
+# GitHub releases (roles/github_release: the newest past the release-age
+# cooldown) and hyperi-update re-pulls them each run. k9s and kustomize are here
+# for Ubuntu only (Fedora takes the dnf packages). Each tool has its own rescue,
+# so one dead or too-young upstream costs only that tool. See
+# docs/resilient-deploy.md.
+
+- name: Install k9s (Ubuntu)
   block:
-    # k9s -- Ubuntu only (Fedora uses dnf, above)
-    - name: Get latest k9s version (Ubuntu)
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/derailed/k9s/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: k9s_latest
-      check_mode: false
-      when: ansible_facts['distribution'] == 'Ubuntu'
+    - name: Resolve the k9s release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: derailed/k9s
 
     - name: Download and extract k9s (Ubuntu)
       ansible.builtin.unarchive:
-        src: "https://github.com/derailed/k9s/releases/download/{{ k9s_latest.json.tag_name }}/k9s_Linux_{{ hyperi_arch_deb }}.tar.gz"
+        src: "https://github.com/derailed/k9s/releases/download/{{ github_release_doc.tag_name }}/k9s_Linux_{{ hyperi_arch_deb }}.tar.gz"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: k9s
         mode: '0755'
-      when:
-        - ansible_facts['distribution'] == 'Ubuntu'
-        - not ansible_check_mode
+      when: not ansible_check_mode
 
-    # kind, not minikube. kind runs vanilla kubeadm Kubernetes in docker, which
-    # is closer to the real clusters our helm/argocd work targets; minikube is
-    # its own opinionated distribution.
-    #
-    # minikube used to be installed HERE while developer/tasks/removals.yml
-    # tombstoned it -- the same run removed it and put it back, and since the
-    # developer role runs first, the reinstall won. The tombstone only works
-    # once the install is gone too.
-    - name: Get latest kind version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/kubernetes-sigs/kind/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: kind_latest
-      check_mode: false
+  rescue:
+    - name: Record that k9s did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['k9s: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# kind, not minikube. kind runs vanilla kubeadm Kubernetes in docker, which is
+# closer to the real clusters our helm/argocd work targets. minikube is its own
+# opinionated distribution.
+#
+# minikube used to be installed HERE while developer/tasks/removals.yml
+# tombstoned it -- the same run removed it and put it back, and since the
+# developer role runs first, the reinstall won. The tombstone only works once
+# the install is gone too.
+- name: Install kind (Linux)
+  block:
+    - name: Resolve the kind release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: kubernetes-sigs/kind
 
     - name: Download kind
       ansible.builtin.get_url:
-        url: "https://github.com/kubernetes-sigs/kind/releases/download/{{ kind_latest.json.tag_name }}/kind-linux-{{ hyperi_arch_deb }}"
+        url: "https://github.com/kubernetes-sigs/kind/releases/download/{{ github_release_doc.tag_name }}/kind-linux-{{ hyperi_arch_deb }}"
         dest: /usr/local/bin/kind
+        owner: root
+        group: root
         mode: '0755'
 
-    # ArgoCD CLI
-    - name: Get latest ArgoCD version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/argoproj/argo-cd/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: argocd_latest
-      check_mode: false
+  rescue:
+    - name: Record that kind did not install
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kind: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Install the ArgoCD CLI (Linux)
+  block:
+    - name: Resolve the ArgoCD release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: argoproj/argo-cd
 
     - name: Download ArgoCD CLI
       ansible.builtin.get_url:
-        url: "https://github.com/argoproj/argo-cd/releases/download/{{ argocd_latest.json.tag_name }}/argocd-linux-{{ hyperi_arch_deb }}"
+        url: "https://github.com/argoproj/argo-cd/releases/download/{{ github_release_doc.tag_name }}/argocd-linux-{{ hyperi_arch_deb }}"
         dest: /usr/local/bin/argocd
+        owner: root
+        group: root
         mode: '0755'
 
-    # dive
-    - name: Get latest dive version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/wagoodman/dive/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: dive_latest
-      check_mode: false
-
-    # dive tags its releases v0.13.1 but names the asset dive_0.13.1_... -- the
-    # leading v is stripped in the filename but not the path.
-    - name: Set the dive asset version
+  rescue:
+    - name: Record that the ArgoCD CLI did not install
       ansible.builtin.set_fact:
-        dive_version: "{{ dive_latest.json.tag_name | regex_replace('^v', '') }}"
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['argocd: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
-    - name: Download and extract dive
-      ansible.builtin.unarchive:
-        src: >-
-          https://github.com/wagoodman/dive/releases/download/{{ dive_latest.json.tag_name }}/dive_{{ dive_version }}_linux_{{ hyperi_arch_deb }}.tar.gz
-        dest: /usr/local/bin
-        remote_src: true
-        include: dive
-        mode: '0755'
-      when: not ansible_check_mode
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-    # kustomize -- Fedora packages it natively and currently matches upstream
-    # exactly, so only Ubuntu runs the release dance below.
-    #
-    # It is a monorepo: /releases/latest can point at a non-CLI component
-    # (api/, cmd/config/), so we take the newest `kustomize/vX` release and use
-    # its own asset URL (which already carries the correctly-encoded tag path).
+# kustomize -- Fedora packages it natively and currently matches upstream
+# exactly, so only Ubuntu runs the release dance below.
+#
+# It is a monorepo whose releases include non-CLI components (api/, cmd/config/),
+# so only `kustomize/vX` tags are candidates, and the asset URL comes from the
+# release itself because it carries the correctly-encoded tag path.
+- name: Install kustomize (Fedora)
+  block:
     - name: Install kustomize (Fedora)
       ansible.builtin.dnf:
         name: kustomize
         state: present
-      when: ansible_facts['distribution'] == 'Fedora'
 
-    - name: Get kustomize releases (Ubuntu)
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/kubernetes-sigs/kustomize/releases
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: kustomize_releases
-      check_mode: false
-      when: ansible_facts['distribution'] == 'Ubuntu'
-
-    - name: Select the latest kustomize CLI asset URL (Ubuntu)
+  rescue:
+    - name: Record that kustomize did not install (Fedora)
       ansible.builtin.set_fact:
-        kustomize_asset_url: >-
-          {{ (kustomize_releases.json | selectattr('tag_name', 'match', 'kustomize/v') | list | first).assets
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kustomize: ' ~ (ansible_failed_result.msg | default('install failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install kustomize (Ubuntu)
+  block:
+    - name: Resolve the kustomize release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: kubernetes-sigs/kustomize
+        github_release_tag_match: '^kustomize/v[0-9]+(\.[0-9]+)+$'
+        github_release_page_size: 100
+
+    - name: Select the kustomize CLI asset URL (Ubuntu)
+      ansible.builtin.set_fact:
+        infrastructure_kustomize_asset_url: >-
+          {{ github_release_doc.assets
              | selectattr('name', 'search', '_linux_' ~ hyperi_arch_deb ~ '.tar.gz')
              | map(attribute='browser_download_url') | first }}
-      when: ansible_facts['distribution'] == 'Ubuntu'
 
     - name: Download and extract kustomize (Ubuntu)
       ansible.builtin.unarchive:
-        src: "{{ kustomize_asset_url }}"
+        src: "{{ infrastructure_kustomize_asset_url }}"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: kustomize
         mode: '0755'
-      when:
-        - ansible_facts['distribution'] == 'Ubuntu'
-        - not ansible_check_mode
+      when: not ansible_check_mode
 
-    # kubeconform (CI parity: hyperi-ci runs it as a blocking gate).
-    - name: Get latest kubeconform version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/yannh/kubeconform/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: kubeconform_latest
-      check_mode: false
-
-    - name: Resolve the kubeconform tag
+  rescue:
+    - name: Record that kustomize did not install
       ansible.builtin.set_fact:
-        kubeconform_ref: "{{ kubeconform_latest.json.tag_name }}"
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kustomize: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] == 'Ubuntu'
+
+# kubeconform (CI parity: hyperi-ci runs it as a blocking gate).
+- name: Install kubeconform (Linux)
+  block:
+    - name: Resolve the kubeconform release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: yannh/kubeconform
 
     - name: Download and extract kubeconform
       ansible.builtin.unarchive:
-        src: "https://github.com/yannh/kubeconform/releases/download/{{ kubeconform_ref }}/kubeconform-linux-{{ hyperi_arch_deb }}.tar.gz"
+        src: "https://github.com/yannh/kubeconform/releases/download/{{ github_release_doc.tag_name }}/kubeconform-linux-{{ hyperi_arch_deb }}.tar.gz"
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: kubeconform
         mode: '0755'
       when: not ansible_check_mode
 
-    # kube-linter (CI parity). Asset naming is uneven: amd64 has no arch suffix
-    # (kube-linter-linux.tar.gz), arm64 does (kube-linter-linux_arm64.tar.gz).
-    - name: Get latest kube-linter version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/stackrox/kube-linter/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: kube_linter_latest
-      check_mode: false
-
-    - name: Resolve the kube-linter tag
+  rescue:
+    - name: Record that kubeconform did not install
       ansible.builtin.set_fact:
-        kube_linter_ref: "{{ kube_linter_latest.json.tag_name }}"
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['kubeconform: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
+
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# kube-linter (CI parity). Asset naming is uneven: amd64 has no arch suffix
+# (kube-linter-linux.tar.gz), arm64 does (kube-linter-linux_arm64.tar.gz).
+- name: Install kube-linter (Linux)
+  block:
+    - name: Resolve the kube-linter release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: stackrox/kube-linter
 
     - name: Download and extract kube-linter
       ansible.builtin.unarchive:
         src: >-
-          https://github.com/stackrox/kube-linter/releases/download/{{ kube_linter_ref }}/kube-linter-linux{{ '_arm64' if hyperi_arch_deb == 'arm64' else '' }}.tar.gz
+          https://github.com/stackrox/kube-linter/releases/download/{{ github_release_doc.tag_name
+          }}/kube-linter-linux{{ '_arm64' if hyperi_arch_deb == 'arm64' else '' }}.tar.gz
         dest: /usr/local/bin
+        owner: root
+        group: root
         remote_src: true
         include: kube-linter
         mode: '0755'
       when: not ansible_check_mode
 
   rescue:
-    # One dead upstream must not cost the whole k8s toolset. See
-    # docs/resilient-deploy.md.
-    - name: Record that a Kubernetes CLI tool did not install
+    - name: Record that kube-linter did not install
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['Kubernetes CLI tools (k9s/kind/argocd/dive/kustomize/kubeconform/kube-linter): '
-                ~ (ansible_failed_result.msg | default('download failed'))] }}
+             + ['kube-linter: ' ~ (ansible_failed_result.msg | default('download failed'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
@@ -419,11 +514,6 @@
         name: argocd
         state: present
 
-    - name: Install dive
-      community.general.homebrew:
-        name: dive
-        state: present
-
     - name: Install kustomize
       community.general.homebrew:
         name: kustomize
@@ -439,7 +529,7 @@
         name: kube-linter
         state: present
 
-  # One unavailable formula would otherwise cost the other nine.
+  # One unavailable formula would otherwise cost the other seven.
   rescue:
     - name: Record that the Kubernetes tools did not install (macOS)
       ansible.builtin.set_fact:
