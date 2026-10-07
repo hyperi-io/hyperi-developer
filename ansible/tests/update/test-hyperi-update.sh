@@ -188,10 +188,13 @@ for image in "${IMAGES[@]}"; do
     #     with no flag, and with no release old enough a release binary is left
     #     exactly as it was, the summary says so, and the run still succeeds.
     #     One GitHub API call per image: kind is the only release binary
-    #     planted. The Ubuntu images ship no curl, which the lookup needs.
+    #     planted. The base images lack curl or python3, which the lookup needs
+    #     and every provisioned host has. The installs read /dev/null, because
+    #     this script arrives on stdin and apt would otherwise consume the rest.
     # shellcheck disable=SC2016  # $rc is the container shell's, not this one's
     run_case "$image" "too-young releases keep the installed copy" \
-        'command -v curl >/dev/null || { apt-get update -qq && apt-get install -y -qq curl; } >/dev/null 2>&1
+        '{ command -v curl && command -v python3; } >/dev/null ||
+           { { apt-get update -qq && apt-get install -y -qq curl python3; } || dnf install -y -q curl python3; } </dev/null >/dev/null 2>&1
          cp /bin/true /usr/local/bin/kind
          printf "HYPERI_RELEASE_MIN_AGE_DAYS=100000\n" > /etc/default/hyperi-update
          /tmp/hyperi-update --yes; rc=$?
