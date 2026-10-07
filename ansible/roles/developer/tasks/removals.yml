@@ -705,6 +705,35 @@
   when: ansible_facts['distribution'] == 'Ubuntu'
   failed_when: false
 
+# ts-node crashes on TypeScript 7, which removed the compiler API it calls, and
+# has had no release since 2023-12. tsx runs the same files.
+- name: Check for pnpm before removing a pnpm global (Linux)
+  ansible.builtin.command:
+    cmd: pnpm --version
+  environment: "{{ pnpm_env }}"
+  become: true
+  become_user: "{{ actual_user }}"
+  register: developer_rm_pnpm_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+- name: Remove the retired ts-node pnpm global (Linux)
+  ansible.builtin.command:
+    cmd: pnpm remove -g ts-node
+  environment: "{{ pnpm_env }}"
+  become: true
+  become_user: "{{ actual_user }}"
+  register: developer_rm_ts_node
+  changed_when: developer_rm_ts_node.rc == 0
+  failed_when:
+    - developer_rm_ts_node.rc != 0
+    - "'GLOBAL_PKG_NOT_FOUND' not in (developer_rm_ts_node.stdout ~ developer_rm_ts_node.stderr)"
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - developer_rm_pnpm_present.rc | default(1) == 0
+
 # macOS is deliberately absent. These came from brew, and `brew uninstall` on a
 # Mac hits tools the developer may well have installed themselves for their own
 # reasons -- on a personal machine, undeclared state is theirs, not ours. The

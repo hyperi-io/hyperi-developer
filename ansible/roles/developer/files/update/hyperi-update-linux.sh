@@ -404,7 +404,7 @@ fi
 
 # --- npm and pnpm global tools ---------------------------------------------
 # semantic-release, maid and wrangler are npm globals. eslint, prettier,
-# typescript, tsx and ts-node are pnpm globals, which `npm update -g` never
+# typescript and tsx are pnpm globals, which `npm update -g` never
 # sees. pnpm itself is corepack's, so it is re-activated at latest first.
 section "npm global tools"
 if have npm; then
