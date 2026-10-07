@@ -169,7 +169,7 @@ Languages (developer-<lang>; --languages [list] or developer-languages for all):
     developer-python      mypy (opt-in; ruff/ty ship in the base astral suite)
     developer-node        eslint + prettier (Node itself is in the base -- it is
                           core tooling, needed by semantic-release and CI)
-    developer-typescript  typescript + tsx + ts-node (pulls developer-node)
+    developer-typescript  typescript + tsx (pulls developer-node)
     developer-c           C/C++ build tools
 
 Infrastructure (infrastructure):
