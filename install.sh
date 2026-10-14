@@ -224,6 +224,7 @@ HyperI SOE (soe, soe-gui) - org policy, includes everything above:
     nemo              Nemo file manager (replaces Nautilus)
     desktop-cleanup   Hide duplicate apps, dedupe Flatpak/apt
     gnome-extensions  GNOME extensions (winlike / maclike)
+    wallpaper         HyperI wallpaper, set and listed in the GNOME picker
 
 AI coding agents (developer-ai) - opt-in; ai is the group tag for both:
     codex             OpenAI Codex CLI - the second opinion, not the driver
