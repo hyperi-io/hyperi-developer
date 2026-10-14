@@ -13,7 +13,6 @@
 # - ui-mode utility deployment
 # - Mode application (via ui-mode script)
 # - System-wide dconf defaults
-# - Wallpaper deployment
 # - Font installation
 
 # ============================================================================
@@ -657,63 +656,6 @@
     - has_gnome | default(false)
     - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
     - gnome_shell_running.rc != 0
-
-# ============================================================================
-# WALLPAPER DEPLOYMENT (system-wide, safe from apt/dnf updates)
-# ============================================================================
-# Controlled by branding_enabled and background_file variables
-
-- name: Deploy custom wallpaper
-  tags: ['winlike', 'maclike', 'never']
-  when:
-    - has_gnome | default(false)
-    - ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
-    - branding_enabled | default(true)
-    - background_file | default('') | length > 0
-  block:
-    - name: Create local backgrounds directory (safe from package updates)
-      ansible.builtin.file:
-        path: /usr/local/share/backgrounds
-        state: directory
-        mode: '0755'
-
-    - name: Deploy background image
-      ansible.builtin.copy:
-        src: "{{ background_file }}"
-        dest: /usr/local/share/backgrounds/desktop-background.svg
-        mode: '0644'
-
-    - name: Set background as default (light mode)
-      community.general.dconf:
-        key: "/org/gnome/desktop/background/picture-uri"
-        value: "'file:///usr/local/share/backgrounds/desktop-background.svg'"
-        state: present
-      become: true
-      become_user: "{{ actual_user }}"
-
-    - name: Set background as default (dark mode)
-      community.general.dconf:
-        key: "/org/gnome/desktop/background/picture-uri-dark"
-        value: "'file:///usr/local/share/backgrounds/desktop-background.svg'"
-        state: present
-      become: true
-      become_user: "{{ actual_user }}"
-
-    - name: Set background scaling mode
-      community.general.dconf:
-        key: "/org/gnome/desktop/background/picture-options"
-        value: "'zoom'"
-        state: present
-      become: true
-      become_user: "{{ actual_user }}"
-
-  rescue:
-    - name: Record that the wallpaper was not deployed
-      ansible.builtin.set_fact:
-        deploy_warnings: >-
-          {{ deploy_warnings | default([])
-             + ['Wallpaper: ' ~ (ansible_failed_task.name | default('unknown task'))
-                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
 
 # ============================================================================
 # UPDATE ALL EXTENSIONS TO LATEST

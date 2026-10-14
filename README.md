@@ -81,6 +81,7 @@ flowchart TD
 | `packer` | HashiCorp Packer from HashiCorp's repo or tap. Opt-in, in no persona |
 | `contributor` | hyperi-ci + its check tools (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, yamllint, ansible-lint, pre-commit, act, git-scrub, macbash |
 | `soe` / `soe-gui` | HyperI org policy (opt-in) |
+| `wallpaper` | HyperI wallpaper only, from `soe-gui`: set as the desktop background and listed in the GNOME Settings picker |
 | `--full-stack` / `--infra` / `--languages [list]` | Persona bundles (see `--help`) |
 | `winlike` / `maclike` | GNOME taskbar (winlike) or dock (maclike), winlike wins if both |
 | `rdp-server` | GNOME Remote Login on port 3389 (inbound). NOT Desktop Sharing -- see the note below the table |

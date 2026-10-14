@@ -1,0 +1,73 @@
+---
+# HyperI desktop wallpaper: system-wide image, GNOME picker entry, and the
+# desktop user's background. Controlled by branding_enabled and background_file.
+
+- name: Deploy custom wallpaper
+  block:
+    - name: Create the backgrounds and wallpaper-list directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /usr/local/share/backgrounds
+        - /usr/share/gnome-background-properties
+
+    - name: Deploy background image
+      ansible.builtin.copy:
+        src: "{{ background_file }}"
+        dest: /usr/local/share/backgrounds/desktop-background.svg
+        mode: '0644'
+
+    # Settings > Appearance builds its system background list from this directory,
+    # so the wallpaper stays selectable after a user picks another one.
+    - name: List the background in the GNOME wallpaper picker
+      ansible.builtin.copy:
+        dest: /usr/share/gnome-background-properties/hyperi-wallpapers.xml
+        mode: '0644'
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE wallpapers SYSTEM "gnome-wp-list.dtd">
+          <wallpapers>
+            <wallpaper deleted="false">
+              <name>HyperI</name>
+              <filename>/usr/local/share/backgrounds/desktop-background.svg</filename>
+              <filename-dark>/usr/local/share/backgrounds/desktop-background.svg</filename-dark>
+              <options>zoom</options>
+              <shade_type>solid</shade_type>
+              <pcolor>#000647</pcolor>
+              <scolor>#000647</scolor>
+            </wallpaper>
+          </wallpapers>
+
+    - name: Set background as default (light mode)
+      community.general.dconf:
+        key: "/org/gnome/desktop/background/picture-uri"
+        value: "'file:///usr/local/share/backgrounds/desktop-background.svg'"
+        state: present
+      become: true
+      become_user: "{{ actual_user }}"
+
+    - name: Set background as default (dark mode)
+      community.general.dconf:
+        key: "/org/gnome/desktop/background/picture-uri-dark"
+        value: "'file:///usr/local/share/backgrounds/desktop-background.svg'"
+        state: present
+      become: true
+      become_user: "{{ actual_user }}"
+
+    - name: Set background scaling mode
+      community.general.dconf:
+        key: "/org/gnome/desktop/background/picture-options"
+        value: "'zoom'"
+        state: present
+      become: true
+      become_user: "{{ actual_user }}"
+
+  rescue:
+    - name: Record that the wallpaper was not deployed
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Wallpaper: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}

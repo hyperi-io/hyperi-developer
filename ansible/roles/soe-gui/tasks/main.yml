@@ -39,6 +39,20 @@
     - has_gnome | default(false)
     - "'winlike' in ansible_run_tags or 'maclike' in ansible_run_tags"
 
+# The wallpaper is the same in either UI mode, so winlike/maclike may union
+# onto its tasks, unlike gnome.yml above.
+- name: Deploy the HyperI wallpaper
+  ansible.builtin.include_tasks:
+    file: wallpaper.yml
+    apply:
+      tags: ['soe-gui', 'wallpaper', 'winlike', 'maclike']
+  tags: ['soe-gui', 'wallpaper', 'winlike', 'maclike']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+    - branding_enabled | default(true)
+    - background_file | default('') | length > 0
+
 - name: Install Slack
   ansible.builtin.include_tasks:
     file: slack.yml
