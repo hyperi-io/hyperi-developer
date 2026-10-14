@@ -755,8 +755,9 @@
 # people who run the whole playbook. A dev who wants a fast Rust box on a
 # machine we do not manage should be able to run one command.
 
-# Tagged rust-cache as well: this script writes the cache caps, so the cap tag
-# has to be able to install and run it without a full toolchain converge.
+# Tagged rust-cache and rust-llvm as well: this script writes the cache caps and
+# names the cargo linker, so either tag has to install and run it without a full
+# toolchain converge, or an LLVM bump leaves Rust linking with the old clang.
 - name: Install the hyperi-rust-setup tool
   ansible.builtin.copy:
     src: hyperi-rust-setup
@@ -765,7 +766,7 @@
     group: root
     mode: '0755'
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu', 'Debian']
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
 
 - name: Install the hyperi-rust-setup tool (macOS)
   ansible.builtin.copy:
@@ -774,7 +775,7 @@
     mode: '0755'
   become: true
   when: ansible_facts['distribution'] == 'MacOSX'
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
 
 # The script needs Python 3.11+ for tomllib, and macOS's /usr/bin/python3 is
 # 3.9. The astral role's uv-managed python3.14 is used wherever it exists, on
@@ -784,7 +785,7 @@
     path: "{{ user_home }}/.local/bin/python3.14"
     follow: true
   register: developer_rust_uv_python
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
 
 # --yes because Ansible is the unattended caller; a human running it by hand
 # gets the confirmation prompt instead.
@@ -810,7 +811,7 @@
   changed_when: "'CHANGED' in developer_rust_setup.stdout"
   # An optional build accelerator must never abort the run.
   failed_when: false
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
 
 # stderr as well: a missing cargo and a Python traceback both land there.
 - name: Report Rust build environment setup
@@ -819,7 +820,7 @@
       {{ (developer_rust_setup.stdout_lines | default([]))
          + (developer_rust_setup.stderr_lines | default([])) or ['(no output)'] }}
   when: developer_rust_setup.rc | default(0) != 0
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
 
 # The script exits 0 on warnings, so non-zero is a real failure. It goes in the
 # end-of-run summary rather than aborting, for the reason above.
@@ -834,7 +835,7 @@
                  or developer_rust_setup.msg | default('no output')) | trim | truncate(120))])
          | unique }}
   when: developer_rust_setup.rc | default(0) != 0
-  tags: ['rust-cache']
+  tags: ['rust-cache', 'rust-llvm']
 
 # After hyperi-rust-setup, so the managed sccache is in place and the cargo
 # config already names it rather than the copy about to be removed.
