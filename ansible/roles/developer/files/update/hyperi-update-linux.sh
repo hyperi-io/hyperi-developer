@@ -195,9 +195,6 @@ elif have apt-get; then
     PKG_MGR="apt"
 fi
 
-# Opt-in stack, absent on a machine that never enabled it.
-ARCANE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/arcane"
-
 # --- confirm ---------------------------------------------------------------
 # This touches every package on the box, so say so before doing it. --yes is
 # how Ansible and any other unattended caller skips this.
@@ -216,7 +213,6 @@ if [[ "$ASSUME_YES" -eq 0 ]]; then
     printf '  - release binaries in /usr/local/bin that no package covers, and uv in ~/.local/bin on Ubuntu\n'
     have codex    && printf '  - Codex CLI (re-run of the official installer)\n'
     have claude   && printf '  - the Codex plugin for Claude Code, if installed\n'
-    [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
     read -r -p "Proceed? [y/N] " confirm
     case "${confirm,,}" in
@@ -1079,17 +1075,6 @@ elif [[ "$(claude plugin list --json 2>/dev/null)" == *codex@openai-codex* ]]; t
     run "claude plugin update codex" claude plugin update codex@openai-codex --yes
 else
     skip "the Codex plugin is not installed"
-fi
-
-# --- Arcane ----------------------------------------------------------------
-# Arcane's own auto-updater deliberately skips Arcane's container, so the stack
-# is pulled and recreated here instead. Only acts on a machine that opted in --
-# the compose file is absent everywhere else. Unlike the tools above, Arcane is
-# opt-in, so a machine without it is not a gap worth reporting -- no section.
-if [[ -f "$ARCANE_DIR/compose.yaml" ]] && have docker; then
-    section "Arcane"
-    run "arcane pull"     docker compose --project-directory "$ARCANE_DIR" pull
-    run "arcane recreate" docker compose --project-directory "$ARCANE_DIR" up -d
 fi
 
 # --- Summary ---------------------------------------------------------------
