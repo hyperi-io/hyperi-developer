@@ -211,9 +211,6 @@ HyperI SOE (soe, soe-gui) - org policy, includes everything above:
     claude-policy     HyperI managed settings for Claude Code (soe only)
     forgejo/codeberg  tea (Forgejo/Gitea CLI)
     colima            macOS container daemon + Apple container (macOS only)
-    arcane            Container management UI, localhost-only (OPT-IN:
-                      -e soe_arcane_enabled=true; add
-                      -e soe_arcane_long_session=true for a year-long login)
     local-services    Persistent local ClickHouse + Redpanda for spikes,
                       deployed stopped (OPT-IN:
                       -e soe_local_services_enabled=true)

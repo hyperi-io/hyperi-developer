@@ -152,9 +152,6 @@ case "${1:-}" in
     *)          print -u2 "hyperi-update: unknown option '$1'"; usage; exit 2 ;;
 esac
 
-# Opt-in stack, absent on a machine that never enabled it.
-ARCANE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/arcane"
-
 # --- confirm ---------------------------------------------------------------
 # This touches every formula, cask and system update on the box, so say so
 # before doing it. --yes is how Ansible and any other unattended caller skips
@@ -170,7 +167,6 @@ if (( ! ASSUME_YES )); then
     have npm    && printf '  - npm global tools + pnpm\n'
     have pnpm   && printf '  - pnpm global tools\n'
     have claude && printf '  - the Codex plugin for Claude Code, if installed\n'
-    [[ -f "$ARCANE_DIR/compose.yaml" ]] && printf '  - Arcane (pull + recreate)\n'
     printf '\nIt may take a while, and may ask to reboot at the end.\n\n'
     read -r "confirm?Proceed? [y/N] "
     case "${confirm:l}" in
@@ -347,21 +343,6 @@ fi
 # gcloud is intentionally NOT updated here: it is the brew cask 'gcloud-cli',
 # so the Homebrew section already updates it, and `gcloud components update`
 # would fork the version brew tracks from the one on disk.
-
-# --- Arcane ----------------------------------------------------------------
-# Arcane's own auto-updater deliberately skips Arcane's container, so the stack
-# is pulled and recreated here instead. Only acts on a machine that opted in --
-# the compose file is absent everywhere else, so no section otherwise.
-if [[ -f "$ARCANE_DIR/compose.yaml" ]] && have docker; then
-    section "Arcane"
-    # colima's socket is not at /var/run/docker.sock, and a GUI-launched run
-    # does not necessarily carry the .zshenv that points DOCKER_HOST at it.
-    if [[ -z "${DOCKER_HOST:-}" && -S "$HOME/.colima/default/docker.sock" ]]; then
-        export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
-    fi
-    run "arcane pull"     docker compose --project-directory "$ARCANE_DIR" pull
-    run "arcane recreate" docker compose --project-directory "$ARCANE_DIR" up -d
-fi
 
 # --- Summary ---------------------------------------------------------------
 section "Summary"
