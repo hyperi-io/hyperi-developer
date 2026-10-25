@@ -4,3 +4,7 @@
 
 [org/gnome/desktop/interface]
 enable-animations=false
+
+# GNOME repeats held keys itself, so a key-up delayed past this many ms types repeated characters.
+[org/gnome/desktop/peripherals/keyboard]
+delay=uint32 800

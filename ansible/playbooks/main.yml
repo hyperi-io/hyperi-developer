@@ -135,6 +135,31 @@
       failed_when: false
       tags: ['always']
 
+    # system_cleanup restarts these and cancels this timer, so it only fires if the run aborts.
+    - name: Schedule auto-update restore in 4h  # noqa: command-instead-of-module
+      ansible.builtin.shell: |
+        systemctl stop hyperi-autoupdate-restore.timer hyperi-autoupdate-restore.service 2>/dev/null
+        systemctl reset-failed hyperi-autoupdate-restore.timer hyperi-autoupdate-restore.service 2>/dev/null
+        systemd-run --unit=hyperi-autoupdate-restore --collect --on-active=4h systemctl start {{ autoupdate_units | join(' ') }}
+      vars:
+        autoupdate_units: >-
+          {{ ['dnf-automatic.timer'] if ansible_facts['distribution'] == 'Fedora'
+             else ['apt-daily.timer', 'apt-daily-upgrade.timer', 'unattended-upgrades.service'] }}
+      register: autoupdate_restore
+      when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
+      become: true
+      changed_when: false
+      failed_when: false
+      tags: ['always']
+
+    - name: Warn when the auto-update restore could not be scheduled
+      ansible.builtin.debug:
+        msg: "Could not schedule the auto-update restore timer: {{ autoupdate_restore.stderr | default('') }}"
+      when:
+        - autoupdate_restore is not skipped
+        - autoupdate_restore.rc | default(0) != 0
+      tags: ['always']
+
     # We support n and n-1, so the declared minimum IS n-1: Fedora 43, Ubuntu
     # 24.04 LTS.
     #

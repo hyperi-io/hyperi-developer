@@ -1,7 +1,6 @@
 # GNOME Remote Login (RDP) server
 
-Configures and tunes inbound RDP on port 3389, including automatic window
-resizing and performance work for software-encoded sessions.
+Configures and tunes inbound RDP on port 3389, including automatic window resizing and a `Nice=-10` priority boost for GRD on every host.
 
 ## Remote Login is not Desktop Sharing
 
@@ -85,9 +84,21 @@ login name unless you make it so.
 - Remote Login (RDP) - explicitly enabled via `grdctl --system rdp enable`
 
 **Certificates:**
-- Self-signed TLS pair auto-generated in `/var/lib/gnome-remote-desktop/`
-  (`rdp-tls.crt` `0644`, `rdp-tls.key` `0600`)
+- The pair lives in `/var/lib/gnome-remote-desktop/` (cert `0644`, key `0600`), named per mode: `rdp-tls.*` for the default self-signed cert, `rdp-tls-host.*` for the hardened one, `rdp-tls-supplied.*` for your own. Each mode keeps its own files, so switching back serves the earlier pair unchanged
 - Registered with `grdctl --system rdp set-tls-cert` / `set-tls-key`
+- `rdp_tls_selfsigned_hardened: true` swaps in a stronger self-signed cert:
+  FQDN in CN and SAN, ECDSA P-384, ten years, so a pinned cert never needs
+  re-pinning
+- `rdp_tls_cert_src` / `rdp_tls_key_src` serve your own certificate instead,
+  with the full chain in the cert file, checked against the key before use
+- The served cert's SHA-256 and SHA-1 fingerprints are printed at the end of a
+  run and written to `/etc/gnome-rdp/rdp-tls-fingerprint`
+  (`rdp_tls_fingerprint_file`). Check a client's
+  first-connect prompt against them before trusting the cert
+- A run fails on a missing, unreadable or mismatched pair, or an expired supplied cert. It only warns when a self-signed cert has expired or the cert does not name the host's FQDN
+
+**Polkit (opt-in):**
+- `rdp_polkit_remote_as_local: true` gives an active remote graphical session (logind Type wayland or x11, so RDP and not SSH) the console's polkit defaults, so Settings pages such as Remote Login unlock over RDP. Off by default
 
 **TCP Optimizations:**
 - Window scaling enabled
@@ -138,7 +149,8 @@ Login with:
 
 - Certificates auto-generated during installation
 - Check: `sudo ls -la /var/lib/gnome-remote-desktop/`
-- Should see: rdp-tls.crt, rdp-tls.key owned by the gnome-remote-desktop user
+- Should see the pair for your mode (`rdp-tls.*`, `rdp-tls-host.*` or `rdp-tls-supplied.*`) owned by the gnome-remote-desktop user
+- `/etc/gnome-rdp/rdp-tls-fingerprint` holds the fingerprints of the cert GRD serves
 
 ## Known limitations
 
@@ -164,25 +176,36 @@ the whole change is one line in `files/dconf-rdp-performance`:
 max-framerate=uint32 30
 ```
 
-Until then the software-encode path leans on the `Nice=-10` priority boost
-(see below) and `enable-animations=false`, which are what we do ship.
+Until then we ship `enable-animations=false` and the `Nice=-10` priority boost (see below), which applies on every host.
 
-### What we do about software encode instead
+## Priority, hardware encode and restarts
 
-`rdp_hw_encode_expected` drives this. When no hardware encoder is expected, the
-role deploys a `Nice=-10` systemd drop-in to both the GRD system service and
-the user handover service, and removes it again when hardware encode is
-available. The user-service half needs `RLIMIT_NICE` headroom to take effect --
-an unprivileged systemd user manager cannot lower niceness on its own and
-systemd does not warn when it silently fails to. That is what
-`/etc/security/limits.d/50-rdp-nice.conf` is for.
+Both GRD units get `Nice=-10`, on every host. GNOME repeats a held key itself and
+GRD drops the client's repeats, so a key-up delayed by build load comes out as
+`kkkkkk`. A hardware encoder moves the encode off the CPU, not the input path.
+The user unit needs the `RLIMIT_NICE` headroom in
+`/etc/security/limits.d/50-rdp-nice.conf`, or systemd silently runs it at 0. The
+system dconf profile also sets the repeat delay to 800 ms.
 
-### Do not restart GRD on a live session
+GRD 50 picks hardware encode by itself and has no setting for it. Its paths are
+NVENC (`libnvidia-encode.so.1` plus `libcuda.so.1`) and VA-API
+(`VAProfileH264High` encode plus a hardware Vulkan device). The role installs
+the Mesa VA and Vulkan drivers, adds Intel's VA driver on Intel, and reports
+which path works by probing those APIs. It never checks the vendor, so virtual,
+passthrough and bare-metal GPUs get the same test. A virtio-gpu VM has no path:
+virgl carries OpenGL only. Some cards have no encoder at all (Navi 24: RX 6400,
+RX 6500 XT).
 
-`systemctl restart gnome-remote-desktop.service` kills the GNOME session it is
-serving. This role restarts the service at the end of a run, so **applying it
-over RDP will drop your own connection mid-run**. Apply over SSH, from a local
-console, or accept the reconnect.
+Restarting the system daemon under a live session orphans it until a reboot --
+every reconnect fails with `Could not get session id` (upstream
+[#383](https://gitlab.gnome.org/GNOME/gnome-remote-desktop/-/issues/383)). So:
+
+- the role restarts GRD only when no handover daemon is running, and otherwise
+  says the change applies at the next reboot
+- `/etc/needrestart/conf.d/50-gnome-remote-desktop.conf` stops needrestart
+  restarting GRD after a library update
+- a gnome-remote-desktop package upgrade still restarts it from the postinst,
+  so reboot after one
 
 ## Window placement across resolution changes
 
@@ -323,15 +346,19 @@ gdm's problem, not this role's.
 
 ## Files Modified
 
-- `/etc/gnome-remote-desktop/` - System certificates
+- `/etc/gnome-remote-desktop/` - GRD system config, via `grdctl --system`
+- `/var/lib/gnome-remote-desktop/rdp-tls*.{crt,key}` - TLS pair for the active mode
+- `/etc/gnome-rdp/rdp-tls-fingerprint` - served cert fingerprints (`rdp_tls_fingerprint_file`)
+- `/etc/polkit-1/rules.d/50-rdp-remote-as-local.rules` - only with `rdp_polkit_remote_as_local`
 - `/usr/local/sbin/rdp-handover-watchdog` + `/etc/systemd/system/rdp-handover-watchdog.service` - failed-handover recovery
 - `/etc/sysctl.d/98-rdp-tcp.conf` - TCP optimizations
 - `/etc/sysctl.d/98-rdp-mtu.conf` - MTU settings
 - `/etc/security/limits.d/50-rdp-nice.conf` - RLIMIT_NICE headroom for the handover daemon
 - `~/.local/share/gnome-shell/extensions/rdp-window-fit@hyperi.io/` - window refit extension (desktop user's home)
-- `/etc/systemd/system/gnome-remote-desktop.service.d/priority.conf` - Nice=-10 (software-encode path only)
+- `/etc/systemd/system/gnome-remote-desktop.service.d/priority.conf` - Nice=-10
 - `/etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf` - as above, user service
-- System dconf settings - Window resize behavior, animations off
+- `/etc/needrestart/conf.d/50-gnome-remote-desktop.conf` - keeps needrestart from restarting GRD
+- System dconf settings - Window resize behavior, animations off, key repeat delay 800 ms
 
 ## Verification
 

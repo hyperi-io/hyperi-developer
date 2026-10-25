@@ -1,145 +1,125 @@
 ---
-# VA-API Hardware Encoding Detection and Auto-Enablement
-# Two-pronged approach:
-# 1. Ansible-time: Check and enable if available now
-# 2. Runtime: Deploy service that auto-enables when VA-API becomes available later
+# Installs drivers and only reports, as GRD picks hardware encode itself, and probes the APIs GRD uses (NVENC, VA-API) not the GPU vendor.
 
 # ============================================================================
-# INSTALL VA-API DRIVERS AND DETECTION TOOLS (vendor-aware)
+# DRIVERS
 # ============================================================================
-# The correct VA driver depends on the GPU detected in gpu_groups.yml:
-#   intel  (physical) -> intel-media-va-driver (iHD); Iris Xe etc.
-#   amd    (physical) -> mesa-va-drivers (radeonsi/RADV)
-#   virtio (VM)       -> mesa-va-drivers (Gallium VirGL state tracker)
-#   nvidia (physical) -> nvidia-vaapi-driver (VDPAU->VA bridge)
-#   none              -> tools only; software (CPU) encode
-# Plus the GStreamer VA encoder plugin (vah264enc) that grd 50 needs for HW
-# encode, wherever a hardware encoder is expected.
+# Mesa covers AMD, virtio and nouveau (in mesa-libgallium from Ubuntu 26.04), and NVIDIA's encoder needs its proprietary driver, not installed here.
 
-- name: Install VA-API stack (Ubuntu)
+- name: Set the hardware encode driver packages
+  ansible.builtin.set_fact:
+    rdp_hwenc_packages: >-
+      {{ (['mesa-libgallium'] if ansible_facts['distribution_version'] is version('26.04', '>=')
+          else ['mesa-va-drivers'])
+         + ['mesa-vulkan-drivers', 'vainfo', 'vulkan-tools']
+         if ansible_facts['distribution'] == 'Ubuntu' else
+         ['mesa-va-drivers', 'mesa-vulkan-drivers', 'libva-utils', 'vulkan-tools'] }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - dri_device.stat.exists | default(false)
+
+- name: Install hardware encode drivers (Ubuntu)
   ansible.builtin.apt:
-    name: "{{ ({
-              'intel':  ['intel-media-va-driver-non-free', 'gstreamer1.0-plugins-bad', 'vainfo'],
-              'amd':    ['mesa-va-drivers', 'gstreamer1.0-plugins-bad', 'vainfo'],
-              'virtio': ['mesa-va-drivers', 'gstreamer1.0-plugins-bad', 'vainfo'],
-              'nvidia': ['nvidia-vaapi-driver', 'gstreamer1.0-plugins-bad', 'vainfo'],
-              'none':   ['vainfo'],
-            }[rdp_gpu_vendor | default('none')]) }}"
+    name: "{{ rdp_hwenc_packages }}"
     state: present
     update_cache: true
-  register: rdp_vaapi_ubuntu_install
-  ignore_errors: true
   when:
     - ansible_facts['distribution'] == 'Ubuntu'
     - has_gnome
+    - dri_device.stat.exists | default(false)
 
-- name: Install VA-API stack (Fedora)
+- name: Install hardware encode drivers (Fedora)
   ansible.builtin.dnf:
-    name: "{{ ({
-              'intel':  ['intel-media-driver', 'gstreamer1-plugins-bad-free', 'libva-utils'],
-              'amd':    ['mesa-va-drivers', 'gstreamer1-plugins-bad-free', 'libva-utils'],
-              'virtio': ['mesa-va-drivers', 'gstreamer1-plugins-bad-free', 'libva-utils'],
-              'nvidia': ['libva-utils', 'gstreamer1-plugins-bad-free'],
-              'none':   ['libva-utils'],
-            }[rdp_gpu_vendor | default('none')]) }}"
+    name: "{{ rdp_hwenc_packages }}"
     state: present
-  register: rdp_vaapi_fedora_install
-  ignore_errors: true
   when:
     - ansible_facts['distribution'] == 'Fedora'
     - has_gnome
+    - dri_device.stat.exists | default(false)
 
-- name: Warn if VA-API stack install failed (Ubuntu)
+# Ubuntu multiverse or Fedora RPM Fusion carries it, and neither is guaranteed.
+- name: Install the Intel VA-API driver
+  ansible.builtin.package:
+    name: "{{ 'intel-media-va-driver-non-free' if ansible_facts['distribution'] == 'Ubuntu' else 'intel-media-driver' }}"
+    state: present
+  register: rdp_intel_va
+  ignore_errors: true  # noqa: ignore-errors
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - dri_device.stat.exists | default(false)
+    - rdp_gpu_vendor | default('none') == 'intel'
+
+- name: Warn when the Intel VA-API driver is not installable
   ansible.builtin.debug:
     msg: >-
-      VA-API stack install for GPU '{{ rdp_gpu_vendor | default('none') }}' failed
-      ({{ rdp_vaapi_ubuntu_install.msg | default('unknown') }}). Software (CPU)
-      encoding fallback will be used. For NVIDIA, ensure the proprietary driver
-      and nvidia-vaapi-driver are available.
+      Intel VA-API driver not installed ({{ rdp_intel_va.msg | default('unknown error') }}).
+      Enable multiverse (Ubuntu) or RPM Fusion (Fedora) for hardware encode.
   when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - has_gnome
-    - rdp_vaapi_ubuntu_install is failed
+    - rdp_intel_va is failed
 
 # ============================================================================
-# DEPLOY AUTO-DETECTION SERVICE (runs on every boot)
+# PROBES -- report only, nothing below changes the host
 # ============================================================================
 
-- name: Deploy VA-API auto-detection script
-  ansible.builtin.copy:
-    src: vaapi-check
-    dest: /usr/local/bin/vaapi-check
-    owner: root
-    group: root
-    mode: '0755'
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-
-- name: Deploy VA-API auto-detection systemd service
-  ansible.builtin.copy:
-    src: vaapi-check.service
-    dest: /etc/systemd/system/vaapi-check.service
-    mode: '0644'
-  register: vaapi_service_deployed
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-
-- name: Reload systemd daemon
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-    - vaapi_service_deployed.changed | default(false)
-
-- name: Enable VA-API auto-detection service
-  ansible.builtin.systemd:
-    name: vaapi-check.service
-    enabled: true
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-
-# ============================================================================
-# ANSIBLE-TIME CHECK: Enable now if VA-API already available
-# ============================================================================
-
-- name: Check VA-API H.264 encoding support
-  ansible.builtin.shell:
-    cmd: vainfo --display drm 2>&1 | grep -q "VAProfileH264High.*VAEntrypointEncSlice"
-  register: vaapi_h264_check
-  failed_when: false
-  changed_when: false
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-
-- name: Set VA-API H.264 availability fact
-  ansible.builtin.set_fact:
-    vaapi_h264_available: "{{ vaapi_h264_check.rc == 0 }}"
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-
-- name: Run VA-API check script now (enables if available)
+- name: Probe VA-API for H.264 encode
   ansible.builtin.command:
-    cmd: /usr/local/bin/vaapi-check
+    cmd: vainfo --display drm
+  register: rdp_vainfo
+  changed_when: false
+  failed_when: false
+  check_mode: false
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - dri_device.stat.exists | default(false)
+
+- name: Probe Vulkan for a hardware device
+  ansible.builtin.command:
+    cmd: vulkaninfo --summary
+  register: rdp_vulkaninfo
   changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - dri_device.stat.exists | default(false)
 
-# ============================================================================
-# DISPLAY STATUS
-# ============================================================================
+- name: Probe for the NVIDIA encode libraries
+  ansible.builtin.command:
+    cmd: ldconfig -p
+  register: rdp_ldconfig
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
 
-- name: Display VA-API status
+# llvmpipe reports PHYSICAL_DEVICE_TYPE_CPU, which GRD rejects for having no
+# render node, so only the three GPU device types count.
+- name: Work out which GRD hardware encode path is usable
+  ansible.builtin.set_fact:
+    rdp_vaapi_h264_encode: "{{ rdp_vainfo.stdout | default('') is search('VAProfileH264High\\s*:\\s*VAEntrypointEncSlice') }}"
+    rdp_vulkan_gpu: "{{ rdp_vulkaninfo.stdout | default('') is search('PHYSICAL_DEVICE_TYPE_(INTEGRATED|DISCRETE|VIRTUAL)_GPU') }}"
+    rdp_nvenc: >-
+      {{ (rdp_ldconfig.stdout | default('') is search('libnvidia-encode\.so\.1'))
+         and (rdp_ldconfig.stdout | default('') is search('libcuda\.so\.1')) }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+- name: Display hardware encode status
   ansible.builtin.debug:
     msg: |
-      VA-API H.264 encoding: {{ 'AVAILABLE' if vaapi_h264_available | default(false) else 'NOT AVAILABLE (CPU fallback)' }}
-      Auto-detection service: ENABLED (will auto-enable hardware encoding when VA-API becomes available)
+      GRD hardware encode: {{ 'NVENC' if rdp_nvenc | bool
+                              else 'VA-API' if (rdp_vaapi_h264_encode | bool and rdp_vulkan_gpu | bool)
+                              else 'none -- software RFX on the CPU' }}
+      - VA-API H.264 encode: {{ 'yes' if rdp_vaapi_h264_encode | bool else 'no' }}
+      - Hardware Vulkan device: {{ 'yes' if rdp_vulkan_gpu | bool else 'no' }}
+      - NVIDIA encode libraries: {{ 'yes' if rdp_nvenc | bool else 'no' }}
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
