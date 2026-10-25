@@ -43,6 +43,19 @@ rdp_cert_locality: "Sydney"
 rdp_cert_subject: >-
   /C={{ rdp_cert_country }}/ST={{ rdp_cert_state }}/L={{ rdp_cert_locality }}/O={{ rdp_cert_org }}/CN={{ ansible_facts['hostname'] }}
 
+# Opt-in: an FQDN-named ECDSA P-384 self-signed cert, kept beside the stock one so toggling re-prompts each client once.
+rdp_tls_selfsigned_hardened: false
+
+# Opt-in: an active remote graphical session (RDP, not SSH) gets the console's polkit defaults and nothing more.
+rdp_polkit_remote_as_local: false
+
+# World-readable fingerprints, kept out of /etc/gnome-remote-desktop because GRD's own user could rewrite them there.
+rdp_tls_fingerprint_file: /etc/gnome-rdp/rdp-tls-fingerprint
+
+# Opt-in: a trusted cert and key as PEM paths on the target host, set both or neither, with the full chain and the name clients connect with.
+# rdp_tls_cert_src: /etc/letsencrypt/live/example.com/fullchain.pem
+# rdp_tls_key_src: /etc/letsencrypt/live/example.com/privkey.pem
+
 # Recover the RDP daemon after a failed handover. Force-stopping another
 # session from the RDP login screen leaves the daemon accepting TCP on 3389 and
 # servicing nothing, which on a headless host means no way back in at all.

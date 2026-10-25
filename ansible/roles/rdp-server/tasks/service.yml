@@ -24,12 +24,9 @@
   changed_when: false
 
 # ============================================================================
-# GRD PROCESS PRIORITY (software-encode band-aid only)
+# GRD PROCESS PRIORITY
 # ============================================================================
-# Software RFX encoding is CPU-intensive, so a Nice boost stops GRD being
-# starved. This is ONLY needed on the software/none-encode path; when hardware
-# VA encode is available (rdp_hw_encode_expected) the boost is unnecessary, so
-# it is deployed only then and actively removed otherwise.
+# Nice=-10 on every host, because a key-up delayed past the repeat delay by a loaded CPU types repeated characters even with a hardware encoder.
 
 - name: Create GRD system service drop-in directory
   ansible.builtin.file:
@@ -49,7 +46,7 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
 
-- name: Deploy/remove GRD priority override (system service)
+- name: Deploy GRD priority override (system service)
   ansible.builtin.copy:
     src: grd-priority.conf
     dest: /etc/systemd/system/gnome-remote-desktop.service.d/priority.conf
@@ -57,18 +54,8 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-    - not (rdp_hw_encode_expected | default(false))
 
-- name: Remove GRD priority override when hardware encode is available (system)
-  ansible.builtin.file:
-    path: /etc/systemd/system/gnome-remote-desktop.service.d/priority.conf
-    state: absent
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-    - rdp_hw_encode_expected | default(false)
-
-- name: Deploy/remove GRD priority override (user handover service)
+- name: Deploy GRD priority override (user handover service)
   ansible.builtin.copy:
     src: grd-priority.conf
     dest: /etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf
@@ -76,16 +63,29 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-    - not (rdp_hw_encode_expected | default(false))
 
-- name: Remove GRD priority override when hardware encode is available (user)
+# ============================================================================
+# KEEP NEEDRESTART AWAY FROM GRD
+# ============================================================================
+# A needrestart restart of the system daemon orphans every live Remote Login session until a reboot.
+
+- name: Create needrestart drop-in directory
   ansible.builtin.file:
-    path: /etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf
-    state: absent
+    path: /etc/needrestart/conf.d
+    state: directory
+    mode: '0755'
   when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - ansible_facts['distribution'] == 'Ubuntu'
     - has_gnome
-    - rdp_hw_encode_expected | default(false)
+
+- name: Exclude GRD from needrestart service restarts
+  ansible.builtin.copy:
+    src: needrestart-grd.conf
+    dest: /etc/needrestart/conf.d/50-gnome-remote-desktop.conf
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] == 'Ubuntu'
+    - has_gnome
 
 # ============================================================================
 # ENABLE GNOME REMOTE DESKTOP SERVICE
@@ -133,9 +133,7 @@
 # SET DEFAULT RDP CREDENTIALS
 # ============================================================================
 
-# rdp_effective_password, not rdp_password: credentials.yml settles the
-# precedence (operator-supplied > previously generated > freshly generated) so
-# it lives in one place rather than being re-derived here.
+# rdp_effective_password carries the precedence credentials.yml settles (supplied > previously generated > new).
 - name: Set RDP credentials
   ansible.builtin.command:
     cmd: "grdctl --system rdp set-credentials {{ rdp_username }} {{ rdp_effective_password }}"
@@ -150,6 +148,18 @@
 # ============================================================================
 # RESTART SERVICE TO APPLY CONFIGURATION
 # ============================================================================
+# Skipped while a session is live, because a restart orphans it until a reboot.
+
+- name: Check for a live GNOME Remote Desktop session
+  ansible.builtin.command:
+    cmd: pgrep -f '^[^ ]*gnome-remote-desktop-daemon --handover'
+  register: rdp_live_session
+  check_mode: false
+  changed_when: false
+  failed_when: rdp_live_session.rc > 1
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
 
 - name: Restart RDP service to apply configuration
   ansible.builtin.systemd:
@@ -158,6 +168,18 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - rdp_live_session.rc == 1
+
+- name: Report configuration waiting for a reboot
+  ansible.builtin.debug:
+    msg: >-
+      A GNOME Remote Desktop handover daemon is running, so
+      gnome-remote-desktop.service was not restarted. The new configuration
+      applies at the next reboot.
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - rdp_live_session.rc == 0
 
 # ============================================================================
 # STATUS & USER INSTRUCTIONS
@@ -168,14 +190,17 @@
     msg: |
       GNOME Remote Login configured (NOT Desktop Sharing):
       - Remote Login (RDP): ENABLED on port 3389
-      - Username: {{ rdp_username }}
-      - Password: {{ 'supplied via rdp_password' if rdp_password is defined
-                     else 'generated for this host -- see ' ~ rdp_credentials_file }}
+      - Credentials: {{ 'set from rdp_password for ' ~ rdp_username if rdp_password is defined
+                        else 'generated for ' ~ rdp_username ~ ' -- see ' ~ rdp_credentials_file if rdp_generated_password is defined
+                        else 'reused from ' ~ rdp_credentials_file if rdp_effective_password is defined
+                        else 'already set in Remote Login, left unchanged' }}
 
       RDP Access:
       - Connect to: {{ ansible_facts['hostname'] }}:3389 (or {{ ansible_facts['default_ipv4'].address | default('IP') }}:3389)
       - Change password: sudo grdctl --system rdp set-credentials <user> <pass>
+      {% if rdp_effective_password is defined and rdp_password is not defined %}
         (and update {{ rdp_credentials_file }}, or the next run will set it back)
+      {% endif %}
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
