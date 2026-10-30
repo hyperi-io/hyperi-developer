@@ -144,7 +144,7 @@ from their publisher and verify it. The rest rest on HTTPS and the release tag,
 which a publisher can in principle force-move. Extending checksum-at-download to
 the other manual binaries is the outstanding hardening (hyperi-ci #66).
 
-Three fetches verify a digest IN THIS REPO, and they are the ones whose SHA is held here or read from a published manifest: the Go toolchain, rustup-init, and macbash (whose `.sha256` sits beside the asset on downloads.hyperi.io, so the fetch also re-pulls a republished binary). A fourth, the Codex CLI on Linux, DELEGATES the check to a vendor script this repo runs unverified. That is a weaker position than the other three and is counted separately on purpose. Claude Code on Linux comes from Anthropic's signed apt/dnf repository, whose key is pinned by fingerprint like the other vendor repos.
+Three fetches verify a digest IN THIS REPO, and they are the ones whose SHA is held here or read from a published manifest: the Go toolchain, rustup-init, and macbash (whose `.sha256` sits beside the asset on downloads.hyperi.io, so the fetch also re-pulls a republished binary). A fourth, the Codex CLI on Linux, DELEGATES the check to a vendor script this repo runs unverified. That is a weaker position than the other three and is counted separately on purpose. Claude Code is Anthropic's native build on every platform: the release manifest's detached signature is checked against the release key, pinned by fingerprint, and the binary against the manifest's SHA256.
 
 Codex is the one where what is verified matters. The installer script has no
 published checksum of its own; what it verifies is its payload, the
@@ -363,7 +363,7 @@ hyperi-ci.
 
 | Tool(s) | Platforms | Method |
 |---|---|---|
-| Claude Code CLI (binary, tag `claude`) | Linux Anthropic apt/dnf repo, `soe_claude_channel` (default `stable`; key pinned by fingerprint) / macOS cask | vendor-repo / cask |
+| Claude Code CLI (binary, tag `claude`) | Native build on Linux and macOS, `soe_claude_channel` (default `stable`), signed manifest checked against the key pinned by fingerprint, self-updating per user | signed-manifest |
 | Claude Code managed settings (tag `claude-policy`, soe only) | all | role file -> `/etc/claude-code/` |
 | tea (Forgejo/Gitea CLI, `forgejo` / `codeberg` tags; `gh` is GitHub-only) | Linux github-binary / macOS brew | github-binary / brew |
 | openvpn3 client (-> vpn-clients group) | Fedora COPR / Ubuntu vendor-repo / macOS brew | vendor-repo / brew |

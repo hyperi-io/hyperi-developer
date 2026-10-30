@@ -1,13 +1,12 @@
 ---
-# Claude Code on Linux comes from Anthropic's signed apt/dnf repository. The
-# fingerprint is the release signing key published at
-# https://code.claude.com/docs/en/setup, checked before the key is trusted.
+# Claude Code is Anthropic's native build. The fingerprint is the release
+# signing key published at https://code.claude.com/docs/en/setup, which signs
+# each release manifest, checked before the key is trusted.
 soe_claude_key_url: https://downloads.claude.ai/keys/claude-code.asc
 soe_claude_key_fingerprint: 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE  # gitleaks:allow -- public key fingerprint
 # `stable` can lag a just-launched model by about a week; set `latest` to follow every release.
 soe_claude_channel: stable
-soe_claude_apt_repo_url: "https://downloads.claude.ai/claude-code/apt/{{ soe_claude_channel }}"
-soe_claude_rpm_repo_url: "https://downloads.claude.ai/claude-code/rpm/{{ soe_claude_channel }}"
+soe_claude_release_url: https://downloads.claude.ai/claude-code-releases
 
 # ============================================================================
 # Local services -- persistent ClickHouse + Redpanda for ad-hoc work, OPT-IN.

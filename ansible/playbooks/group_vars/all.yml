@@ -99,6 +99,3 @@ hyperi_exclusive_apt_sources:
   ghostty:
     match: 'launchpad(content)?\.net/mkasberg/ghostty-ubuntu'
     file: /etc/apt/sources.list.d/ghostty-ppa.sources
-  claude:
-    match: 'downloads\.claude\.ai/claude-code/apt'
-    file: /etc/apt/sources.list.d/claude-code.sources
