@@ -27,26 +27,18 @@
 # Run as the desktop user, not whoever connected: on a fleet machine the
 # connection user is a service account (hyperi-infra connects as `ubuntu`), and
 # claude would start up against that account's home instead.
-- name: Verify Claude Code CLI (Linux)
-  ansible.builtin.command: /usr/bin/claude --version
-  register: verify_claude
+- name: Verify Claude Code CLI
+  ansible.builtin.command:
+    argv: ["{{ user_home }}/.local/bin/claude", --version]
+  register: soe_verify_claude
   changed_when: false
-  failed_when: verify_claude.rc != 0
-  become: true
-  become_user: "{{ actual_user }}"
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Verify Claude Code CLI (macOS)
-  ansible.builtin.command: claude --version
-  environment: "{{ homebrew_env }}"
-  register: verify_claude
-  changed_when: false
-  failed_when: verify_claude.rc != 0
-  when: ansible_facts['distribution'] == 'MacOSX'
+  failed_when: soe_verify_claude.rc != 0
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
 
 - name: Display SOE tools verification
   ansible.builtin.debug:
     msg: |
       ✅ SOE Tools Verified:
       - OpenVPN: {{ verify_openvpn.stdout | default('skipped (install failed - manual install required)') }}
-      - Claude Code CLI: {{ verify_claude.stdout | default('installed') }}
+      - Claude Code CLI: {{ soe_verify_claude.stdout | default('installed') }}
