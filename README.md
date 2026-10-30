@@ -179,7 +179,7 @@ digest. Read that before changing a role or adding a tool.
 
 - Docker (Engine on Linux, CLI-only via Homebrew on macOS, no Docker Desktop, bring your own daemon)
 - Git, GitHub CLI, Git LFS
-- CLI utilities: jq, bat, fzf, ripgrep, fd, sd, git-delta, lazygit, moreutils, miller, tmux, htop, age, ...
+- CLI utilities: jq, bat, fzf, ripgrep, fd, gron, sd, git-delta, lazygit, moreutils, miller, tmux, htop, age, ...
 
 **Opt-in, via tags:**
 

@@ -26,7 +26,6 @@
         - linear      # Linear CLI — removed by decision
         - minikube    # superseded by kind
         - dive        # dropped, unmaintained since 2025-05
-        - gron        # dropped, dormant since 2022
       register: verify_gone
 
     - name: Assert retired artefacts were removed
@@ -66,7 +65,6 @@
         - tree
         - httpie
         - docker-desktop
-        - gron
       loop_control:
         label: "{{ item }}"
       when: ansible_facts['distribution'] == 'Ubuntu'

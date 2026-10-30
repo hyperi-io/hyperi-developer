@@ -10,7 +10,7 @@
 # traceroute, tree, httpie. They are either superseded (ss over netstat, curl
 # over httpie, eza/fd over tree) or things a developer box has no business
 # shipping by default (nmap, telnet). Install them yourself if you want them.
-# gron and dive were dropped the same way.
+# dive was dropped the same way.
 - name: Install CLI utilities (Fedora)
   ansible.builtin.dnf:
     name:
@@ -47,6 +47,7 @@
       - fzf
       - ripgrep
       - fd-find
+      - gron                  # make JSON greppable (no Fedora package)
       - sd                    # sane sed replacement
       - git-delta             # git diff pager. NOT `delta` -- on Ubuntu that
                               # name belongs to an ancient binary-diff tool
@@ -86,6 +87,7 @@
       - fzf
       - ripgrep
       - fd
+      - gron                  # make JSON greppable
       - sd                    # sane sed replacement
       - git-delta             # git diff pager (brew aliases `delta` to this)
       # moreutils is NOT here: its own `parallel` binary conflicts with the

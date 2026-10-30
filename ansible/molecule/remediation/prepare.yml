@@ -70,28 +70,16 @@
         - linear      # Linear CLI — removed by decision 2026-05-01
         - minikube    # superseded by kind
 
-    # DERIVED: k8s.yml put dive in /usr/local/bin on both distros, and Fedora took
-    # gron's release binary there, until both were dropped.
-    - name: Plant the dropped dive and gron release binaries
+    # DERIVED: k8s.yml put dive in /usr/local/bin on both distros until it was dropped.
+    - name: Plant the dropped dive release binary
       ansible.builtin.copy:
         content: |
           #!/bin/sh
-          echo "dropped GitHub-release fixture: {{ item }}"
-        dest: "/usr/local/bin/{{ item }}"
+          echo "dropped GitHub-release fixture: dive"
+        dest: /usr/local/bin/dive
         owner: root
         group: root
         mode: '0755'
-      loop:
-        - dive
-        - gron
-
-    # DERIVED: utilities.yml installed gron from apt on Ubuntu until it was dropped.
-    - name: Install the dropped gron package (Ubuntu)
-      ansible.builtin.apt:
-        name: gron
-        state: present
-        update_cache: true
-      when: ansible_facts['distribution'] == 'Ubuntu'
 
     # Observed on the reference workstation 2026-10-06: helm v4.1.1, unowned, left by the
     # get.helm.sh download an older revision did. It shadows packaged helm.
