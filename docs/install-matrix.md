@@ -163,6 +163,7 @@ reach for instead, are not in that manifest and have no published digest at all.
 | astral suite: uv, ruff, ty (uv bundles `uv audit` + `uv check`) | all | Fedora dnf / macOS brew; Ubuntu has no apt package (see Auto-update) |
 | Python 3.14 for uv (`astral_python_version`), pinned as uv's global default; system `python3` untouched | all | system python3 where it is 3.14+ (Fedora, Ubuntu 26.04), else `uv python install`; `uv python pin --global` per user |
 | CLI utils (jq, bat, fzf, ripgrep, fd, git-delta, moreutils, miller, rsync, tmux, htop, wget, shellcheck, age, parallel, ...) | all | distro repo / brew |
+| gron | Ubuntu, macOS | apt / brew (no Fedora package) |
 | sd | all | distro (apt/dnf) / brew |
 | yq (mikefarah; apt `yq` is kislyuk/yq, a different tool) | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
 | lazygit | all | Linux github-binary (Tier 3: re-fetch) / brew |
@@ -611,7 +612,7 @@ to -- not merely that the new thing installed.
 
 **A hand install leaves a second copy too.** The `removals` tag clears copies of the managed tools in `~/.local/bin` and `~/go/bin` where the managed copy exists and is a different file. A deliberate pin there (an older kubectl, golangci-lint v1) goes too, so pin per project instead. Tools whose name another program also uses (yq, tea, sd, act) are left alone. It also purges the upstream .deb or .rpm of macbash, git-scrub, golangci-lint or k9s installed beside the `/usr/local/bin` copy, unless a repository offers a package of that name.
 
-**Dropped tools leave on `--tags removals`.** dive (no release since 2025-05) and gron (none since 2022) are no longer installed. A `removals` or `soe` run clears the `/usr/local/bin` copies older revisions put there and Ubuntu's gron package. A Mac keeps its brew formulae, as with every other retired CLI utility.
+**Dropped tools leave on `--tags removals`.** dive (no release since 2025-05) is no longer installed. A `removals` or `soe` run clears the `/usr/local/bin` copy older revisions put there. A Mac keeps its brew formulae, as with every other retired CLI utility.
 
 developer-go links `go` and `gofmt` into `/usr/local/bin` on every run, and on a `removals` or `soe` run also removes the distro Go once a working, self-contained `/usr/local/go` is in. developer-rust retires cargo-tarpaulin on every run, and on a `removals` or `soe` run clears cargo-home duplicates and, where the host exports a relocated `CARGO_HOME`, the old `~/.cargo/bin` binaries the effective home also holds. A package something else depends on stays, and the run says which. Its direct dependencies that a purge would orphan are marked manually installed, so `hyperi-update`'s autoremove does not take them later.
 
