@@ -180,6 +180,7 @@ digest. Read that before changing a role or adding a tool.
 - Docker (Engine on Linux, CLI-only via Homebrew on macOS, no Docker Desktop, bring your own daemon)
 - Git, GitHub CLI, Git LFS
 - CLI utilities: jq, bat, fzf, ripgrep, fd, gron, sd, git-delta, lazygit, moreutils, miller, tmux, htop, age, ...
+- Playwright (`--tags playwright`): the CLI as a uv tool, plus Chromium, Firefox and WebKit in `~/.cache/ms-playwright`. On Ubuntu its own `install-deps` adds the system libraries. Fedora gets the CLI, libavif and libmanette only, since Playwright does not support it
 
 **Opt-in, via tags:**
 
