@@ -23,6 +23,16 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome | default(false)
 
+- name: Bind PrtSc from Mac RDP clients to the GNOME screenshot UI
+  ansible.builtin.include_tasks:
+    file: printscreen.yml
+    apply:
+      tags: ['soe-gui', 'printscreen']
+  tags: ['soe-gui', 'printscreen']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome | default(false)
+
 # The GNOME desktop (extensions, dock, theming) is opt-in: it must only be
 # configured when winlike or maclike is EXPLICITLY requested. A `never` tag
 # alone cannot enforce that here, because the role-level tags are inherited by
