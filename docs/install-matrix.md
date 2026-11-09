@@ -372,6 +372,7 @@ hyperi-ci.
 | Slack | all | vendor-repo / cask |
 | LibreOffice (org office suite) | Linux | distro repo |
 | Nemo, GNOME extensions (gext), fonts | Linux | distro / uv-tool / vendored |
+| PrtSc from a Mac RDP client (arrives as F13) opens the GNOME screenshot UI (tag `printscreen`) | Linux GNOME | system dconf |
 | colima + Apple `container` (macOS only; `container` needs Apple silicon and macOS 26) | macOS | brew |
 | Local ClickHouse + Redpanda (opt-in `soe_local_services_enabled`) | all | container image |
 | removals / update_command / admin-scripts (opt-in `never`, on for soe) | Linux | tombstones + scripts |
