@@ -1,0 +1,55 @@
+---
+# System-scope drop-in on user@.service, kept apart from agents_slice.yml
+# because it is the one change here made under /etc. Off unless
+# `agents_delegate_enabled: true`, and turning it off removes the file. The user
+# manager reads it at its next start, so a converge does not apply it live and
+# never restarts the manager (that would end the desktop session).
+
+- name: Delegate more controllers to the user manager
+  when:
+    - ansible_facts['system'] == 'Linux'
+    - agents_delegate_enabled | bool
+  block:
+    - name: Create the user@.service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/user@.service.d
+        state: directory
+        owner: root
+        mode: '0755'
+      become: true
+
+    - name: Install the controller delegation drop-in
+      ansible.builtin.template:
+        src: user-delegate.conf.j2
+        dest: /etc/systemd/system/user@.service.d/hyperi-delegate.conf
+        owner: root
+        mode: '0644'
+      become: true
+      register: developer_rust_user_delegate
+
+    - name: Say the delegation waits for the next login  # noqa: no-handler
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Agents slice: user@.service now delegates '
+                ~ agents_delegate_controllers
+                ~ '. The user manager reads it at its next start, so log out'
+                ~ ' and in (or reboot) for it to apply.'] }}
+      when: developer_rust_user_delegate is changed
+
+  rescue:
+    - name: Record that the delegation drop-in did not deploy
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Agents slice delegation: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
+- name: Remove the controller delegation drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/user@.service.d/hyperi-delegate.conf
+    state: absent
+  become: true
+  when:
+    - ansible_facts['system'] == 'Linux'
+    - not (agents_delegate_enabled | bool)

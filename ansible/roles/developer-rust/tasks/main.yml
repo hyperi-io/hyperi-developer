@@ -23,6 +23,23 @@
       tags: ['developer-rust', 'rust-governor']
   tags: ['developer-rust', 'rust-governor']
 
+# The cgroup for agent sessions, sized in the same RAM budget as the governor's
+# rustbuild.slice. Its own tag so it applies without a toolchain converge.
+- name: Bound agent sessions
+  ansible.builtin.include_tasks:
+    file: agents_slice.yml
+    apply:
+      tags: ['developer-rust', 'agents-slice']
+  tags: ['developer-rust', 'agents-slice']
+
+# System scope and off by default, so it stays out of the slice's task file.
+- name: Delegate controllers to the user manager
+  ansible.builtin.include_tasks:
+    file: user_delegate.yml
+    apply:
+      tags: ['developer-rust', 'agents-delegate']
+  tags: ['developer-rust', 'agents-delegate']
+
 # A `--tags removals` run reaches the cargo-home sweep here, since rust.yml is
 # not selected by that tag. An install run sweeps from rust.yml instead.
 - name: Remove cargo-home strays (opt-in)

@@ -1,0 +1,116 @@
+---
+# agents.slice: the cgroup that bounds every Claude Code session on the host.
+# Linux only. hyperi-ai attaches each session to it at SessionStart, so the role
+# only writes the unit. `agents_slice_enabled: false` removes what it deployed.
+
+- name: Deploy the agents slice
+  when:
+    - ansible_facts['system'] == 'Linux'
+    - agents_slice_enabled | bool
+  block:
+    - name: Create the user systemd directory
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/systemd/user"
+        state: directory
+        owner: "{{ actual_user }}"
+        mode: '0755'
+      become: true
+      become_user: "{{ actual_user }}"
+
+    - name: Install the agents slice
+      ansible.builtin.template:
+        src: agents.slice.j2
+        dest: "{{ user_home }}/.config/systemd/user/agents.slice"
+        owner: "{{ actual_user }}"
+        mode: '0644'
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_rust_agents_slice
+
+    - name: Create the agents slice drop-in directory
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/systemd/user/agents.slice.d"
+        state: directory
+        owner: "{{ actual_user }}"
+        mode: '0755'
+      become: true
+      become_user: "{{ actual_user }}"
+      when: agents_oomd_enabled | bool
+
+    - name: Install the oomd drop-in for the agents slice
+      ansible.builtin.template:
+        src: agents-oomd.conf.j2
+        dest: "{{ user_home }}/.config/systemd/user/agents.slice.d/oomd.conf"
+        owner: "{{ actual_user }}"
+        mode: '0644'
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_rust_agents_oomd
+      when: agents_oomd_enabled | bool
+
+    - name: Remove the oomd drop-in for the agents slice
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/systemd/user/agents.slice.d/oomd.conf"
+        state: absent
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_rust_agents_oomd_removed
+      when: not (agents_oomd_enabled | bool)
+
+    - name: Reload the user manager so the agents slice is live
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+      become: true
+      become_user: "{{ actual_user }}"
+      environment: "{{ developer_rust_user_env }}"
+      when:
+        - not ansible_check_mode
+        - developer_rust_agents_slice is changed
+          or developer_rust_agents_oomd is changed
+          or developer_rust_agents_oomd_removed is changed
+      failed_when: false
+
+  rescue:
+    - name: Record that the agents slice did not deploy
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Agents slice: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
+- name: Remove the agents slice (opt-out)
+  when:
+    - ansible_facts['system'] == 'Linux'
+    - not (agents_slice_enabled | bool)
+  block:
+    - name: Remove the agents slice and its drop-in
+      ansible.builtin.file:
+        path: "{{ user_home }}/.config/systemd/user/{{ item }}"
+        state: absent
+      loop:
+        - agents.slice
+        - agents.slice.d
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_rust_agents_slice_removed
+
+    - name: Reload the user manager after removing the agents slice
+      ansible.builtin.systemd:
+        daemon_reload: true
+        scope: user
+      become: true
+      become_user: "{{ actual_user }}"
+      environment: "{{ developer_rust_user_env }}"
+      when:
+        - not ansible_check_mode
+        - developer_rust_agents_slice_removed is changed
+      failed_when: false
+
+  rescue:
+    - name: Record that the agents slice removal did not complete
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['Agents slice removal: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}

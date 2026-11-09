@@ -8,18 +8,19 @@ Description=Governed Rust builds (hyperi-developer)
 # not the 30 below, that faces app.slice. Dash-free, this slice is a direct
 # child of the user manager and a true sibling of the desktop's slices.
 [Slice]
-# Percentages resolve against this host's own RAM and swap, so one unit fits
+# Memory limits are sized from this host's RAM at converge, so one role fits
 # every machine. Both capture prongs land here: cargo trees via the
 # hyperi-rust-govern scope, sccache-hosted compiles via Slice= on
 # hyperi-sccache.service. This is the ONLY memory bound on a build: nothing
 # queues builds or caps their job count, so a build over budget is throttled
 # here and, at MemoryMax, killed here -- the build, never the host.
 #
-# MemorySwapMax only means anything where swap exists. On a swapless host
-# MemoryHigh has nothing but page cache to reclaim, so it stalls a build
-# instead of slowing it -- the zram_swap role is what makes this budget behave.
-MemoryHigh={{ rust_governor_memory_high_pct }}%
-MemoryMax={{ rust_governor_memory_max_pct }}%
+# MemorySwapMax is a percentage systemd resolves against RAM, and only means
+# anything where swap exists. On a swapless host MemoryHigh has nothing but
+# page cache to reclaim, so it stalls a build instead of slowing it -- the
+# zram_swap role is what makes this budget behave.
+MemoryHigh={{ developer_rust_slice_high_mb }}M
+MemoryMax={{ developer_rust_slice_max_mb }}M
 MemorySwapMax={{ rust_governor_swap_max_pct }}%
 # Yields to the desktop under contention; no effect while the machine is idle.
 # This, not nice, is what makes a build defer on Linux: cgroup v2 splits CPU

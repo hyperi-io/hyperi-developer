@@ -18,8 +18,9 @@
       {{ developer_rust_retired_governor_vars | join(', ') }}: retired. Builds
       are no longer rationed -- there is no semaphore, no CPU reserve and no
       job count, so nothing reads these. Memory is bounded by rustbuild.slice
-      (rust_governor_memory_high_pct / _memory_max_pct) and CPU is deferred by
-      nice 19 plus rust_governor_cpu_weight. Delete the setting.
+      (rust_governor_memory_high_pct / _memory_max_pct, sized from the host's
+      RAM) and CPU is deferred by nice 19 plus rust_governor_cpu_weight.
+      Delete the setting.
   vars:
     developer_rust_retired_governor_vars: "{{ lookup('ansible.builtin.varnames',
       '^rust_governor_(serialize|slots|cpu_reserve_cores|build_allowance_gb|lock_wait_seconds|macos_qos)$',

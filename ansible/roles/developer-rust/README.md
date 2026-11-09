@@ -189,6 +189,8 @@ cargo on PATH, so a developer or an agent who knows none of this runs
 Which instrument yields on which host, and why it needs the `zram_swap` role,
 are in
 [docs/rust-build-governor.md](../../../docs/rust-build-governor.md).
+The role also writes `agents.slice`, the cgroup bounding Claude Code sessions,
+from the same RAM budget (`--tags agents-slice`, `agents_*` variables).
 The host-wide picture is
 [docs/concurrent-dev-cache.md](../../../docs/concurrent-dev-cache.md).
 
