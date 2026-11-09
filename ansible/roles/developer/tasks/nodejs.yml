@@ -211,7 +211,8 @@
     - name: Wire fnm into the shell (Linux)
       ansible.builtin.lineinfile:
         path: "{{ user_home }}/.bashrc"
-        regexp: '^eval "\$\(fnm env'
+        # Leading whitespace too, so a hand-written init inside an if-block counts.
+        regexp: '^\s*eval "\$\(fnm env'
         line: 'eval "$(fnm env --use-on-cd)"'
         state: present
         owner: "{{ actual_user }}"
@@ -264,7 +265,8 @@
     - name: Wire fnm into the shell (macOS)
       ansible.builtin.lineinfile:
         path: "{{ user_home }}/.zshrc"
-        regexp: '^eval "\$\(fnm env'
+        # Leading whitespace too, so a hand-written init inside an if-block counts.
+        regexp: '^\s*eval "\$\(fnm env'
         line: 'eval "$(fnm env --use-on-cd)"'
         state: present
         mode: '0644'
