@@ -1,0 +1,17 @@
+# Deployed by hyperi-developer (developer-rust role). Edits are overwritten.
+[Unit]
+Description=Agent sessions (hyperi-developer)
+
+# No dash in the name, so this is a direct child of the user manager and a true
+# sibling of app.slice, where the desktop runs. See rustbuild.slice.j2.
+[Slice]
+# Sized from this host's RAM at converge: RAM minus the desktop's reserve minus
+# the rust build slice's MemoryMax, so the three can never add up to more than
+# the host has. An overrun is an OOM inside this cgroup, which kills its biggest
+# process and leaves the desktop alone.
+MemoryHigh={{ developer_rust_agents_high_mb }}M
+MemoryMax={{ developer_rust_agents_max_mb }}M
+# Yields to the desktop under contention and takes every idle core otherwise.
+CPUWeight={{ agents_cpu_weight }}
+# One ceiling for every session together, a fork-bomb stop rather than a budget.
+TasksMax={{ developer_rust_agents_tasks_max }}

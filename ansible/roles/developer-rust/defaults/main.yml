@@ -155,8 +155,10 @@ rust_sccache_service_manage: true
 # shim, the slice and the config.
 #
 # MEMORY is BOUNDED, by rustbuild.slice: MemoryHigh throttles by reclaim and
-# MemoryMax kills the build rather than the host. Both are percentages of the
-# host's own RAM, so one number fits a laptop and a build box.
+# MemoryMax kills the build rather than the host. Both are sized at converge
+# from the host's own RAM (ansible_facts memtotal_mb), so one number fits a
+# laptop and a build box and the desktop keeps the rest. A host that gains RAM
+# needs a re-converge (--tags rust-governor) to pick it up.
 #
 # CPU is not bounded at all -- it is DEFERRED. Builds run at nice 19 under a
 # below-desktop CPUWeight, so they take every core while nobody else wants one
@@ -184,13 +186,67 @@ rust_governor_enabled: true
 # REFUSE the build outright rather than fall back to compiling.
 rust_governor_no_incremental: false
 
-# Percentages of the HOST's physical RAM (systemd resolves them all against
-# RAM, the swap cap included), so the same numbers ship everywhere. High
-# throttles and reclaims; Max kills the build -- the build dies, never the
-# host.
-rust_governor_memory_high_pct: 50
-rust_governor_memory_max_pct: 70
+# Share of the host's RAM the whole build slice may use. High throttles and
+# reclaims, Max kills the build -- the build dies, never the host. Max is a
+# third of RAM so the desktop and its sessions keep the other two thirds.
+# Raise both on a host dedicated to builds (a remote build target), e.g. 60 and
+# 50, in its host or group vars.
+rust_governor_memory_high_pct: 27
+rust_governor_memory_max_pct: 33
+
+# Smallest slice limits in MiB, so a small host can still build. Applied after
+# the percentage, and High never exceeds Max.
+rust_governor_memory_high_floor_mb: 3072
+rust_governor_memory_max_floor_mb: 4096
+
+# Percentage of the host's RAM, resolved by systemd, so it needs no sizing here.
 rust_governor_swap_max_pct: 25
+
+# ---------------------------------------------------------------------------
+# Agent sessions: agents.slice
+# ---------------------------------------------------------------------------
+# Every process a Claude Code session starts (shell commands, subagents, MCP
+# servers, browsers) inherits the session's cgroup, so one cap on agents.slice
+# bounds all of them. Builds get rustbuild.slice and the desktop keeps the
+# rest, which means no agent can cause a host-wide OOM: an overrun kills the
+# biggest process inside the slice and nothing outside it. The role writes only
+# the slice. hyperi-ai moves each session into an agents-<session>.scope under
+# it when a session starts, and does nothing where the slice is missing.
+agents_slice_enabled: true
+
+# The desktop's reserve: the larger of a share of RAM and a floor in MiB. The
+# floor covers a small host, where a share alone leaves a browser and an editor
+# too little.
+agents_reserve_pct: 30
+agents_reserve_floor_mb: 9216
+
+# MemoryMax is RAM minus the reserve minus rustbuild.slice's MemoryMax (the
+# governor off means nothing to subtract). The floor in MiB stops a small host
+# computing a slice too small to run one session. MemoryHigh is a share of Max.
+agents_memory_max_floor_mb: 2048
+agents_memory_high_pct: 90
+
+# Below the desktop's 100 so sessions yield to it under contention, and a
+# process ceiling of this many tasks per vCPU so a runaway fork loop stops short
+# of the host's pid limit.
+agents_cpu_weight: 25
+agents_tasks_per_cpu: 1024
+
+# systemd-oomd drop-in: kill inside agents.slice when memory pressure stays over
+# the limit, so a thrashing slice is cut down before it stalls the desktop. Off
+# by default because oomd must also watch the user manager, which is a per-host
+# decision. The duration property exists in systemd 259 and may be unknown to
+# an older systemd, which logs it and ignores it.
+agents_oomd_enabled: false
+agents_oomd_pressure_limit: "80%"
+agents_oomd_pressure_duration: "20s"
+
+# Delegate cpuset and io to the user manager, so agents.slice can reserve cores
+# and an I/O weight. System scope (/etc/systemd/system), so it needs sudo, and
+# the user manager reads it only at its next start (re-login or reboot). Off by
+# default for that reason.
+agents_delegate_enabled: false
+agents_delegate_controllers: "cpu cpuset io memory pids"
 
 # Contention-only: the desktop wins under load, and an idle machine still gives
 # builds every core. 100 is the systemd default, so 30 is a bit under a third of

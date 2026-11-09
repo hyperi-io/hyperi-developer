@@ -11,11 +11,15 @@ through `rustup run`, is ungoverned unless wrapped in `hyperi-rust-govern`.
 
 Two instruments, answering two different questions.
 
-**Memory is bounded by the slice.** `MemoryHigh` (50% of the host's RAM)
-throttles a build by reclaim, `MemoryMax` (70%) kills it, and `MemorySwapMax`
-(25%) caps what it may push to swap. Percentages, so one unit fits a laptop and
-a build box, and the build dies before the host does. sccache-hosted compiles
-sit inside the same budget because `hyperi-sccache.service` carries
+**Memory is bounded by the slice.** `MemoryHigh` (27% of the host's RAM)
+throttles a build by reclaim, `MemoryMax` (33%) kills it, and `MemorySwapMax`
+(25%) caps what it may push to swap. The role works the two limits out from the
+host's RAM at converge, with floors of 3 GiB and 4 GiB so a small host can still
+build, so one role fits a laptop and a build box and the build dies before the
+host does. A 30 GB host gets about 8 GB and 10 GB, a 92 GB host about 25 GB and
+30 GB. A host dedicated to builds raises `rust_governor_memory_high_pct` and
+`rust_governor_memory_max_pct` in its own host or group vars. sccache-hosted
+compiles sit inside the same budget because `hyperi-sccache.service` carries
 `Slice=rustbuild.slice`.
 
 **CPU is not bounded at all -- it is deferred.** Nothing withholds cores and
@@ -104,8 +108,8 @@ The role writes `~/.config/hyperi/rust-governor.conf`, which the shim sources
 first. The value in it is written as `${VAR:-default}` on purpose, so an
 export in the shell beats the deployed file for one invocation and the shim can
 be tested against a real config. Nothing per-machine is needed: the memory
-percentages resolve against the host's own RAM, and there is no core count to
-tune.
+limits are worked out from the host's own RAM (re-converge with
+`--tags rust-governor` after a RAM change), and there is no core count to tune.
 
 Five role variables went with the rationing: `rust_governor_slots`,
 `rust_governor_cpu_reserve_cores`, `rust_governor_build_allowance_gb`,
@@ -116,12 +120,14 @@ would otherwise silently get as many as it starts. Delete the setting.
 
 ## What it needs
 
-**Enough RAM for the biggest crate.** `MemoryMax` is 70% of the host's RAM, so
-a 16 GB laptop gives the whole slice 11.2 GB -- and one `rustc` on a large
+**Enough RAM for the biggest crate.** `MemoryMax` is 33% of the host's RAM, so
+a 16 GB laptop gives the whole slice 5.3 GB -- and one `rustc` on a large
 crate has been measured at 11.6 GB. That build is killed, and cargo reports the
 rustc process dying on signal 9 rather than an out-of-memory error. The levers
-are bypassing the governor for that one build, or building it on a box with
-more RAM.
+are bypassing the governor for that one build, building it on a box with more
+RAM, or raising `rust_governor_memory_max_pct` on a host that can spare it.
+A third leaves the desktop and its sessions the rest: a 70% slice on a 30 GB
+host let one 16 GB clippy run take the whole machine down.
 
 **Swap.** `MemoryHigh` throttles by reclaim, and on a swapless host the only
 reclaimable memory is page cache -- so a build past the line stalls rather than
@@ -142,3 +148,33 @@ incremental state to lose. `HYPERI_RUST_GOVERN_NO_INCREMENTAL=1` turns it on for
 one invocation where the role left it off, and `=0` opts out where the role
 turned it on. Neither is `CARGO_INCREMENTAL=1`, which makes sccache refuse the
 build outright.
+
+## The agents slice
+
+The same RAM budget also bounds Claude Code sessions. Everything a session
+starts (shell commands, subagents, MCP servers, browsers) inherits its cgroup,
+so one cap on `agents.slice` covers all of it. The role writes
+`~/.config/systemd/user/agents.slice` and hyperi-ai moves each session into an
+`agents-<session>.scope` under it at SessionStart, doing nothing on a host
+without the slice.
+
+The three budgets add up to the host's RAM, so no agent or build can cause a
+host-wide OOM:
+
+- Desktop reserve: the larger of 30% of RAM and 9 GiB, left unlimited.
+- `rustbuild.slice`: `MemoryMax` 33%, `MemoryHigh` 27%, as above.
+- `agents.slice`: `MemoryMax` is RAM minus the reserve minus the rust `MemoryMax`
+  (floor 2 GiB), `MemoryHigh` 90% of that, `CPUWeight` 25, `TasksMax` 1024 per
+  vCPU.
+
+A 30 GB host (12 vCPU) gets a 9.1 GiB reserve, rust 10 and 8 GiB, agents 11.3
+and 10.1 GiB. A 92 GB host (32 vCPU) gets 27.6 GiB, rust 30.4 and 24.8 GiB,
+agents 34.0 and 30.6 GiB. Every input is a role default (`agents_*`), so a host
+var overrides it, and `agents_slice_enabled: false` removes the slice.
+
+Two optional pieces stay off by default. `agents_oomd_enabled` adds a
+systemd-oomd drop-in on `agents.slice` that kills at 80% memory pressure held
+for 20 s, and works only where oomd watches the user manager.
+`agents_delegate_enabled` writes `/etc/systemd/system/user@.service.d/` so the
+user manager delegates `cpuset` and `io` as well. That one is system scope,
+needs sudo, and applies at the next login.
