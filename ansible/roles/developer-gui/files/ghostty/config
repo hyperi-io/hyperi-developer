@@ -24,11 +24,32 @@ font-feature = +dlig
 # ============================================================
 # Theme - Auto-switches with system light/dark mode
 # ============================================================
-# Solarized: vendored theme files in ./themes/ (self-contained - no reliance on
-# Ghostty builtin themes or OS packages). Auto-switches light/dark with the OS.
-# Upstream renamed/removed the "Builtin Solarized" names once already; vendoring
-# means a future rename cannot break us.
-theme = light:solarized-light,dark:solarized-dark
+# Solarized: Ghostty's own bundled iTerm2 Solarized pair. These ship INSIDE
+# Ghostty on every platform - macOS in Ghostty.app/Contents/Resources/ghostty/
+# themes/, Linux in /usr/share/ghostty/themes/ (owned by the ghostty package
+# itself, verified with dpkg -S). No OS package, no vendored files, nothing to
+# install. The "iTerm2" in the name is just upstream's naming from the
+# iterm2-color-schemes collection - iTerm2 is NOT required.
+#
+# Auto-switches light/dark with the OS desktop appearance.
+#
+# We do NOT vendor a canonical Schoonover palette any more, for two reasons:
+#
+#   1. Vendored theme files only resolve from the XDG dir. macOS reads its
+#      CONFIG from ~/Library/Application Support/com.mitchellh.ghostty/ but
+#      resolves a bare theme NAME only from ~/.config/ghostty/themes/ and the
+#      app bundle. Themes deployed next to the macOS config were never found,
+#      and Ghostty silently fell back to its default dark theme.
+#   2. The canonical palette is actively worse. It sets ANSI 8 to #002b36 -
+#      the exact dark background, so bright-black text was invisible - and
+#      ANSI 7 to #eee8d5 against the #fdf6e3 light background. The iTerm2
+#      variant lifts both off the background (#335e69 / #bbb5a2) and is
+#      otherwise identical to canonical Solarized.
+#
+# TRADEOFF: upstream renamed "Builtin Solarized" out from under us once
+# before. If the theme stops applying after a Ghostty upgrade, check
+# `ghostty +list-themes` for the current name.
+theme = light:iTerm2 Solarized Light,dark:iTerm2 Solarized Dark
 
 # ============================================================
 # Terminal Compatibility
