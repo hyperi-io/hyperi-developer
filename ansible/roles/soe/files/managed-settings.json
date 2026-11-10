@@ -6,6 +6,7 @@
     "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
     "DISABLE_FEEDBACK_COMMAND": "1",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_GLOB_NO_IGNORE": "false",
     "DO_NOT_TRACK": "1"
   },
   "includeCoAuthoredBy": false,

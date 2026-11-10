@@ -4,6 +4,7 @@
 # Applies to every user on the box and cannot be overridden by them:
 # - Disables telemetry, error reporting and the feedback prompts
 # - Disables Co-Authored-By and "Generated with Claude Code" attribution
+# - Makes the Glob tool honour .gitignore, so it skips build output and worktrees
 #
 # Split out of claude.yml so that the two carry DIFFERENT tags. The binary
 # install answers to `--tags claude`, which the developer-ai role's plugin gate
