@@ -20,12 +20,28 @@
         dest: /etc/apt/keyrings/slack.asc
         mode: '0644'
 
-    # A host provisioned by an older revision carries slack.list beside the
-    # .sources this writes, and apt then reads the repo twice.
-    - name: Remove the legacy Slack .list
+    # Slack's daily cron job writes its own slack.list and puts its signing keys
+    # in global apt trust unless this file turns both off.
+    - name: Stop Slack's cron job managing its own apt source
+      ansible.builtin.copy:
+        content: |
+          repo_add_once="false"
+          repo_reenable_on_distupgrade="false"
+        dest: /etc/default/slack
+        owner: root
+        group: root
+        mode: '0644'
+
+    # Left by the cron job before the file above took effect: slack.list makes
+    # apt read the repo twice, and a trusted.gpg.d key is trusted for every repo.
+    - name: Remove the apt source and global keys Slack's cron job wrote
       ansible.builtin.file:
-        path: /etc/apt/sources.list.d/slack.list
+        path: "{{ item }}"
         state: absent
+      loop:
+        - /etc/apt/sources.list.d/slack.list
+        - /etc/apt/trusted.gpg.d/packagecloud.gpg
+        - /etc/apt/trusted.gpg.d/slack-desktop.gpg
 
     - name: Add Slack apt repository
       ansible.builtin.deb822_repository:

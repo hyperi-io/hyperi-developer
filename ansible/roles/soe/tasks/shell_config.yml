@@ -31,7 +31,7 @@
           esac
       }
 
-      hyperi_path_prepend "$HOME/.cargo/bin"      # rustup and cargo-installed tools
+      hyperi_path_prepend "${CARGO_HOME:-$HOME/.cargo}/bin"  # rustup and cargo-installed tools
       hyperi_path_prepend "$HOME/.local/bin"      # uv tools, pipx, gext
       hyperi_path_prepend "$HOME/.npm-global/bin" # npm global tools (semantic-release)
 

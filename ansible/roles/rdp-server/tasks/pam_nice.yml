@@ -5,9 +5,7 @@
 # lower its own niceness without RLIMIT_NICE headroom. systemd does not warn --
 # the unit just runs at Nice=0 and the drop-in looks like it worked.
 #
-# Only the software-encode path needs the boost, so service.yml gates the
-# drop-in on rdp_hw_encode_expected. The limit here is harmless when unused:
-# it raises a ceiling, it does not renice anything.
+# service.yml deploys that drop-in on every host, and this limit only raises a ceiling.
 
 - name: Deploy PAM nice limits for GRD priority
   ansible.builtin.copy:

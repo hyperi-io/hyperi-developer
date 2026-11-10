@@ -1,7 +1,7 @@
 # Declared repo classification. The prefix in a repo name is only a hint; this
 # file is the authority.
 #
-# 4 = OSS: public, Apache-2.0, publishes.
+# general-oss (category 4): public, Apache-2.0, publishes.
 #
 # Matches what this repo already is: public, Apache-2.0, and explicitly built
 # for three audiences -- HyperI staff, outside contributors to HyperI products,
@@ -13,4 +13,4 @@
 #     no private-registry URLs, no internal project-name lists. Test targets
 #     come from the environment (see ansible/inventories/dev/inventory.yml).
 #   - Licence stays Apache-2.0. Any change to it is a human decision.
-classification: 4
+general-oss

@@ -54,7 +54,7 @@ docker_fedora_supported_releases:
 # NodeSource publishes a repo PER MAJOR (node_24.x, node_22.x) and both provide
 # the package `nodejs`, so a box can hold exactly one system-wide major. That is
 # the n slot; fnm covers n-1 per user. Majors come from the SSoT -- see
-# hyperi_core_versions in inventories/localhost/group_vars/all.yml.
+# hyperi_core_versions in playbooks/group_vars/all.yml.
 #
 # The deb and rpm repos are signed by DIFFERENT keys, so both URLs are carried.
 node_major: "{{ hyperi_core_versions.node_major }}"
@@ -65,7 +65,7 @@ nodesource_deb_gpg_url: "{{ nodesource_deb_base_url }}/gpgkey/nodesource-repo.gp
 nodesource_rpm_gpg_url: "{{ nodesource_rpm_base_url }}/gpgkey/ns-operations-public.key"
 # fnm ships one asset per arch, and its arm64 asset is not named with the
 # Debian token, so it gets its own mapping rather than reusing hyperi_arch_deb.
-fnm_version: "{{ hyperi_core_versions.fnm }}"
+# The release tag is resolved at install time, so no version sits here.
 fnm_asset: "{{ 'fnm-arm64.zip' if hyperi_arch_deb | default('amd64') == 'arm64' else 'fnm-linux.zip' }}"
 
 # GitHub CLI -- GitHub's own signed repo on both distros. No version is pinned:
@@ -85,6 +85,10 @@ gh_rpm_gpg_url: "https://cli.github.com/packages/githubcli-archive-keyring.asc"
 git_ppa_supported_suites:
   - noble
   - resolute
+# Launchpad's signing key for the git-core PPA, as its archive API reports it
+# (signing_key_fingerprint on ~git-core/+archive/ubuntu/ppa).
+git_ppa_signing_fingerprint: F911AB184317630C59970973E363C90F8F1B6217  # gitleaks:allow -- public key fingerprint
+git_ppa_signing_key_url: "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x{{ git_ppa_signing_fingerprint }}"
 
 # ============================================================================
 # BRANDING / CUSTOMIZATION

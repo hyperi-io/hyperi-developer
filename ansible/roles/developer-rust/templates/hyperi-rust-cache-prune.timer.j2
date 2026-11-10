@@ -1,8 +1,8 @@
 [Unit]
-Description=Bound the pooled Rust build cache weekly
+Description=Bound the pooled Rust build cache
 
 [Timer]
-OnCalendar={{ rust_cache_prune_schedule_weekday }} *-*-* {{ '%02d' | format(rust_cache_prune_schedule_hour | int) }}:00:00
+OnCalendar={{ (rust_cache_prune_schedule_weekday ~ ' ') if rust_cache_prune_schedule_weekday else '' }}*-*-* {{ '%02d' | format(rust_cache_prune_schedule_hour | int) }}:00:00
 # Persistent so a box that was off over the scheduled window still prunes.
 Persistent=true
 RandomizedDelaySec=30m

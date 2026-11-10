@@ -62,6 +62,14 @@
       tags: ['developer', 'utilities']
   tags: ['developer', 'utilities']
 
+- name: Install Playwright
+  ansible.builtin.include_tasks:
+    file: playwright.yml
+    apply:
+      tags: ['developer', 'playwright']
+  tags: ['developer', 'playwright']
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
 - name: Install Git and version control tools
   ansible.builtin.include_tasks:
     file: git.yml

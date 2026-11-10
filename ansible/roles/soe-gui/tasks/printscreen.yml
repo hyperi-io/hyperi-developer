@@ -1,0 +1,35 @@
+---
+# PrtSc from a Mac RDP client (Thincast) arrives as F13, because macOS has no PrtSc key code. Bind its GNOME keysym, XF86Tools, to the screenshot UI.
+# System-wide dconf default, so a user's own binding still wins.
+
+- name: Ensure system dconf keyfile directory exists
+  ansible.builtin.file:
+    path: /etc/dconf/db/local.d
+    state: directory
+    mode: '0755'
+
+- name: Ensure dconf user profile reads the local system-db
+  ansible.builtin.lineinfile:
+    path: /etc/dconf/profile/user
+    line: "{{ item }}"
+    create: true
+    mode: '0644'
+  loop:
+    - "user-db:user"
+    - "system-db:local"
+  register: printscreen_dconf_profile
+
+- name: Deploy PrtSc-over-RDP screenshot binding
+  ansible.builtin.copy:
+    src: dconf-printscreen-rdp
+    dest: /etc/dconf/db/local.d/10-printscreen-rdp
+    owner: root
+    group: root
+    mode: '0644'
+  register: printscreen_dconf_deployed
+
+- name: Update dconf database
+  ansible.builtin.command:
+    cmd: dconf update
+  changed_when: true
+  when: (printscreen_dconf_deployed.changed | default(false)) or (printscreen_dconf_profile.changed | default(false))

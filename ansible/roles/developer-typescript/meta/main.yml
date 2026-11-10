@@ -1,6 +1,6 @@
 ---
 # Developer-TypeScript depends on developer-node — Node.js + npm/pnpm are
-# prerequisites for installing typescript/tsx/ts-node.
+# prerequisites for installing typescript/tsx.
 
 dependencies:
   - role: developer-node

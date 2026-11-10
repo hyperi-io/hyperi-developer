@@ -63,7 +63,7 @@
     file: service.yml
   tags: ['service']
 
-- name: Configure VA-API hardware encoding
+- name: Install hardware encode drivers and report GRD's encode path
   ansible.builtin.include_tasks:
     file: vaapi.yml
   tags: ['vaapi']

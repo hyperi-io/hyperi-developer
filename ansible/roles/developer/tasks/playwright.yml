@@ -1,0 +1,114 @@
+---
+# Playwright CLI, its system libraries and its browsers.
+#
+# Playwright owns its dependency list per release, so nothing here names a
+# package. The Python distribution bundles its own driver, which means no node
+# is needed to run it.
+
+# Playwright does not support Fedora: no install-deps, no browsers. WebKit still
+# wants these two libraries wherever Playwright is used.
+- name: Install browser runtime libraries (Fedora)
+  ansible.builtin.dnf:
+    name:
+      - libavif
+      - libmanette
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
+- name: Install Playwright and its browsers
+  block:
+    # --upgrade, no pin: uv installs it if missing and pulls the latest release
+    # if present. uv prints "Installed 1 executable" on every run, so only the
+    # package lines count as a change.
+    - name: Install or upgrade the Playwright CLI
+      ansible.builtin.command:
+        cmd: uv tool install --upgrade playwright
+      environment:
+        PATH: "{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_playwright_cli
+      changed_when: >-
+        (developer_playwright_cli.stdout ~ developer_playwright_cli.stderr)
+        is search('(Installed|Updated|Uninstalled) [0-9]+ packages?')
+
+    # --dry-run simulates the apt-get install and exits non-zero when any
+    # library is missing, which is what makes the real run idempotent.
+    - name: Check Playwright's system libraries (apt)
+      ansible.builtin.command:
+        argv: ["{{ user_home }}/.local/bin/playwright", install-deps, --dry-run, chromium, firefox, webkit]
+      become: true
+      register: developer_playwright_deps_probe
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - ansible_facts['os_family'] == 'Debian'
+        - not ansible_check_mode
+
+    - name: Install Playwright's system libraries (apt)
+      ansible.builtin.command:
+        argv: ["{{ user_home }}/.local/bin/playwright", install-deps, chromium, firefox, webkit]
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      become: true
+      changed_when: true
+      when:
+        - ansible_facts['os_family'] == 'Debian'
+        - not ansible_check_mode
+        - developer_playwright_deps_probe.rc != 0
+
+    - name: Mark Playwright's system libraries as handled
+      ansible.builtin.set_fact:
+        developer_playwright_deps_ok: true
+      when:
+        - ansible_facts['os_family'] == 'Debian'
+        - not ansible_check_mode
+
+    # Browsers land in the user's ~/.cache/ms-playwright. A converged host
+    # prints nothing, so a download line is the only sign of change.
+    - name: Install the Playwright browsers
+      ansible.builtin.command:
+        cmd: playwright install chromium firefox webkit
+      environment:
+        PATH: "{{ user_home }}/.local/bin:{{ ansible_facts['env'].PATH }}"
+      become: true
+      become_user: "{{ actual_user }}"
+      register: developer_playwright_browsers
+      changed_when: >-
+        (developer_playwright_browsers.stdout ~ developer_playwright_browsers.stderr)
+        is search('Downloading')
+      when:
+        - ansible_facts['distribution'] != 'Fedora'
+        - not ansible_check_mode
+
+  rescue:
+    - name: Record that Playwright did not install
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator playbooks/main.yml reports from. See docs/resilient-deploy.md.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['playwright: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
+# WebKit loads both. If a Playwright release drops either from its list, the
+# converge fails here rather than leaving a browser that breaks at runtime.
+- name: Read the installed libavif and libmanette packages
+  ansible.builtin.command:
+    argv: [dpkg-query, -W, -f, '${db:Status-Abbrev} ${Package}\n', 'libavif*', 'libmanette-*']
+  register: developer_playwright_libs
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: developer_playwright_deps_ok | default(false)
+
+- name: Assert libavif and libmanette are installed
+  ansible.builtin.assert:
+    that:
+      - developer_playwright_libs.stdout_lines | select('match', '^ii +libavif[0-9]') | list | length > 0
+      - developer_playwright_libs.stdout_lines | select('match', '^ii +libmanette-') | list | length > 0
+    fail_msg: >-
+      Playwright's install-deps left libavif or libmanette out. Both must be
+      installed: libavif[0-9]* and libmanette-*.
+  when: developer_playwright_deps_ok | default(false)

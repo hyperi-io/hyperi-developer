@@ -1,0 +1,101 @@
+---
+# Every tool resolves its version at install time, so a run in four months
+# installs what is current in four months.
+#
+# Manual binaries take the newest GitHub release past the release-age cooldown
+# below. Cargo tools install unversioned. Go
+# and rustup fetch the current version with the checksum published beside it.
+#
+# What remains below is a selection rather than a version -- a Node LTS line,
+# which NodeSource's signed repo then keeps patched.
+
+# GitHub's anonymous release API allows 60 requests an hour PER IP, and a run
+# selecting infrastructure plus a couple of languages spends a good fraction of
+# that by itself. Every machine sharing an egress address draws on the same 60,
+# so a fleet or image build competes with itself and the run that fails is
+# rarely the run that spent the quota.
+#
+# Set GITHUB_TOKEN or GH_TOKEN in the environment of whoever runs the playbook
+# and the ceiling becomes 5000/hour. Any GitHub account's token works; nothing
+# is stored in the repo. Absent one this is an empty dict and every lookup
+# stays anonymous, so a single-laptop install needs no token and is unchanged.
+hyperi_github_token: >-
+  {{ lookup('env', 'GITHUB_TOKEN') | default(lookup('env', 'GH_TOKEN'), true) }}
+
+hyperi_github_headers: >-
+  {{ {'Authorization': 'Bearer ' ~ hyperi_github_token}
+     if hyperi_github_token else {} }}
+
+# The same token as a process environment, for tasks shelling out to a script
+# that does its own release lookups. An exported token does not survive `become`
+# to a different uid, so a task `environment:` is the only way it reaches them.
+hyperi_github_env: >-
+  {{ {'GITHUB_TOKEN': hyperi_github_token} if hyperi_github_token else {} }}
+
+# Every tool taken from a GitHub release installs the newest release at least
+# this many days old, so a compromised or broken release has time to be pulled
+# first (roles/github_release). Nothing newer is ever installed in its place:
+# with no release old enough, the installed copy stays and the run warns.
+# hyperi-update reads this and the exempt orgs below from
+# /etc/default/hyperi-update, which update_command.yml writes.
+hyperi_release_min_age_days: 7
+
+# Orgs whose releases ship through our own CI gates, so they skip the wait.
+hyperi_release_cooldown_exempt:
+  - hyperi-io
+
+# The release-age rule as a process environment, for the scripts that look up
+# their own releases.
+hyperi_release_env:
+  HYPERI_RELEASE_MIN_AGE_DAYS: "{{ hyperi_release_min_age_days | string }}"
+
+# ============================================================================
+# Core component versions -- the ONE place to bump them
+# ============================================================================
+# Core components (language runtimes, docker, git, gh) come from the UPSTREAM
+# repo at latest, NEVER the distro's frozen package. Ubuntu 24.04 ships node
+# 18.19.1 (EOL 2025-04-30, below semantic-release's floor) and go 1.22
+# (unsupported -- Go keeps the last two majors). Fedora is fresher today, but
+# it freezes on its own schedule and will rot the same way, so the rule is
+# uniform across both distros rather than applied where the pain shows first.
+#
+# This does NOT relax the install policy -- it applies it properly. An upstream
+# signed repo is rung 1 of the trust ladder, the same rung a distro repo sits
+# on. The sin was never NodeSource; it was the `curl | bash` that bootstrapped
+# it. Adding the same repo declaratively keeps the verification AND the version.
+#
+# Two shapes, decided by what upstream actually publishes:
+#
+#   signed repo      node, gh, docker, git. The repo keeps the box current on
+#                    its own via `apt/dnf upgrade`, so only the MAJOR is pinned
+#                    here -- there is no patch version to chase, and routine OS
+#                    updates carry the tool forward for free.
+#   resolved artefact  go, rustup, fnm. Upstream publishes no repo, so the role
+#                    asks upstream for the current release when it runs and
+#                    verifies the download against the checksum served with it.
+#
+# Only the Node majors remain, because a major is a choice rather than a version
+# to chase. Bumping one in a year is editing a number here.
+hyperi_core_versions:
+  # Node n and n-1. n is installed system-wide from the NodeSource repo, so
+  # root, systemd units, semantic-release and CI all resolve the same node;
+  # n-1 is per-user via fnm, for projects not yet moved to n. 24 is Active LTS
+  # (Krypton), 22 is in maintenance. When 26 goes LTS in Oct 2026 these become
+  # 26 and 24.
+  node_major: 24
+  node_major_previous: 22
+
+# ============================================================================
+# apt sources the roles own outright
+# ============================================================================
+# Any other source naming one of these repositories is removed before ours is
+# written (system_cleanup/tasks/apt_source_exclusive.yml): apt stops reading
+# every source once two entries for one repository carry different keys.
+# match is a regex over the repository's host and path; file is our .sources.
+hyperi_exclusive_apt_sources:
+  git:
+    match: 'launchpad(content)?\.net/git-core/ppa'
+    file: /etc/apt/sources.list.d/git-core-ppa.sources
+  ghostty:
+    match: 'launchpad(content)?\.net/mkasberg/ghostty-ubuntu'
+    file: /etc/apt/sources.list.d/ghostty-ppa.sources

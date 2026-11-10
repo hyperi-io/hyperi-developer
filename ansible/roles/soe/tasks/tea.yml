@@ -18,11 +18,25 @@
     - name: Set the tea version fact
       ansible.builtin.set_fact:
         soe_tea_version: "{{ soe_tea_latest.json.tag_name | regex_replace('^v', '') }}"
+        soe_tea_asset: "tea-{{ soe_tea_latest.json.tag_name | regex_replace('^v', '') }}-linux-{{ hyperi_arch_deb }}"
 
+    - name: Fetch the tea checksum
+      ansible.builtin.uri:
+        url: "https://dl.gitea.com/tea/{{ soe_tea_version }}/{{ soe_tea_asset }}.sha256"
+        return_content: true
+      register: soe_tea_sum
+      check_mode: false
+
+    # Without a checksum get_url keeps whatever already sits at dest, so a new
+    # release never landed. The digest comes from the same host, so it detects a
+    # change and a truncated download; it is not a provenance check.
     - name: Download tea
       ansible.builtin.get_url:
-        url: "https://dl.gitea.com/tea/{{ soe_tea_version }}/tea-{{ soe_tea_version }}-linux-{{ hyperi_arch_deb }}"
+        url: "https://dl.gitea.com/tea/{{ soe_tea_version }}/{{ soe_tea_asset }}"
         dest: /usr/local/bin/tea
+        checksum: "sha256:{{ soe_tea_sum.content.split() | first }}"
+        owner: root
+        group: root
         mode: '0755'
       when: not ansible_check_mode
 

@@ -1,0 +1,178 @@
+---
+# zram swap, so cgroup memory throttling has somewhere to reclaim to.
+# See defaults/main.yml for why this is not "add some swap".
+
+- name: Set up zram swap
+  when:
+    - zram_swap_enabled | bool
+    - ansible_facts['system'] == 'Linux'
+  block:
+    - name: Install the zram generator (Ubuntu)
+      ansible.builtin.apt:
+        name: systemd-zram-generator
+        state: present
+      become: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # zram-generator, NOT zram-generator-defaults: that subpackage exists only
+    # to ship a default config, and this role ships its own.
+    - name: Install the zram generator (Fedora)
+      ansible.builtin.dnf:
+        name: zram-generator
+        state: present
+      become: true
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Deploy the zram generator configuration
+      ansible.builtin.template:
+        src: zram-generator.conf.j2
+        dest: /etc/systemd/zram-generator.conf
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      register: zram_swap_config
+
+    - name: Reload the unit generators so the config is picked up
+      ansible.builtin.systemd:
+        daemon_reload: true
+      become: true
+      when:
+        - zram_swap_config is changed
+        - not ansible_check_mode
+
+    # `started`, never `restarted`. Restarting means swapoff, which pages every
+    # byte held in the device back into RAM -- on a host under memory pressure
+    # that is how applying a config change OOMs a build box. A size change
+    # therefore takes effect at the next reboot, which the README states.
+    - name: Start the zram device
+      ansible.builtin.systemd:
+        name: systemd-zram-setup@zram0.service
+        state: started
+      become: true
+      when: not ansible_check_mode
+
+    # One swapon answers both questions below: whether zram came up, and
+    # whether the host has swap this role does not own.
+    - name: Read the active swap devices
+      ansible.builtin.command:
+        cmd: swapon --show=NAME,SIZE,USED --noheadings
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      register: zram_swap_verify
+
+    # Skipped entirely where the host has swap this role did not create: 180 is
+    # right for zram, and pushes anonymous pages onto a disk anywhere else.
+    - name: Set swappiness for zram-backed swap
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/zzz-50-hyperi-zram.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Deployed by hyperi-developer (zram_swap role). Edits are overwritten.
+          # zram reclaim costs a compress, not a disk seek, so anonymous memory
+          # is cheaper to reclaim than page cache and the stock 60 has the
+          # balance backwards. Above 100 needs kernel 5.8+.
+          vm.swappiness = {{ zram_swap_swappiness }}
+      become: true
+      register: zram_swap_sysctl
+      when:
+        - zram_swap_swappiness | string | length > 0
+        - zram_swap_verify.stdout_lines | default([])
+          | reject('search', '^/dev/zram') | select('search', '\S')
+          | list | length == 0
+
+    # This file only. `sysctl --system` re-applies every drop-in on the host,
+    # which would revert an admin's live tuning of something unrelated.
+    - name: Load the swappiness setting
+      ansible.builtin.command:
+        cmd: sysctl -p /etc/sysctl.d/zzz-50-hyperi-zram.conf
+      become: true
+      changed_when: true
+      when:
+        - zram_swap_sysctl is changed
+        - not ansible_check_mode
+
+    # The role's whole purpose is that a throttled cgroup has somewhere to
+    # reclaim to. If no device came up that is not true, and the governor's
+    # memory limits behave as if this role had never run.
+    - name: Report the zram swap state
+      ansible.builtin.debug:
+        msg: "{{ zram_swap_verify.stdout_lines | default(['no swap active']) }}"
+
+    - name: Record that zram did not come up
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['zram_swap: no zram device is active after the run. Memory'
+                ~ ' throttling on this host still has nothing to reclaim but'
+                ~ ' page cache, so MemoryHigh stalls rather than slows.'] }}
+      when:
+        - not ansible_check_mode
+        - zram_swap_verify.stdout_lines | default([])
+          | select('search', '^/dev/zram') | list | length == 0
+
+  rescue:
+    - name: Record that zram swap did not deploy
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+      # accumulator reported by playbooks/main.yml post_tasks.
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['zram swap: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))] }}
+
+# ============================================================================
+# Opt-out tombstone -- a host that turns zram off gets it removed, not merely
+# stopped, so the next boot does not bring it back.
+# ============================================================================
+
+- name: Remove zram swap (opt-out)
+  when:
+    - not (zram_swap_enabled | bool)
+    - ansible_facts['system'] == 'Linux'
+  become: true
+  block:
+    - name: Stop the zram device
+      ansible.builtin.systemd:
+        name: systemd-zram-setup@zram0.service
+        state: stopped
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Remove the zram configuration
+      ansible.builtin.file:
+        path: /etc/systemd/zram-generator.conf
+        state: absent
+      register: zram_swap_conf_removed
+
+    # Two tasks rather than one loop: the deploy path leaves swappiness alone on
+    # a host with disk swap, so the opt-out may only reset it where the drop-in
+    # actually existed -- otherwise it would clobber an admin's own setting.
+    - name: Remove the swappiness drop-in
+      ansible.builtin.file:
+        path: /etc/sysctl.d/zzz-50-hyperi-zram.conf
+        state: absent
+      register: zram_swap_sysctl_removed
+
+    # Removing the drop-in does not lower the running value -- sysctl re-applies
+    # files that exist, it never resets one nothing sets. `-w` rather than
+    # another drop-in, so opting out leaves no file behind.
+    - name: Restore the kernel default swappiness
+      ansible.builtin.command:
+        cmd: sysctl -w vm.swappiness=60
+      changed_when: true
+      when:
+        - zram_swap_sysctl_removed is changed
+        - not ansible_check_mode
+
+    - name: Reload the unit generators after removing the configuration
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when:
+        - zram_swap_conf_removed is changed
+        - not ansible_check_mode

@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch free space for the pooled Rust build cache
+
+[Timer]
+# Monotonic rather than calendar: OnBootSec already in the past fires at once
+# when the timer starts, then OnUnitActiveSec repeats from each run. Persistent=
+# applies to OnCalendar= only, so there is no missed-run catch-up to configure.
+OnBootSec={{ rust_cache_prune_guard_interval_seconds | int }}s
+OnUnitActiveSec={{ rust_cache_prune_guard_interval_seconds | int }}s
+
+[Install]
+WantedBy=timers.target

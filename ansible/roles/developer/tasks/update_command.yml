@@ -14,7 +14,24 @@
   ansible.builtin.copy:
     src: update/hyperi-update-linux.sh
     dest: /usr/local/bin/hyperi-update
+    owner: root
+    group: root
     mode: '0755'
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# The release-age settings the roles use, so a manual run and the timer refresh
+# release binaries by the same rule as a converge. The environment overrides it.
+- name: Write the hyperi-update settings (Linux)
+  ansible.builtin.copy:
+    content: |
+      # Written by hyperi-developer from hyperi_release_min_age_days and
+      # hyperi_release_cooldown_exempt. HYPERI_* in the environment override it.
+      HYPERI_RELEASE_MIN_AGE_DAYS={{ hyperi_release_min_age_days | quote }}
+      HYPERI_RELEASE_COOLDOWN_EXEMPT={{ hyperi_release_cooldown_exempt | join(' ') | quote }}
+    dest: /etc/default/hyperi-update
+    owner: root
+    group: root
+    mode: '0644'
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
 # The GUI launcher is only useful with a desktop. A headless box (Packer build,

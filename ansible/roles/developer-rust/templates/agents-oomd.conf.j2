@@ -1,0 +1,7 @@
+# Deployed by hyperi-developer (developer-rust role). Edits are overwritten.
+# Lets systemd-oomd kill inside agents.slice when its memory pressure stays over
+# the limit for the duration, before a thrashing slice stalls the desktop.
+[Slice]
+ManagedOOMMemoryPressure=kill
+ManagedOOMMemoryPressureLimit={{ agents_oomd_pressure_limit }}
+ManagedOOMMemoryPressureDurationSec={{ agents_oomd_pressure_duration }}

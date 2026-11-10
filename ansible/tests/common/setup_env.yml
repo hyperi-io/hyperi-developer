@@ -30,12 +30,20 @@
       Press Enter when done editing...
   when: not env_file_stat.stat.exists
 
+# bash, not /bin/sh: on Debian and Ubuntu /bin/sh is dash, which has no
+# `source`. The failure was silent -- the pipeline's exit status is jq's -- so
+# `env` returned whatever PROXMOX_* the ambient shell already carried, and a
+# token from the operator's environment quietly stood in for the file's.
+# `set -e` and pipefail make a missing or unreadable .env fail the task.
 - name: Load environment variables from .env (shell format)
   ansible.builtin.shell: |
+    set -euo pipefail
     set -a
     source "{{ tests_dir }}/.env"
     set +a
     env | grep -E '^(PROXMOX|ANSIBLE)_' | jq -R 'split("=") | {(.[0]): .[1:] | join("=")}' | jq -s 'add'
+  args:
+    executable: /bin/bash
   register: env_raw
   changed_when: false
 

@@ -50,12 +50,24 @@
       tags: ['soe', 'bash-history']
   tags: ['soe', 'bash-history']
 
+# The BINARY carries the `claude` tag, so anyone can install Claude Code on its
+# own -- developer-ai's Codex plugin hard-requires it and its warning names this
+# tag. The POLICY below deliberately does not carry it: org settings belong to
+# soe, and a tag that says "install Claude Code" must not also write an
+# unoverridable settings file into /etc on a machine that is not ours.
 - name: Install Claude Code CLI
   ansible.builtin.include_tasks:
     file: claude.yml
     apply:
       tags: ['soe', 'claude']
   tags: ['soe', 'claude']
+
+- name: Apply the Claude Code managed settings
+  ansible.builtin.include_tasks:
+    file: claude_policy.yml
+    apply:
+      tags: ['soe', 'claude-policy']
+  tags: ['soe', 'claude-policy']
 
 - name: Install tea (Forgejo/Gitea CLI)
   ansible.builtin.include_tasks:
@@ -93,16 +105,6 @@
       tags: ['soe', 'local-services']
   tags: ['soe', 'local-services']
   when: soe_local_services_enabled | bool
-
-# Container management UI. Opt-in (soe_arcane_enabled), and after colima so a
-# Mac has a daemon to deploy against.
-- name: Deploy Arcane (container management UI)
-  ansible.builtin.include_tasks:
-    file: arcane.yml
-    apply:
-      tags: ['soe', 'arcane']
-  tags: ['soe', 'arcane']
-  when: soe_arcane_enabled | bool
 
 - name: Disable telemetry and advertising
   ansible.builtin.include_tasks:

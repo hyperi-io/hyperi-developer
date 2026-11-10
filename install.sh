@@ -16,7 +16,6 @@
 #   --tags-include TAGS  Include specific tags to run (comma-separated)
 #   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
 #   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
-#   --pinned             Pin manual binaries to CI-exact versions (default: latest)
 #   --branch BRANCH      Git branch to use (default: main)
 #   Personas: --soe / --contributor / --full-stack / --infra / --languages [list]
 #   --help               Show this help message
@@ -56,9 +55,6 @@ OPTIONS:
   --tags-exclude TAGS  Exclude specific tags from running (comma-separated)
   --branch BRANCH      Git branch to use (default: main)
   --region REGION      Apply regional settings (e.g. au, en_AU.UTF-8)
-  --pinned             Reproducible mode: pin the manual-binary tools to the
-                       exact versions in group_vars (mirrors hyperi-ci) instead
-                       of latest. Latest is the default.
   --soe                Shortcut: HyperI staff workstation defaults
                        (generic dev + CI toolchain + HyperI org policy;
                        no IaC, no language toolchains)
@@ -114,9 +110,6 @@ EXAMPLES:
   Rust + Go toolchains only:
     ./install.sh --languages rust,go
 
-  Reproducible (CI-exact) install:
-    ./install.sh --contributor --pinned
-
   Install the RDP server (GNOME Remote Login) for inbound access:
     ./install.sh --tags rdp-server
 
@@ -133,6 +126,8 @@ NOTES:
     random password, shown once, and never overwrites credentials already set
   - Use --tags-exclude to skip specific tags within a chosen group
   - Use --list-apps to see every per-app sub-tag for granular installs
+  - The AI agent tools (--tags developer-ai) install but do not sign in: codex
+    login is interactive and per-person, so the deploy leaves it to you
   - User-level settings (shell config, ~/.cargo, ~/.local, dconf, the container
     stacks) are applied for every account a person works in. Skipped by default:
     root, the system ranges, and the cloud image's own account (ubuntu,
@@ -169,11 +164,12 @@ Generic dev GUI (developer-gui):
 
 Languages (developer-<lang>; --languages [list] or developer-languages for all):
     developer-rust        rustup + cargo tools + protoc/librdkafka build deps
+                          + LLVM: clang, lld, PGO and BOLT tooling
     developer-go          Go + gopls, dlv, golangci-lint, gosec, govulncheck
     developer-python      mypy (opt-in; ruff/ty ship in the base astral suite)
     developer-node        eslint + prettier (Node itself is in the base -- it is
                           core tooling, needed by semantic-release and CI)
-    developer-typescript  typescript + tsx + ts-node (pulls developer-node)
+    developer-typescript  typescript + tsx (pulls developer-node)
     developer-c           C/C++ build tools
 
 Infrastructure (infrastructure):
@@ -181,10 +177,14 @@ Infrastructure (infrastructure):
     azure             Azure CLI
     gcloud            Google Cloud CLI
     k8s               kubectl, helm, kubectx/kubens, k9s, kind, argocd,
-                      kustomize, kubeconform, kube-linter, dive
+                      kustomize, kubeconform, kube-linter
     data              data group: clickhouse-client, rpk, valkey-cli, vector
     cloudflare        cloudflare group: flarectl, wrangler (flarectl builds
                       from source; Linux needs developer-go)
+
+Packer (packer) - opt-in, in no persona:
+    packer            HashiCorp Packer from HashiCorp's repo / tap (BUSL,
+                      no open-source fork)
 
 Contributor (contributor) - to work ON a HyperI product, no org policy:
     hyperi-ci         hyperi-ci + semgrep, alint
@@ -206,11 +206,11 @@ HyperI SOE (soe, soe-gui) - org policy, includes everything above:
     auto-updates      unattended-upgrades / dnf-automatic
     update-timer      Weekly hyperi-update systemd timer
     bash-history      bash history auto-commit
-    claude            Claude Code CLI
+    claude            Claude Code CLI - the binary only, no org policy, so
+                      anyone can install it (developer-ai's plugin needs it)
+    claude-policy     HyperI managed settings for Claude Code (soe only)
     forgejo/codeberg  tea (Forgejo/Gitea CLI)
     colima            macOS container daemon + Apple container (macOS only)
-    arcane            Container management UI, localhost-only (OPT-IN:
-                      -e soe_arcane_enabled=true)
     local-services    Persistent local ClickHouse + Redpanda for spikes,
                       deployed stopped (OPT-IN:
                       -e soe_local_services_enabled=true)
@@ -221,6 +221,11 @@ HyperI SOE (soe, soe-gui) - org policy, includes everything above:
     nemo              Nemo file manager (replaces Nautilus)
     desktop-cleanup   Hide duplicate apps, dedupe Flatpak/apt
     gnome-extensions  GNOME extensions (winlike / maclike)
+    wallpaper         HyperI wallpaper, set and listed in the GNOME picker
+
+AI coding agents (developer-ai) - opt-in; ai is the group tag for both:
+    codex             OpenAI Codex CLI - the second opinion, not the driver
+    codex-plugin      Codex plugin FOR Claude Code; needs claude + codex + node
 
 Groups / client bundles (own tag; soe pulls them by default):
     vpn-clients       OpenVPN 3 + WireGuard + Tunnelblick (macOS)
@@ -243,7 +248,7 @@ Composability examples:
     ./install.sh --tags data                     The data-tools group
     ./install.sh --tags vscode,ghostty           VS Code + Ghostty only
     ./install.sh --soe --languages rust,go       SOE + Rust + Go
-    ./install.sh --infra --pinned                SRE box, CI-exact versions
+    ./install.sh --infra                         SRE box
     ./install.sh --tags power-profile            Never sleep on mains power
     ./install.sh --tags power-profile -e power_profile=vm
                                                  Never sleep at all (RDP guest)
@@ -261,8 +266,8 @@ append_tags() {
     fi
 }
 
-# Append one `key=value` Ansible extra var, so --pinned and --region compose
-# instead of clobbering each other.
+# Append one `key=value` Ansible extra var, so several of them compose instead
+# of clobbering each other.
 append_extra_var() {
     if [[ -n "$ANSIBLE_EXTRA_VARS" ]]; then
         ANSIBLE_EXTRA_VARS="$ANSIBLE_EXTRA_VARS -e $1"
@@ -397,13 +402,6 @@ while [[ $# -gt 0 ]]; do
                 shift
             fi
             ;;
-        --pinned)
-            # Opt-in reproducible mode: pin the manual-binary tools to the exact
-            # versions in inventories/localhost/group_vars/all.yml (which mirrors
-            # hyperi-ci) instead of /releases/latest. Latest stays the default.
-            append_extra_var "hyperi_pinned=true"
-            shift
-            ;;
         --users)
             TARGET_USERS="$(printf '%s' "$2" | tr ',' ' ')"
             shift 2
@@ -451,7 +449,7 @@ if [[ -n "${REGION_ARG:-}" ]]; then
     # Add region tag
     append_tags "region"
 
-    # Pass desktop_region as extra var (append so --pinned survives)
+    # Pass desktop_region as an extra var
     append_extra_var "desktop_region=${DESKTOP_REGION}"
     print_info "Region: ${DESKTOP_REGION}"
 fi
@@ -655,7 +653,32 @@ for target_user in $TARGET_USERS; do
     fi
 done
 
-print_success "Hyperi Developer Environment installation complete!"
+# A failed optional component records a warning and the run carries on, so
+# ansible-playbook exits 0 (playbooks/main.yml, "WHAT DID NOT INSTALL"). That is
+# only acceptable while the warning is unmissable, which an unconditional
+# "complete!" is not.
+#
+# The count comes from the applied-state stamp the playbook writes last. Check
+# mode writes no stamp, so it says nothing rather than guessing.
+deploy_warning_count=""
+if [[ -z "$ANSIBLE_CHECK" && -r /var/lib/hyperi-developer/applied.json ]]; then
+    deploy_warning_count="$(python3 -c 'import json,sys; print(json.load(open("/var/lib/hyperi-developer/applied.json")).get("warnings", ""))' 2>/dev/null || true)"
+fi
+
+if [[ -n "$ANSIBLE_CHECK" ]]; then
+    print_success "Dry run complete. NOTHING was changed on this machine."
+    print_info "Re-run without --check to apply."
+    exit 0
+fi
+
+if [[ -n "$deploy_warning_count" && "$deploy_warning_count" != "0" ]]; then
+    print_warning "Installation finished with $deploy_warning_count component(s) NOT installed."
+    print_warning "Scroll up to 'Report what did not install' for the list and the reason."
+    print_warning "The rest of the environment is set up and usable."
+else
+    print_success "Hyperi Developer Environment installation complete!"
+fi
+
 print_info ""
 print_info "Next steps:"
 print_info "1. Log out and back in for group memberships to take effect (Docker)"

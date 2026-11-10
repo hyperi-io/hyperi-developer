@@ -1,0 +1,9 @@
+---
+# Packer role defaults
+
+# Primary key fingerprint HashiCorp publishes for its Linux package repos at
+# https://www.hashicorp.com/en/trust/security, checked before the key is trusted.
+# The same key signs apt.releases.hashicorp.com and rpm.releases.hashicorp.com.
+packer_hashicorp_key_fingerprint: D55C0D1AC78A8D8126CB631CFC9CA96ACA026560  # gitleaks:allow -- public key fingerprint
+packer_hashicorp_apt_key_url: https://apt.releases.hashicorp.com/gpg
+packer_hashicorp_rpm_key_url: https://rpm.releases.hashicorp.com/gpg

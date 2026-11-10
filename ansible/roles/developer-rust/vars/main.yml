@@ -1,0 +1,29 @@
+---
+# Limits worked out from this host's RAM and CPUs. Role vars, not defaults,
+# because they are derived: set the inputs in defaults/main.yml instead.
+# All sizes are MiB, the unit memtotal_mb reports.
+
+developer_rust_ram_mb: "{{ ansible_facts['memtotal_mb'] | int }}"
+
+# rustbuild.slice. High never exceeds Max.
+developer_rust_slice_max_mb: >-
+  {{ [developer_rust_ram_mb | int * rust_governor_memory_max_pct | int // 100,
+      rust_governor_memory_max_floor_mb | int] | max }}
+developer_rust_slice_high_mb: >-
+  {{ [[developer_rust_ram_mb | int * rust_governor_memory_high_pct | int // 100,
+       rust_governor_memory_high_floor_mb | int] | max,
+      developer_rust_slice_max_mb | int] | min }}
+
+# What the desktop keeps, and what is left for agent sessions once builds have
+# their share. A host without the governor gives builds no share to reserve.
+developer_rust_agents_reserve_mb: >-
+  {{ [developer_rust_ram_mb | int * agents_reserve_pct | int // 100,
+      agents_reserve_floor_mb | int] | max }}
+developer_rust_agents_max_mb: >-
+  {{ [developer_rust_ram_mb | int - developer_rust_agents_reserve_mb | int
+      - (developer_rust_slice_max_mb | int if rust_governor_enabled | bool else 0),
+      agents_memory_max_floor_mb | int] | max }}
+developer_rust_agents_high_mb: >-
+  {{ developer_rust_agents_max_mb | int * agents_memory_high_pct | int // 100 }}
+developer_rust_agents_tasks_max: >-
+  {{ agents_tasks_per_cpu | int * ansible_facts['processor_vcpus'] | int }}

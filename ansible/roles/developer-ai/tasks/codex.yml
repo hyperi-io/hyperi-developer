@@ -1,0 +1,200 @@
+---
+# OpenAI Codex CLI -- the second opinion, not the driver.
+#
+# This is a CLAUDE-FIRST arrangement. Codex is installed so that Claude Code can
+# hand it a diff and get an adversarial review back (see codex_plugin_cc.yml);
+# it is not being set up as a primary agent, and nothing here makes it one.
+#
+# Codex stands alone -- no runtime dependency at all on the standalone route,
+# because the installer's package tarball carries its own `rg` and `bwrap`. So
+# this file has no gate: it installs on any supported host. The dependencies
+# live one file over, on the PLUGIN, which is the piece that needs Claude Code
+# and node.
+#
+# EVERYTHING HERE IS PER USER. The binary lands in the target user's
+# ~/.local/bin, config and credentials in their ~/.codex. Nothing is
+# system-wide, so nothing here may run as the connecting account.
+
+# ============================================================================
+# Linux -- the official installer
+# ============================================================================
+- name: Install the Codex CLI (Linux)
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+  block:
+    # Under the user's own cache, not /tmp: the installer runs as that user and
+    # has to be able to read the script, which a root-owned temp file would
+    # prevent. It also keeps a predictable /tmp path out of the picture.
+    - name: Create the download cache directory
+      ansible.builtin.file:
+        path: "{{ user_home }}/.cache/hyperi-developer"
+        state: directory
+        mode: '0755'
+        owner: "{{ actual_user }}"
+        group: "{{ actual_user }}"
+
+    # changed_when: false -- fetching a bootstrap script into a scratch path
+    # changes nothing about the host. The install task below owns the change
+    # report, so that a converged box reports converged.
+    #
+    # No checksum: upstream publishes none for install.sh itself. What IS
+    # verified is the payload -- the script fetches codex-package_SHA256SUMS and
+    # checks the release tarball's digest against it before unpacking. That is
+    # the same digest we would have to fetch by hand, which is most of why this
+    # route wins over a get_url of the asset.
+    #
+    # force: true because get_url's default is "skip if the destination
+    # exists". The removal below sits in `always`, but a run interrupted between
+    # the two still leaves the script on disk, and every later converge would
+    # then skip the download and re-execute a copy fetched at some arbitrary
+    # point in the past -- an accidental version pin, against this repo's one
+    # install mode: latest at the time you run it.
+    #
+    # Skipped in check mode, like the install below. `file:` does not create the
+    # directory during a dry run, but get_url still validates it and fails on a
+    # host that has never had a real run -- a dry run reporting a failure that a
+    # real run would not hit.
+    - name: Download the Codex installer
+      ansible.builtin.get_url:
+        url: "{{ developer_ai_codex_installer_url }}"
+        dest: "{{ user_home }}/.cache/hyperi-developer/codex-install.sh"
+        mode: '0755'
+        owner: "{{ actual_user }}"
+        group: "{{ actual_user }}"
+        force: true
+      changed_when: false
+      when: not ansible_check_mode
+
+    # CODEX_NON_INTERACTIVE=1 is the installer's own documented knob for
+    # skipping prompts -- without it an unattended converge can block on one.
+    #
+    # PATH carries ~/.local/bin deliberately. The installer appends a marked
+    # block to the user's shell rc ONLY when its install dir is not already on
+    # PATH; with it there, it skips that write entirely and leaves the rc file
+    # alone. The system-wide /etc/profile.d/dev-path.sh already puts it on PATH
+    # for real logins, so this keeps the two consistent rather than having the
+    # converge add a second PATH entry nobody asked for.
+    - name: Install or update the Codex CLI
+      ansible.builtin.command:
+        cmd: /bin/sh {{ user_home }}/.cache/hyperi-developer/codex-install.sh
+      become: true
+      become_user: "{{ actual_user }}"
+      environment: >-
+        {{ developer_ai_env
+           | combine({'HOME': user_home, 'CODEX_NON_INTERACTIVE': '1'})
+           | combine({'CODEX_RELEASE': developer_ai_codex_release}
+                     if developer_ai_codex_release | length > 0 else {}) }}
+      register: developer_ai_codex_install
+      # The installer short-circuits when the resolved version is already
+      # staged, and exits 0 either way, so its rc says nothing about whether
+      # anything moved. The version comparison below owns the change report.
+      changed_when: false
+      when: not ansible_check_mode
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+    # accumulator playbooks/main.yml post_tasks reports from. See
+    # docs/resilient-deploy.md.
+    - name: Record that the Codex CLI did not install (Linux)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['codex: ' ~ (ansible_failed_result.msg | default('installer failed'))
+                ~ '. The Codex plugin for Claude Code will be skipped.'] }}
+
+  # always, not a task at the end of the block: a failed install must not leave
+  # the script behind for the next converge to re-execute.
+  always:
+    - name: Remove the downloaded installer
+      ansible.builtin.file:
+        path: "{{ user_home }}/.cache/hyperi-developer/codex-install.sh"
+        state: absent
+      changed_when: false
+
+# ============================================================================
+# macOS -- Homebrew cask
+# ============================================================================
+# Cask, not formula: formulae.brew.sh serves no `codex` formula. The cask
+# typically trails the GitHub release by a patch, which is the accepted cost of
+# staying on the higher rung of the packaging ladder -- brew then carries the
+# box forward on `brew upgrade` with no Tier 3 re-fetch of ours.
+- name: Install the Codex CLI (macOS)
+  when: ansible_facts['distribution'] == 'MacOSX'
+  block:
+    - name: Install the codex cask
+      community.general.homebrew_cask:
+        name: codex
+        state: present
+      become: false
+      environment: "{{ homebrew_cask_env }}"
+
+  rescue:
+    # noqa: var-naming[no-role-prefix] -- see the note above.
+    - name: Record that the Codex CLI did not install (macOS)
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['codex: ' ~ (ansible_failed_result.msg | default('brew cask install failed'))
+                ~ '. The Codex plugin for Claude Code will be skipped.'] }}
+
+# ============================================================================
+# Re-probe, so the plugin gates on what is on disk NOW
+# ============================================================================
+# init.yml probed before this file ran. Without this, a host that had no Codex
+# at the start of the run would skip the plugin even though Codex was just
+# installed -- the classic same-run producer/consumer trap.
+#
+# Both probes again, for the reason init.yml gives: the plugin needs
+# `codex app-server` to answer, not merely `codex --version`.
+- name: Confirm the Codex CLI after install
+  ansible.builtin.command:
+    cmd: codex --version
+  environment: "{{ developer_ai_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_ai_codex_after
+  changed_when: >-
+    developer_ai_codex_after.stdout | default('')
+    != developer_ai_codex_probe.stdout | default('')
+  failed_when: false
+  check_mode: false
+
+- name: Confirm the Codex app-server runtime after install
+  ansible.builtin.command:
+    cmd: codex app-server --help
+  environment: "{{ developer_ai_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_ai_codex_appserver_after
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: developer_ai_codex_after.rc | default(1) == 0
+
+- name: Update the Codex presence fact
+  ansible.builtin.set_fact:
+    developer_ai_codex_present: >-
+      {{ developer_ai_codex_after.rc | default(1) == 0
+         and developer_ai_codex_appserver_after.rc | default(1) == 0 }}
+
+# ============================================================================
+# Sign-in is the human's, and stays that way
+# ============================================================================
+# Codex authenticates against a ChatGPT account or an OpenAI API key, and the
+# credential lands in the target user's ~/.codex/auth.json. Provisioning
+# deliberately stops here: pre-seeding a per-user secret from a playbook would
+# put a credential in the deploy path, and this repo is public.
+#
+# `codex login --device-auth` is the flow for a box with no browser, which
+# covers the headless and RDP cases this fleet actually has.
+- name: Note that Codex still needs an interactive sign-in
+  ansible.builtin.debug:
+    msg: |
+      Codex is installed for {{ actual_user }} but NOT signed in.
+      That step is interactive and belongs to the person, not the deploy:
+
+        codex login                 # browser OAuth
+        codex login --device-auth   # no browser (headless, RDP)
+        codex login status          # check
+
+      Until then the CLI and the Claude Code plugin will both refuse to run.
+  when: developer_ai_codex_present | bool

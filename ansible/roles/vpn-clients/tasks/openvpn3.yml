@@ -7,10 +7,16 @@
 
 - name: Install OpenVPN 3 (Fedora)
   block:
+    # dnf5's own copr command, because community.general.copr needs dnf4's python3-dnf, which Fedora Server, cloud and minimal images lack.
+    - name: Ensure the dnf5 copr plugin is present
+      ansible.builtin.dnf:
+        name: dnf5-plugins
+        state: present
+
     - name: Enable OpenVPN 3 COPR repository
-      community.general.copr:
-        name: dsommers/openvpn3
-        state: enabled
+      ansible.builtin.command:
+        argv: [dnf, -y, copr, enable, dsommers/openvpn3]
+        creates: /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:dsommers:openvpn3.repo
 
     - name: Install OpenVPN 3 client
       ansible.builtin.dnf:
@@ -22,6 +28,32 @@
 # ============================================================================
 # UBUNTU - Add OpenVPN repository and install
 # ============================================================================
+
+# A failed openvpn-dco-dkms build leaves the kernel packages half-configured and
+# every later apt run exits 1, so it goes before the install unless hand-installed.
+- name: Remove the OpenVPN DCO kernel module (Ubuntu)
+  when: ansible_facts['distribution'] == 'Ubuntu'
+  block:
+    - name: Check whether the OpenVPN DCO module was installed as a dependency
+      ansible.builtin.command:
+        cmd: apt-mark showauto openvpn-dco-dkms
+      register: vpn_clients_dco_auto
+      changed_when: false
+
+    - name: Remove the OpenVPN DCO module installed as a dependency
+      ansible.builtin.apt:
+        name: openvpn-dco-dkms
+        state: absent
+        purge: true  # a half-configured package is only removed by a purge
+      when: "'openvpn-dco-dkms' in vpn_clients_dco_auto.stdout_lines"
+
+  rescue:
+    - name: Record that the OpenVPN DCO module was not removed
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ deploy_warnings | default([])
+             + ['OpenVPN DCO module: ' ~ (ansible_failed_task.name | default('unknown task'))
+                ~ ' -- ' ~ (ansible_failed_result.msg | default('removal failed'))] }}
 
 - name: Install OpenVPN 3 (Ubuntu - optional, warn on failure)
   block:
@@ -57,10 +89,12 @@
         signed_by: /etc/apt/keyrings/openvpn.asc
         state: present
 
+    # Without this openvpn3-client's Recommends pulls in openvpn-dco-dkms.
     - name: Install OpenVPN 3
       ansible.builtin.apt:
         name: openvpn3
         state: present
+        install_recommends: false
         update_cache: true
 
   rescue:

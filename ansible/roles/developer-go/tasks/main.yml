@@ -7,3 +7,17 @@
     apply:
       tags: ['developer-go', 'go']
   tags: ['developer-go', 'go']
+
+# After go.yml, so /usr/local/go is in before the distro Go it supersedes goes.
+# Removing a package this role did not install is a HyperI-fleet action, so it
+# runs only on a `removals` or `soe` run, like the developer role's tombstones.
+# Until then the /usr/local/bin links go.yml makes put the managed Go first.
+- name: Remove the distro Go superseded by the managed toolchain (opt-in)
+  ansible.builtin.include_tasks:
+    file: superseded.yml
+    apply:
+      tags: ['developer-go', 'go', 'removals']
+  tags: ['developer-go', 'go', 'removals']
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - "'removals' in ansible_run_tags or 'soe' in ansible_run_tags"

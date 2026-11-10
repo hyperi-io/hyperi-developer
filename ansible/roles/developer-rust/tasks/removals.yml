@@ -1,0 +1,13 @@
+---
+# The cargo-home sweep for a `--tags removals` run, which installs nothing and
+# so never reaches rust.yml.
+
+- name: Resolve the cargo homes and the cargo environment
+  ansible.builtin.include_tasks:
+    file: cargo_home.yml
+
+- name: Remove cargo-home strays
+  ansible.builtin.include_tasks:
+    file: strays.yml
+  vars:
+    developer_rust_strays_pass: all

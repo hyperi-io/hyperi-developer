@@ -138,12 +138,14 @@
 
 - name: Install fnm and the previous Node major (Linux)
   block:
-    - name: Download fnm
-      ansible.builtin.get_url:
-        url: >-
-          https://github.com/Schniz/fnm/releases/download/{{ fnm_version }}/{{ fnm_asset }}
-        dest: /tmp/fnm.zip
-        mode: '0644'
+    - name: Resolve the fnm release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: Schniz/fnm
 
     - name: Ensure unzip is present (Ubuntu)
       ansible.builtin.apt:
@@ -159,9 +161,13 @@
       become: true
       when: ansible_facts['distribution'] == 'Fedora'
 
-    - name: Unpack fnm
+    # Straight from the URL: unarchive downloads into its own private temp file,
+    # where a fixed root-written path under /tmp is open to a planted symlink.
+    - name: Download and unpack fnm
       ansible.builtin.unarchive:
-        src: /tmp/fnm.zip
+        src: >-
+          https://github.com/Schniz/fnm/releases/download/{{
+          github_release_doc.tag_name }}/{{ fnm_asset }}
         dest: /usr/local/bin
         remote_src: true
         include:
@@ -205,7 +211,8 @@
     - name: Wire fnm into the shell (Linux)
       ansible.builtin.lineinfile:
         path: "{{ user_home }}/.bashrc"
-        regexp: '^eval "\$\(fnm env'
+        # Leading whitespace too, so a hand-written init inside an if-block counts.
+        regexp: '^\s*eval "\$\(fnm env'
         line: 'eval "$(fnm env --use-on-cd)"'
         state: present
         owner: "{{ actual_user }}"
@@ -258,7 +265,8 @@
     - name: Wire fnm into the shell (macOS)
       ansible.builtin.lineinfile:
         path: "{{ user_home }}/.zshrc"
-        regexp: '^eval "\$\(fnm env'
+        # Leading whitespace too, so a hand-written init inside an if-block counts.
+        regexp: '^\s*eval "\$\(fnm env'
         line: 'eval "$(fnm env --use-on-cd)"'
         state: present
         mode: '0644'
