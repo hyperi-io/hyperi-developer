@@ -44,13 +44,13 @@
 # Check certificates exist
 - name: Verify RDP TLS certificate exists
   ansible.builtin.stat:
-    path: /var/lib/gnome-remote-desktop/rdp-tls.crt
+    path: "{{ rdp_tls_active_cert | default('/var/lib/gnome-remote-desktop/rdp-tls.crt') }}"
   register: verify_rdp_cert
   failed_when: not verify_rdp_cert.stat.exists
 
 - name: Verify RDP TLS key exists
   ansible.builtin.stat:
-    path: /var/lib/gnome-remote-desktop/rdp-tls.key
+    path: "{{ rdp_tls_active_key | default('/var/lib/gnome-remote-desktop/rdp-tls.key') }}"
   register: verify_rdp_key
   failed_when: not verify_rdp_key.stat.exists
 
@@ -77,23 +77,30 @@
       RDP networking sysctls correctly
       {{ 'present (VM guest)' if ansible_facts['virtualization_role'] == 'guest' else 'absent (physical)' }}
 
-# GRD priority drop-in: only on the software-encode/none path.
-- name: Stat GRD priority override
+- name: Stat GRD priority overrides
   ansible.builtin.stat:
-    path: /etc/systemd/system/gnome-remote-desktop.service.d/priority.conf
+    path: "{{ item }}"
+  loop:
+    - /etc/systemd/system/gnome-remote-desktop.service.d/priority.conf
+    - /etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf
+    - /etc/security/limits.d/50-rdp-nice.conf
   register: verify_grd_priority
 
-- name: Check VA-API H.264 encode availability
-  ansible.builtin.shell:
-    cmd: vainfo --display drm 2>/dev/null | grep -q "VAProfileH264.*VAEntrypointEncSlice"
-  register: verify_vaapi_h264
-  changed_when: false
-  failed_when: false
-
-- name: Verify PAM nice limits deployed
+- name: Stat the needrestart exclusion
   ansible.builtin.stat:
-    path: /etc/security/limits.d/50-rdp-nice.conf
-  register: verify_rdp_nice_limits
+    path: /etc/needrestart/conf.d/50-gnome-remote-desktop.conf
+  register: verify_needrestart_grd
+
+- name: Assert GRD priority and needrestart exclusion are in place
+  ansible.builtin.assert:
+    that:
+      - verify_grd_priority.results | map(attribute='stat.exists') | min
+      - verify_needrestart_grd.stat.exists
+    fail_msg: >-
+      A GRD priority drop-in, the PAM nice limit or the needrestart exclusion
+      is missing. Without the first two GRD runs at nice 0 behind builds, and
+      without the last a library update restarts GRD under a live session.
+    success_msg: "GRD priority drop-ins, nice limit and needrestart exclusion present"
 
 - name: Display RDP verification
   ansible.builtin.debug:
@@ -102,10 +109,16 @@
       - gnome-remote-desktop: {{ verify_grd_service.status.UnitFileState }}
       - RDP backend (grdctl): {{ 'ENABLED' if 'Status: enabled' in verify_grd_status.stdout else 'NOT ENABLED' }}
       - Port 3389 listening: {{ 'YES' if verify_rdp_port.stdout | default('') | trim | length > 0 else 'not yet (may need reboot)' }}
-      - TLS Cert: {{ verify_rdp_cert.stat.mode }}  Key: {{ verify_rdp_key.stat.mode }}
+      - TLS: {{ rdp_tls_mode | default('stock') }} (cert {{ verify_rdp_cert.stat.mode }}, key {{ verify_rdp_key.stat.mode }})
+      {% for result in (rdp_tls_fingerprints.results | default([])) if result.rc | default(1) == 0 %}
+      - {{ result.stdout }}
+      {% endfor %}
       - Host class: {{ 'VM guest' if ansible_facts['virtualization_role'] == 'guest' else 'physical' }}
-      - GPU vendor: {{ rdp_gpu_vendor | default('unknown') }} (hw-encode expected: {{ rdp_hw_encode_expected | default(false) }})
-      - VA-API H.264 encode: {{ 'AVAILABLE' if verify_vaapi_h264.rc == 0 else 'not available (software/CPU)' }}
+      - GPU vendor: {{ rdp_gpu_vendor | default('unknown') }}
+      - Hardware encode: {{ 'NVENC' if rdp_nvenc | default(false) | bool
+                            else 'VA-API' if (rdp_vaapi_h264_encode | default(false) | bool
+                                              and rdp_vulkan_gpu | default(false) | bool)
+                            else 'none (software RFX)' }}
       - RDP net sysctls: {{ 'present (VM)' if verify_rdp_tcp_conf.stat.exists else 'absent (physical)' }}
-      - GRD Nice=-10 priority: {{ 'configured (software path)' if verify_grd_priority.stat.exists else 'not set (hw-encode or n/a)' }}
-      - PAM nice headroom: {{ 'present' if verify_rdp_nice_limits.stat.exists else 'absent (Nice=-10 on the user service would be ignored)' }}
+      - GRD Nice=-10 priority and PAM headroom: present
+      - needrestart exclusion: present

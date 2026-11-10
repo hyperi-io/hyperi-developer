@@ -1,0 +1,10 @@
+---
+# Homebrew operation environment, macOS only. Same shape as the other roles'
+# vars/macos.yml -- kept per-role because Ansible scopes role vars to the role.
+
+homebrew_env:
+  PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+
+homebrew_cask_env:
+  PATH: "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:{{ ansible_facts['env'].PATH }}"
+  SUDO_ASKPASS: "/tmp/askpass.sh"

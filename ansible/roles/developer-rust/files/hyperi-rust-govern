@@ -1,31 +1,30 @@
 #!/usr/bin/env bash
-# Governs Rust builds so they cannot take the machine down: one build at a
-# time per user, the whole process tree inside the rust-build.slice budget,
-# and priority below the desktop.
+# Governs Rust builds so they cannot take the machine down: every build runs at
+# nice 19, and on Linux with a live user manager inside rustbuild.slice, whose
+# memory budget and CPU weight the developer-rust role deploys. No core is
+# withheld and no job count is set -- docs/rust-build-governor.md has the model.
 #
-# Installed as ~/.local/bin/cargo, which sits ahead of ~/.cargo/bin on the
-# SOE PATH, so cargo and everything it spawns is captured. sccache-hosted
-# compiles are captured separately: hyperi-sccache.service carries
-# Slice=rust-build.slice.
+# Installed as ~/.local/bin/cargo, ahead of the cargo bin directory on the SOE
+# PATH, so cargo and everything it spawns is captured. sccache-hosted compiles
+# are captured by hyperi-sccache.service's own Slice= and Nice=.
 #
 #   HYPERI_RUST_GOVERNOR=off cargo build     # bypass one invocation
 #   hyperi-rust-govern <command> [args...]   # govern any other command
 #
-# cargo run holds the build lock for the program's whole lifetime, because
-# cargo stays resident wrapping the binary. Use the bypass for long-running
-# `cargo run` services.
-#
 # Written for bash 3.2: stock macOS runs this.
 set -u
 
-CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hyperi/rust-governor.conf"
+# HOME is unset in a system unit, in a container whose uid has no passwd entry,
+# and under env -i. Unset, set -u aborts at the first $HOME below before any
+# tool runs; empty degrades to an unreadable config path, which is the right
+# failure.
+HOME="${HOME-}"
+
+# The same path the role writes, so a host that sets XDG_CONFIG_HOME still
+# reads the deployed file.
+CONF="$HOME/.config/hyperi/rust-governor.conf"
 # shellcheck source=/dev/null
 [ -r "$CONF" ] && . "$CONF"
-
-SERIALIZE="${HYPERI_RUST_GOVERN_SERIALIZE:-1}"
-RESERVE="${HYPERI_RUST_GOVERN_CPU_RESERVE:-2}"
-QOS="${HYPERI_RUST_GOVERN_MACOS_QOS:-utility}"
-LOCK_WAIT="${HYPERI_RUST_GOVERN_LOCK_WAIT:-1800}"
 
 TOOL="$(basename "$0")"
 if [ "$TOOL" = "hyperi-rust-govern" ]; then
@@ -72,126 +71,31 @@ if [ "${HYPERI_RUST_GOVERNOR:-on}" = "off" ] || [ -n "${HYPERI_RUST_GOVERNED:-}"
     exec "$REAL" "$@"
 fi
 
-if command -v nproc >/dev/null 2>&1; then
-    cores="$(nproc)"
-else
-    cores="$(sysctl -n hw.ncpu 2>/dev/null || echo 2)"
-fi
-case "$cores" in
-    ''|*[!0-9]*) cores=2 ;;
-esac
-case "$RESERVE" in
-    ''|*[!0-9]*) RESERVE=2 ;;
-esac
-case "$LOCK_WAIT" in
-    ''|*[!0-9]*) LOCK_WAIT=1800 ;;
-esac
-
-# The cgroup quota is invisible to rustc, which sizes its parallelism off the
-# visible core count and thrashes inside the cap -- so the job count is
-# lowered to match. A box under 4 cores keeps them all.
-jobs="$cores"
-if [ "$cores" -ge 4 ]; then
-    jobs=$((cores - RESERVE))
-fi
-[ "$jobs" -lt 1 ] && jobs=1
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$jobs}"
 export HYPERI_RUST_GOVERNED=1
 
-LOCK="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/hyperi-rust-govern-$(id -u).lock"
-uname_s="$(uname -s)"
-
-notify_wait() {
-    echo "hyperi-rust-govern: another rust build holds the lock -- waiting (HYPERI_RUST_GOVERNOR=off to bypass)" >&2
-}
-
-# The same fd inheritance that makes the lock outlive a crash also hands it to
-# any daemon the build starts, which then holds it for its own lifetime.
-notify_timeout() {
-    if [ -n "${1:-}" ]; then
-        echo "hyperi-rust-govern: lock held by PID(s) $1 for over ${LOCK_WAIT}s -- building unserialised (HYPERI_RUST_GOVERNOR=off to silence)" >&2
-    else
-        echo "hyperi-rust-govern: lock held for over ${LOCK_WAIT}s -- building unserialised (HYPERI_RUST_GOVERNOR=off to silence)" >&2
-    fi
-}
-
-# Linux: flock on fd 9. The fd survives exec, so the lock lives exactly as
-# long as the build and releases on any exit, crash included.
-if [ "$SERIALIZE" = "1" ] && command -v flock >/dev/null 2>&1; then
-    # An XDG_RUNTIME_DIR that is set but absent leaves fd 9 unopened, and every
-    # flock below then fails instantly -- which is not the same as contention.
-    # No 2>/dev/null here: on success that redirect would persist and silence
-    # the build's own stderr.
-    if ! exec 9>"$LOCK"; then
-        echo "hyperi-rust-govern: cannot open $LOCK -- building unserialised" >&2
-    elif ! flock -n 9; then
-        notify_wait
-        # Serialisation is an optimisation, so a stuck holder degrades the build
-        # rather than hanging it.
-        if ! flock -w "$LOCK_WAIT" 9; then
-            # fuser space-separates several holders, so squeeze rather than
-            # delete or they concatenate into one meaningless number.
-            lock_holder=""
-            command -v fuser >/dev/null 2>&1 &&
-                lock_holder="$(fuser "$LOCK" 2>/dev/null | tr -s '[:space:]' ' ')"
-            lock_holder="${lock_holder# }"
-            notify_timeout "${lock_holder% }"
-        fi
-    fi
-elif [ "$SERIALIZE" = "1" ]; then
-    # macOS ships no flock(1). A pid-stamped mkdir lock is atomic everywhere;
-    # a holder that died without cleaning up is detected and cleared.
-    LOCK_D="$LOCK.d"
-    notified=0
-    waited=0
-    holder=""
-    locked=0
-    while [ "$waited" -lt "$LOCK_WAIT" ]; do
-        if mkdir "$LOCK_D" 2>/dev/null; then
-            locked=1
-            break
-        fi
-        holder="$(cat "$LOCK_D/pid" 2>/dev/null || true)"
-        # A failed clear falls through to the wait, so the loop always advances.
-        if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
-            rm -rf "$LOCK_D" && continue
-        fi
-        if [ "$notified" -eq 0 ]; then
-            notify_wait
-            notified=1
-        fi
-        sleep 2
-        waited=$((waited + 2))
-    done
-    if [ "$locked" -eq 1 ]; then
-        printf '%s\n' "$$" >"$LOCK_D/pid"
-        # Single quotes: expanded when the trap fires, not here.
-        trap 'rm -rf "$LOCK_D"' EXIT INT TERM
-    else
-        # No trap: the directory belongs to whoever still holds it.
-        notify_timeout "$holder"
-    fi
+# sccache cannot cache a rustc call carrying -C incremental. Off by default:
+# cargo never builds dependencies incrementally, so this only makes WORKSPACE
+# crates cacheable, and it costs incremental on those same crates. Worth it on a
+# box where builds start from clean trees, not on an edit-rebuild loop.
+#
+# A caller's own value still wins, but setting it to 1 makes sccache refuse the
+# build outright rather than fall back to compiling.
+if [ "${HYPERI_RUST_GOVERN_NO_INCREMENTAL:-0}" = "1" ]; then
+    export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 fi
 
-# Linux with a live user manager: the scope joins rust-build.slice, whose
-# memory/CPU limits are deployed by the developer-rust role. The exec keeps
-# the flock fd, the TTY, signals and the exit code.
-if [ "$uname_s" = "Linux" ] && command -v systemd-run >/dev/null 2>&1 \
-    && [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]; then
+# Linux with a live user manager: the scope joins rustbuild.slice, with nice
+# inside it so the whole tree carries it. A bus socket left by a dead session
+# or a container image is not a manager answering, so one round trip settles
+# that before the exec.
+if [ "$(uname -s)" = "Linux" ] && command -v systemd-run >/dev/null 2>&1 \
+    && [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -S "$XDG_RUNTIME_DIR/bus" ] \
+    && systemctl --user show --property=Version >/dev/null 2>&1; then
     exec systemd-run --user --scope --quiet --collect \
-        --slice=rust-build.slice \
-        --property=CPUQuota="$((jobs * 100))%" \
-        -- "$REAL" "$@"
+        --slice=rustbuild.slice \
+        -- nice -n 19 "$REAL" "$@"
 fi
 
-# macOS: QoS clamp puts every thread below the desktop's priority. No memory
-# cap here -- taskpolicy's jetsam limit is per-process and cannot bound the
-# tree -- so the job cap above is the memory lever.
-if [ "$uname_s" = "Darwin" ] && command -v taskpolicy >/dev/null 2>&1; then
-    taskpolicy -c "$QOS" "$REAL" "$@"
-    exit "$?"
-fi
-
-# No systemd user manager (container, degraded session): priority only.
-nice -n 19 "$REAL" "$@"
-exit "$?"
+# Everywhere else -- macOS, a container, a degraded session: priority only, no
+# memory bound.
+exec nice -n 19 "$REAL" "$@"

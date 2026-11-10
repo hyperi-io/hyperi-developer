@@ -1,0 +1,9 @@
+---
+# Developer-Rust -- the Rust tier.
+#
+# Depends on astral so its uv-managed Python 3.14 exists before hyperi-rust-setup
+# runs, including on `--tags developer-rust` alone and in personas that list
+# this role ahead of the base.
+
+dependencies:
+  - role: astral

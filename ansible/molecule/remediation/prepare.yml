@@ -70,6 +70,163 @@
         - linear      # Linear CLI — removed by decision 2026-05-01
         - minikube    # superseded by kind
 
+    # DERIVED: k8s.yml put dive in /usr/local/bin on both distros until it was dropped.
+    - name: Plant the dropped dive release binary
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "dropped GitHub-release fixture: dive"
+        dest: /usr/local/bin/dive
+        owner: root
+        group: root
+        mode: '0755'
+
+    # Observed on the reference workstation 2026-10-06: helm v4.1.1, unowned, left by the
+    # get.helm.sh download an older revision did. It shadows packaged helm.
+    - name: Plant the stale root-owned helm (observed v4.1.1)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "v4.1.1"
+        dest: /usr/local/bin/helm
+        owner: root
+        group: root
+        mode: '0755'
+
+    # DERIVED: the infrastructure role installs the helm package, and the helm
+    # tombstone fires only once it is present. A local stand-in keeps the
+    # fixture off the network and off Helm's signing key.
+    - name: Install a stand-in helm package (Ubuntu)
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      block:
+        - name: Create the stand-in package tree
+          ansible.builtin.file:
+            path: "/root/helm-fixture/{{ item }}"
+            state: directory
+            mode: '0755'
+          loop:
+            - DEBIAN
+            - usr/bin
+
+        - name: Write the stand-in package control file
+          ansible.builtin.copy:
+            content: |
+              Package: helm
+              Version: 0.0.0-fixture
+              Architecture: all
+              Maintainer: hyperi-developer fixture <noreply@example.invalid>
+              Description: Stand-in for the packaged helm
+            dest: /root/helm-fixture/DEBIAN/control
+            mode: '0644'
+
+        - name: Write the stand-in packaged helm
+          ansible.builtin.copy:
+            content: |
+              #!/bin/sh
+              echo "packaged helm fixture"
+            dest: /root/helm-fixture/usr/bin/helm
+            mode: '0755'
+
+        - name: Build the stand-in helm package
+          ansible.builtin.command:
+            cmd: dpkg-deb --build --root-owner-group /root/helm-fixture /root/helm-fixture.deb
+            creates: /root/helm-fixture.deb
+
+        - name: Install the stand-in helm package
+          ansible.builtin.apt:
+            deb: /root/helm-fixture.deb
+
+    # ------------------------------------------------------------------
+    # SUPERSEDED BY A PACKAGE -- a /usr/local/bin copy left beside the package
+    # that now supplies the tool. Each must go only where its package is in.
+    #
+    # The Fedora branches below are not run by molecule.yml, which is Ubuntu
+    # only; they let the same playbooks exercise the Fedora tombstones against
+    # a fedora container by hand.
+    # ------------------------------------------------------------------
+    # Observed on the reference workstation 2026-10-06: root-owned kubectx and
+    # kubens beside the kubectx 0.9.5 package. DERIVED too: until ca841da every
+    # Linux host took both from GitHub releases into /usr/local/bin.
+    - name: Plant the retired kubectx and kubens binaries
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "retired GitHub-release fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - kubectx
+        - kubens
+
+    # Observed on the reference workstation 2026-10-06: k9s and gitleaks in
+    # /usr/local/bin with no package. On Ubuntu that IS the current install, so
+    # both must survive. DERIVED for Fedora: the same pre-ca841da paths, which
+    # dnf now supplies, so there both must go.
+    - name: Plant the k9s and gitleaks release binaries
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "GitHub-release fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - k9s
+        - gitleaks
+
+    - name: Install the kubectx package (Ubuntu)
+      ansible.builtin.apt:
+        name: kubectx
+        state: present
+        update_cache: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # Fedora 44 carries no kubectx package, so there /usr/local/bin is the
+    # kubectx and kubens install and both must stay.
+    - name: Install the packages that supersede the binaries (Fedora)
+      ansible.builtin.dnf:
+        name:
+          - k9s
+          - gitleaks
+        state: present
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # DERIVED: Fedora installed kustomize to /usr/local/bin before it moved to
+    # dnf. Planted with no package behind it -- like helm and kubectx on Fedora
+    # -- so verify can assert a copy stays wherever nothing has replaced it.
+    - name: Plant the pre-dnf kustomize binary (Fedora)
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "GitHub-release fixture: kustomize"
+        dest: /usr/local/bin/kustomize
+        owner: root
+        group: root
+        mode: '0755'
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # CONSTRUCTED, not observed: a /usr/bin entry that exists but is not a
+    # packaged copy -- a symlink back to the /usr/local/bin one, and a dangling
+    # link. Removing the /usr/local/bin copy behind either leaves no working
+    # tool, so both copies must stay.
+    - name: Link /usr/bin/helm back to the /usr/local/bin copy (Fedora)
+      ansible.builtin.file:
+        src: /usr/local/bin/helm
+        dest: /usr/bin/helm
+        state: link
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Plant a dangling /usr/bin/kustomize (Fedora)
+      ansible.builtin.file:
+        src: /nonexistent/kustomize
+        dest: /usr/bin/kustomize
+        state: link
+        force: true
+      when: ansible_facts['distribution'] == 'Fedora'
+
     # ------------------------------------------------------------------
     # RETIRED PACKAGES -- all nine were still installed on the reference host.
     # `tree` matters most: pass depends on it, and docker-desktop depends on
@@ -139,12 +296,11 @@
     # PATH /usr/local/bin and /snap/bin both precede /usr/bin. Same shadowing
     # class as the stale uv above, reached by a different route.
     # ------------------------------------------------------------------
-    # The Fedora binaries superseded by dnf (yq, kustomize) are NOT planted.
-    # This scenario is Ubuntu only, because remediation targets hosts that have
-    # drifted in the field and there are no deployed Fedora clients.
-    # The HashiCorp repo is the half that matters: left behind it keeps serving
-    # BUSL packages and updates. Removing it is a remediation, so only a
-    # `--tags removals` run does it -- which is what this scenario converges.
+    # The Fedora yq superseded by dnf is NOT planted: its removal sits in the
+    # install path of utilities.yml, which a removals-only run never reaches.
+    # kustomize is planted above, in the superseded-by-a-package section.
+    # The HashiCorp repo goes on a removals run unless Packer is installed, which
+    # the gosrc host fakes below so both branches are exercised.
     - name: Plant the HashiCorp apt repository (Ubuntu)
       ansible.builtin.copy:
         content: |
@@ -163,7 +319,7 @@
     # provisioned before that migration carries both.
     # A parseable line, because apt refuses EVERY operation when any source list
     # is malformed -- including the removal that is supposed to clear it.
-    # `trusted=yes` keeps the fixture off the network and off the keyring.
+    # `trusted=yes` keeps the fixture off the keyring.
     - name: Plant the legacy HashiCorp .list (Ubuntu)
       ansible.builtin.copy:
         content: "deb [trusted=yes] https://apt.releases.hashicorp.com noble main\n"
@@ -185,6 +341,50 @@
         - /usr/share/keyrings/hashicorp-archive-keyring.gpg
       when: ansible_facts['distribution'] == 'Ubuntu'
 
+    # An empty package named packer is all the removals check reads, and it
+    # keeps the fixture off HashiCorp's BUSL binary.
+    - name: Create the stand-in packer package tree (gosrc host)
+      ansible.builtin.file:
+        path: /root/packer-fixture/DEBIAN
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
+
+    - name: Write the control file for a stand-in packer package (gosrc host)
+      ansible.builtin.copy:
+        content: |
+          Package: packer
+          Version: 0.0.0-fixture
+          Architecture: all
+          Maintainer: fixture <fixture@example.invalid>
+          Description: Stand-in for HashiCorp Packer in the remediation fixture
+        dest: /root/packer-fixture/DEBIAN/control
+        owner: root
+        group: root
+        mode: '0644'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
+
+    - name: Build the stand-in packer package (gosrc host)
+      ansible.builtin.command:
+        argv: [dpkg-deb, --build, /root/packer-fixture, /root/packer-fixture.deb]
+        creates: /root/packer-fixture.deb
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
+
+    - name: Install the stand-in packer package (gosrc host)
+      ansible.builtin.apt:
+        deb: /root/packer-fixture.deb
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
+
     - name: Install the DBeaver flatpak superseded by the vendor apt repo (Ubuntu)
       community.general.flatpak:
         name: io.dbeaver.DBeaverCommunity
@@ -193,7 +393,7 @@
       when: ansible_facts['distribution'] == 'Ubuntu'
       failed_when: false
 
-    # Observed on desktop-derek 2026-08-25, still configured months after the
+    # Observed on the reference workstation 2026-08-25, still configured months after the
     # tools themselves were retired. A repository outlives the tool it served:
     # nothing prunes it, and every apt update pays to fetch it.
     #
@@ -223,6 +423,331 @@
         group: root
         mode: '0644'
       when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # ------------------------------------------------------------------
+    # HAND-INSTALLED DUPLICATES -- a second copy of a tool the roles install
+    # system-wide, left by a manual install. Each must go only where the
+    # managed copy is in place and is a different file.
+    # ------------------------------------------------------------------
+    # Observed on the reference workstation 2026-10-06: ~/.local/bin/kind
+    # shadowing /usr/local/bin/kind. CONSTRUCTED: the same shadow from ~/go/bin.
+    - name: Plant the managed /usr/local/bin copies the user-level ones shadow
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "managed fixture: {{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - kind
+        - lazygit
+        - argocd
+        - macbash
+        - git-scrub
+        - yq
+        - golangci-lint
+
+    - name: Create the user-level bin directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+        - "{{ ansible_facts['env']['HOME'] }}/go/bin"
+
+    - name: Plant user-level copies of managed tools
+      ansible.builtin.copy:
+        content: |
+          #!/bin/sh
+          echo "hand-installed fixture: {{ item | basename }}"
+        dest: "{{ ansible_facts['env']['HOME'] }}/{{ item }}"
+        mode: '0755'
+      loop:
+        - .local/bin/kind        # shadows /usr/local/bin/kind -- must go
+        - go/bin/lazygit         # shadows /usr/local/bin/lazygit -- must go
+        - .local/bin/kubeconform # no system copy here -- the only one, must stay
+        - .local/bin/tinygo-dev  # not a tool the roles manage -- must stay
+        - .local/bin/yq          # pip/uv's yq is another program -- must stay
+
+    # CONSTRUCTED: a user-level link to the managed binary is not a duplicate,
+    # and a dangling one shadows nothing.
+    - name: Plant user-level links
+      ansible.builtin.file:
+        src: "{{ item.src }}"
+        dest: "{{ ansible_facts['env']['HOME'] }}/.local/bin/{{ item.name }}"
+        state: link
+        force: true
+      loop:
+        - {name: argocd, src: /usr/local/bin/argocd}
+        - {name: lazygit, src: /nonexistent/lazygit}
+
+    # CONSTRUCTED: a directory that happens to carry a managed tool's name.
+    - name: Plant a directory named like a managed tool
+      ansible.builtin.file:
+        path: "{{ ansible_facts['env']['HOME'] }}/.local/bin/kubectx"
+        state: directory
+        mode: '0755'
+
+    # Observed on the reference workstation 2026-10-06: the macbash .deb, from no
+    # repository, beside the role's /usr/local/bin/macbash. CONSTRUCTED: a
+    # git-scrub package another package depends on, a kind package that is not
+    # on the purge list, and a k9s package served by a repository -- all three
+    # must stay. Ubuntu offers no k9s of its own.
+    - name: Install hand-built duplicate packages (Ubuntu)
+      when: ansible_facts['distribution'] == 'Ubuntu'
+      block:
+        - name: Install the package-building tools
+          ansible.builtin.apt:
+            name: dpkg-dev
+            state: present
+
+        - name: Create the fixture package trees
+          ansible.builtin.file:
+            path: "/root/dup-fixture/{{ item.0 }}/{{ item.1 }}"
+            state: directory
+            mode: '0755'
+          loop: "{{ ['macbash', 'git-scrub', 'git-scrub-dependant', 'kind', 'k9s'] | product(['DEBIAN', 'usr/bin']) | list }}"
+
+        - name: Write the fixture control files
+          ansible.builtin.copy:
+            content: |
+              Package: {{ item.name }}
+              Version: 1.0.0
+              Architecture: all
+              Maintainer: hyperi-developer fixture <noreply@example.invalid>
+              {% if item.depends %}Depends: {{ item.depends }}
+              {% endif %}Description: Stand-in for a hand-installed package
+            dest: "/root/dup-fixture/{{ item.name }}/DEBIAN/control"
+            mode: '0644'
+          loop:
+            - {name: macbash, depends: ''}
+            - {name: git-scrub, depends: ''}
+            - {name: git-scrub-dependant, depends: git-scrub}
+            - {name: kind, depends: ''}
+            - {name: k9s, depends: ''}
+
+        - name: Write the packaged binaries
+          ansible.builtin.copy:
+            content: |
+              #!/bin/sh
+              echo "hand-installed package fixture: {{ item }}"
+            dest: "/root/dup-fixture/{{ item }}/usr/bin/{{ item }}"
+            mode: '0755'
+          loop:
+            - macbash
+            - git-scrub
+            - git-scrub-dependant
+            - kind
+            - k9s
+
+        - name: Build the fixture packages
+          ansible.builtin.command:
+            cmd: "dpkg-deb --build --root-owner-group /root/dup-fixture/{{ item }} /root/dup-fixture/{{ item }}.deb"
+            creates: "/root/dup-fixture/{{ item }}.deb"
+          loop:
+            - macbash
+            - git-scrub
+            - git-scrub-dependant
+            - kind
+            - k9s
+
+        - name: Install the hand-installed fixture packages
+          ansible.builtin.apt:
+            deb: "/root/dup-fixture/{{ item }}.deb"
+          loop:
+            - macbash
+            - git-scrub
+            - git-scrub-dependant
+            - kind
+
+        # k9s comes from a local repository instead, so a repository offers it.
+        # Under /srv, not /root: apt fetches as the _apt user.
+        - name: Create the fixture repository
+          ansible.builtin.file:
+            path: /srv/fixture-repo
+            state: directory
+            mode: '0755'
+
+        - name: Place the k9s package in the fixture repository
+          ansible.builtin.copy:
+            src: /root/dup-fixture/k9s.deb
+            dest: /srv/fixture-repo/k9s.deb
+            remote_src: true
+            mode: '0644'
+
+        - name: Index the fixture repository
+          ansible.builtin.shell:
+            cmd: dpkg-scanpackages --multiversion . > Packages
+            chdir: /srv/fixture-repo
+            creates: /srv/fixture-repo/Packages
+
+        - name: Add the fixture repository
+          ansible.builtin.copy:
+            content: "deb [trusted=yes] file:/srv/fixture-repo ./\n"
+            dest: /etc/apt/sources.list.d/hyperi-fixture.list
+            mode: '0644'
+
+        # Only this source: the planted vendor repositories above are
+        # unreachable, and a full update would fail on them.
+        - name: Read the fixture repository
+          ansible.builtin.command:
+            argv:
+              - apt-get
+              - update
+              - -o
+              - Dir::Etc::sourcelist=sources.list.d/hyperi-fixture.list
+              - -o
+              - Dir::Etc::sourceparts=-
+              - -o
+              - APT::Get::List-Cleanup=0
+          changed_when: false
+
+        - name: Install k9s from the fixture repository
+          ansible.builtin.apt:
+            name: k9s
+            state: present
+
+    # Fedora: the macbash rpm, from no repository, and golangci-lint from the
+    # Fedora repository -- the first must go, the second stay.
+    - name: Install hand-built and repository duplicates (Fedora)
+      when: ansible_facts['distribution'] == 'Fedora'
+      block:
+        - name: Install the package-building tools and golangci-lint
+          ansible.builtin.dnf:
+            name:
+              - rpm-build
+              - golangci-lint
+            state: present
+
+        - name: Write the macbash fixture spec
+          ansible.builtin.copy:
+            content: |
+              Name: macbash
+              Version: 1.0.0
+              Release: 1
+              Summary: Stand-in for a hand-installed macbash rpm
+              License: MIT
+              BuildArch: noarch
+              %description
+              Fixture.
+              %install
+              mkdir -p %{buildroot}/usr/bin
+              printf '#!/bin/sh\necho rpm macbash\n' > %{buildroot}/usr/bin/macbash
+              chmod 755 %{buildroot}/usr/bin/macbash
+              %files
+              /usr/bin/macbash
+            dest: /root/macbash.spec
+            mode: '0644'
+
+        - name: Build the macbash fixture rpm
+          ansible.builtin.command:
+            cmd: rpmbuild -bb /root/macbash.spec
+            creates: /root/rpmbuild/RPMS/noarch/macbash-1.0.0-1.noarch.rpm
+
+        - name: Install the macbash fixture rpm outside any repository
+          ansible.builtin.dnf:
+            name: /root/rpmbuild/RPMS/noarch/macbash-1.0.0-1.noarch.rpm
+            disable_gpg_check: true
+            state: present
+
+    # The package-building tools would keep gcc, binutils and libc6-dev (or
+    # glibc-devel) installed whatever happens to Go, so the Go purge below
+    # could never orphan them. They go before Go comes in.
+    - name: Remove the package-building tools (Ubuntu)
+      ansible.builtin.apt:
+        name: dpkg-dev
+        state: absent
+        purge: true
+        autoremove: true
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove the package-building tools (Fedora)
+      ansible.builtin.dnf:
+        name: rpm-build
+        state: absent
+        autoremove: true
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    # Observed on the reference workstation 2026-10-06: the distro Go with no
+    # reverse dependencies beside the role's /usr/local/go. The distro's own
+    # tree is copied into /usr/local/go with every link dereferenced, so it is
+    # a self-contained toolchain as the role's would be. Two hosts keep the
+    # distro Go: on golink /usr/local/go links into the distro tree, and on
+    # gosrc it is a plain copy whose src still links into /usr/share.
+    - name: Install the distro Go
+      ansible.builtin.package:
+        name: "{{ 'golang-go' if ansible_facts['distribution'] == 'Ubuntu' else 'golang' }}"
+        state: present
+
+    - name: Resolve the distro Go tree
+      ansible.builtin.command:
+        argv: [readlink, -e, /usr/bin/go]
+      register: prepare_distro_go
+      changed_when: false
+
+    - name: Copy the distro Go tree into /usr/local/go
+      ansible.builtin.command:
+        argv:
+          - cp
+          - "{{ '-a' if 'gosrc' in inventory_hostname else '-aL' }}"
+          - "{{ prepare_distro_go.stdout | dirname | dirname }}"
+          - /usr/local/go
+        creates: /usr/local/go
+      when: "'golink' not in inventory_hostname"
+
+    - name: Link /usr/local/go into the distro Go tree
+      ansible.builtin.file:
+        src: "{{ prepare_distro_go.stdout | dirname | dirname }}"
+        dest: /usr/local/go
+        state: link
+      when: "'golink' in inventory_hostname"
+
+    # The fixture has to reach the orphan path it exists to test: removing the
+    # distro Go must, by itself, leave gcc for an autoremove to take.
+    - name: Find the installed distro Go packages
+      ansible.builtin.shell:
+        cmd: >-
+          {{ "set -o pipefail; dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'golang*' | sed -n 's/^ii  *//p'"
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else "rpm -q --qf '%{NAME}\n' golang golang-bin golang-src" }}
+        executable: /bin/bash
+      register: prepare_go_packages
+      changed_when: false
+
+    - name: Simulate removing the distro Go with its orphans
+      ansible.builtin.command:
+        argv: >-
+          {{ (['apt-get', '-s', 'purge', '--autoremove'] if ansible_facts['distribution'] == 'Ubuntu'
+              else ['dnf', 'remove', '--assumeno']) + prepare_go_packages.stdout_lines }}
+      environment: {LC_ALL: C.UTF-8}
+      register: prepare_go_orphans
+      changed_when: false
+      failed_when: false
+
+    - name: Assert removing the distro Go would orphan gcc
+      ansible.builtin.assert:
+        that:
+          - prepare_go_orphans.stdout is search('(?m)^(Remv|Purg) gcc |^ gcc ')
+        fail_msg: >-
+          Removing the distro Go would not orphan gcc here, so the Go purge's
+          orphan handling is not exercised by this fixture.
+        quiet: true
+
+    # DERIVED: developer-go/tasks/go.yml writes this beside the toolchain.
+    - name: Plant the managed Go's profile drop-in
+      ansible.builtin.copy:
+        content: |
+          case ":$PATH:" in
+              *":/usr/local/go/bin:"*) ;;
+              *) export PATH="/usr/local/go/bin:$PATH" ;;
+          esac
+        dest: /etc/profile.d/hyperi-go.sh
+        owner: root
+        group: root
+        mode: '0644'
 
     # The unguarded ~/.bashrc PATH lines are deliberately NOT planted. The tasks
     # that remove them sit in the install path of the developer and

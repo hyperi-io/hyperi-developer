@@ -1,0 +1,6 @@
+# Deployed by hyperi-developer (developer-rust role). Edits are overwritten.
+# The user manager only delegates cpu, memory and pids by default. cpuset and io
+# let agents.slice reserve cores and an I/O weight. Read at the user manager's
+# next start.
+[Service]
+Delegate={{ agents_delegate_controllers }}

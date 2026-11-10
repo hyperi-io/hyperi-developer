@@ -9,5 +9,23 @@
 
 set -euo pipefail
 
-command -v python3 >/dev/null 2>&1 || { echo "hyperi-doctor: python3 is required and was not found on PATH" >&2; exit 1; }
-exec python3 "$(dirname "$0")/hyperi_doctor.py" "$@"
+script="$(dirname "$0")/hyperi_doctor.py"
+
+# The same rule on every OS: the first interpreter that is 3.11+ (datetime.UTC)
+# and has PyYAML. The astral role's uv-managed python3.14 comes first, but it
+# carries no PyYAML, so the distro python3 is what passes on Linux.
+for py in "$HOME/.local/bin/python3.14" python3; do
+    if command -v "$py" >/dev/null 2>&1 \
+        && "$py" -c 'import sys, yaml; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+        exec "$py" "$script" "$@"
+    fi
+done
+
+# macOS has no interpreter that passes: the CLT python3 is 3.9 and nothing
+# installs PyYAML. uv supplies both, fetching PyYAML once into its cache.
+if command -v uv >/dev/null 2>&1; then
+    exec uv run --quiet --no-project --python 3.14 --with pyyaml "$script" "$@"
+fi
+
+echo "hyperi-doctor: needs Python 3.11+ with PyYAML, or uv, and found neither" >&2
+exit 1

@@ -1,13 +1,75 @@
 ---
 # Developer-Rust defaults.
 #
-# The versions themselves live in the SSoT -- hyperi_core_versions in
-# inventories/localhost/group_vars/all.yml. This file only maps them onto the
-# arch token rust-lang.org uses in its paths (the GNU triple spelling), so a
-# bump is still a one-line edit in the SSoT and nothing here changes.
+# No rustup version is set here. The role fetches static.rust-lang.org's
+# current rustup-init together with the checksum published beside it, and
+# rustup then tracks stable on its own.
 
-rustup_version: "{{ hyperi_core_versions.rustup }}"
-rustup_sha256: "{{ hyperi_core_versions.rustup_sha256[hyperi_arch_gnu | default('x86_64')] }}"
+# ---------------------------------------------------------------------------
+# Toolchain location
+# ---------------------------------------------------------------------------
+# Empty means "ask the host". The role probes the target user's own login
+# environment for CARGO_HOME/RUSTUP_HOME and falls back to ~/.cargo and
+# ~/.rustup, which is what cargo and rustup themselves do.
+#
+# Hard-coding ~/.cargo here is what broke this: a host that relocates
+# CARGO_HOME (via /etc/environment, a profile drop-in, whatever) got a correct
+# config.toml written to a directory cargo never reads, and the stale file that
+# stayed in effect named a rustc-wrapper that no longer existed. Every build
+# failed and the converge reported success. Set these only to override the
+# host's own answer.
+rust_cargo_home: ""
+rust_rustup_home: ""
+
+# Post-condition check at the end of the toolchain run: fail the converge when
+# the config cargo will actually read names a rustc-wrapper that does not
+# resolve. Off only for a box where you know the wrapper is provisioned after
+# this role runs.
+rust_verify_wrapper: true
+
+# On a host that relocates CARGO_HOME, a config.toml left in ~/.cargo is inert
+# while the relocation holds and becomes live the moment it does not -- which is
+# how a file naming a long-gone rustc-wrapper stayed in effect here. Renamed
+# rather than deleted, matching what hyperi-rust-setup does when it takes over
+# an existing config, so nothing is destroyed on a host we do not control.
+rust_retire_superseded_config: true
+
+# ---------------------------------------------------------------------------
+# LLVM, PGO and BOLT
+# ---------------------------------------------------------------------------
+# clang, lld, BOLT and the LLVM development files, for cross-language LTO,
+# bindgen, PGO and post-link optimisation. rustup's llvm-tools component still
+# supplies llvm-profdata and llvm-cov, because those must match rustc's own
+# LLVM major exactly and the system copy need not.
+rust_llvm_enabled: true
+
+# latest | rustc | <major>. `latest` is the newest LLVM release tag upstream,
+# `rustc` is the major the installed rustc was built with, and an integer pins
+# one. Cross-language LTO needs a system LLVM at least as new as rustc's, which
+# is why the default leans new. Fedora installs its distro LLVM and warns when
+# that is below the major asked for.
+rust_llvm_version: latest
+
+# apt.llvm.org's published signing key. The keyring path is the one hyperi-ci
+# uses for the same repository: two different Signed-By values for one suite
+# stop apt reading any source list.
+rust_llvm_apt_key_fingerprint: 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421  # gitleaks:allow -- public key fingerprint
+rust_llvm_apt_keyring: /usr/share/keyrings/llvm.gpg
+
+# Unversioned names in /usr/local/bin pointing at the installed major (Ubuntu
+# only; Fedora and macOS already have their own unversioned names). A real file
+# or a link we did not make at one of these paths is left alone and reported.
+rust_llvm_links:
+  - clang
+  - clang++
+  - ld.lld
+  - llvm-bolt
+  - merge-fdata
+  - perf2bolt
+
+# Remove the previous major's packages when the resolved major moves (Ubuntu
+# only). Off, because a project may still pin the older clang by name.
+rust_llvm_remove_previous: false
 
 # ---------------------------------------------------------------------------
 # Build cache caps
@@ -27,6 +89,12 @@ rust_cache_manage: true
 # leaves the per-project layout alone, so this stays safe to leave on.
 rust_cache_central_build_dir: true
 
+# Where the pooled build cache lives. Empty means the platform cache directory
+# (~/.cache, or ~/Library/Caches on macOS). Set it to a path on a box with a
+# dedicated cache volume, e.g. /cache -- both hyperi-rust-setup and the prune
+# are given the same value, so the prune still refuses a pool outside it.
+rust_cache_root: ""
+
 rust_cache_sccache_max: "20G"
 rust_cache_ccache_max: "10G"
 
@@ -35,18 +103,44 @@ rust_cache_ccache_max: "10G"
 # which covers a container or CI runner that mounts the tree elsewhere.
 # It does NOT unify sibling checkouts: those differ by directory name, not root.
 rust_cache_sccache_basedirs: "{{ user_home }}"
-# `auto` is a sixth of the filesystem holding the pool, with a 40G floor. An
-# explicit size (40G, 120G) overrides it.
+# `auto` is a sixth of the filesystem holding the pool, with a 40G floor, while
+# the pool shares a filesystem with the user's home. On a filesystem of its own
+# it means no ceiling, and the guard's free-space floor and target bound it. An
+# explicit size (40G, 120G) overrides both.
 rust_cache_build_dir_max: "auto"
 rust_cache_max_age_days: 14
 
 # Off-hours, so a prune is unlikely to land mid-build.
-rust_cache_prune_schedule_weekday: "Sun"
+#
+# Daily rather than weekly: the ceiling binds only while the tool runs, so the
+# gap between runs is time the pool spends unbounded. Set a weekday for weekly.
+rust_cache_prune_schedule_weekday: ""
 rust_cache_prune_schedule_hour: 3
+
+# Backstop for growth that outruns the daily prune. One statvfs every five
+# minutes: a busy build box has written tens of gigabytes within an hour.
+#
+# Below the floor it drops the least-recently-built workspaces, past the ceiling
+# if need be, until the target is free, skipping any a build is using. The gap
+# between floor and target stops the next builds pushing straight back under.
+#
+# Percentages because one size cannot suit a laptop and a build box.
+rust_cache_prune_guard_enabled: true
+rust_cache_prune_free_floor: "15%"
+rust_cache_prune_free_target: "25%"
+rust_cache_prune_guard_interval_seconds: 300
+
+# When the pool alone cannot reach the target, the guard asks Docker to prune
+# its build cache unused for 3 days, then unused images created over a week
+# ago. Only when Docker's data root is on the pool's filesystem, and only as the
+# user through Docker's own commands -- no sudo, and daemon.json is not touched.
+rust_cache_prune_docker: true
 
 # macOS launchd only; systemd takes its unit name from the file.
 rust_cache_prune_label: "io.hyperi.rust-cache-prune"
 rust_cache_prune_plist: "{{ user_home }}/Library/LaunchAgents/{{ rust_cache_prune_label }}.plist"
+rust_cache_prune_guard_label: "io.hyperi.rust-cache-prune-guard"
+rust_cache_prune_guard_plist: "{{ user_home }}/Library/LaunchAgents/{{ rust_cache_prune_guard_label }}.plist"
 
 # Start the sccache server from a systemd user unit rather than leaving it to
 # whichever process compiles first, which decides the server's cgroup and
@@ -59,34 +153,129 @@ rust_sccache_service_manage: true
 # Concurrent cargo/rustc across several projects can OOM a host outright --
 # observed taking down a 30G build box. Opt-OUT: disabling it removes the
 # shim, the slice and the config.
+#
+# MEMORY is BOUNDED, by rustbuild.slice: MemoryHigh throttles by reclaim and
+# MemoryMax kills the build rather than the host. Both are sized at converge
+# from the host's own RAM (ansible_facts memtotal_mb), so one number fits a
+# laptop and a build box and the desktop keeps the rest. A host that gains RAM
+# needs a re-converge (--tags rust-governor) to pick it up.
+#
+# CPU is not bounded at all -- it is DEFERRED. Builds run at nice 19 under a
+# below-desktop CPUWeight, so they take every core while nobody else wants one
+# and drop to about a quarter the moment the desktop does. Nothing withholds
+# cores and nothing sets a job count: cargo's own default is already every
+# core, and rationing CPU costs throughput on an idle machine to buy
+# responsiveness that only matters on a busy one.
 rust_governor_enabled: true
 
-# One rust build at a time per user; later invocations wait for the lock.
-rust_governor_serialize: true
+# Whether governed builds run with CARGO_INCREMENTAL=0, so sccache can cache
+# them. sccache refuses to cache any rustc call carrying -C incremental.
+#
+# OFF by default, because the win is narrower than it first looks. Cargo never
+# builds DEPENDENCIES incrementally, so those were always cacheable; what this
+# buys is caching of WORKSPACE crates, and it pays for it by losing incremental
+# on those same crates. That is a straight regression for an edit-rebuild loop,
+# worst on a large crate that compiles as a single rustc -- edit it and sccache
+# misses on the changed source with no incremental left to fall back on.
+#
+# Turn it ON for a build box, a CI runner, or a workstation running many
+# sessions against the same workspaces, where builds start from clean trees and
+# there is no incremental state to lose.
+#
+# Note for anyone opting out by hand: setting CARGO_INCREMENTAL=1 makes sccache
+# REFUSE the build outright rather than fall back to compiling.
+rust_governor_no_incremental: false
 
-# A daemon started inside a governed build inherits the lock and holds it for
-# its own lifetime, which would otherwise hang every later cargo command. After
-# this many seconds the build proceeds unserialised and says so.
-rust_governor_lock_wait_seconds: 1800
+# Share of the host's RAM the whole build slice may use. High throttles and
+# reclaims, Max kills the build -- the build dies, never the host. Max is a
+# third of RAM so the desktop and its sessions keep the other two thirds.
+# Raise both on a host dedicated to builds (a remote build target), e.g. 60 and
+# 50, in its host or group vars.
+rust_governor_memory_high_pct: 27
+rust_governor_memory_max_pct: 33
 
-# Percentages of the HOST's physical RAM (systemd resolves them all against
-# RAM, the swap cap included), so the same numbers ship everywhere. High
-# throttles and reclaims; Max kills the build -- the build dies, never the
-# host.
-rust_governor_memory_high_pct: 50
-rust_governor_memory_max_pct: 70
+# Smallest slice limits in MiB, so a small host can still build. Applied after
+# the percentage, and High never exceeds Max.
+rust_governor_memory_high_floor_mb: 3072
+rust_governor_memory_max_floor_mb: 4096
+
+# Percentage of the host's RAM, resolved by systemd, so it needs no sizing here.
 rust_governor_swap_max_pct: 25
 
-# Weight is contention-only: the desktop always wins under load, and an idle
-# machine still gives builds full speed. 100 is the systemd default weight.
+# ---------------------------------------------------------------------------
+# Agent sessions: agents.slice
+# ---------------------------------------------------------------------------
+# Every process a Claude Code session starts (shell commands, subagents, MCP
+# servers, browsers) inherits the session's cgroup, so one cap on agents.slice
+# bounds all of them. Builds get rustbuild.slice and the desktop keeps the
+# rest, which means no agent can cause a host-wide OOM: an overrun kills the
+# biggest process inside the slice and nothing outside it. The role writes only
+# the slice. hyperi-ai moves each session into an agents-<session>.scope under
+# it when a session starts, and does nothing where the slice is missing.
+agents_slice_enabled: true
+
+# The desktop's reserve: the larger of a share of RAM and a floor in MiB. The
+# floor covers a small host, where a share alone leaves a browser and an editor
+# too little.
+agents_reserve_pct: 30
+agents_reserve_floor_mb: 9216
+
+# MemoryMax is RAM minus the reserve minus rustbuild.slice's MemoryMax (the
+# governor off means nothing to subtract). The floor in MiB stops a small host
+# computing a slice too small to run one session. MemoryHigh is a share of Max.
+agents_memory_max_floor_mb: 2048
+agents_memory_high_pct: 90
+
+# Below the desktop's 100 so sessions yield to it under contention, and a
+# process ceiling of this many tasks per vCPU so a runaway fork loop stops short
+# of the host's pid limit.
+agents_cpu_weight: 25
+agents_tasks_per_cpu: 1024
+
+# systemd-oomd drop-in: kill inside agents.slice when memory pressure stays over
+# the limit, so a thrashing slice is cut down before it stalls the desktop. Off
+# by default because oomd must also watch the user manager, which is a per-host
+# decision. The duration property exists in systemd 259 and may be unknown to
+# an older systemd, which logs it and ignores it.
+agents_oomd_enabled: false
+agents_oomd_pressure_limit: "80%"
+agents_oomd_pressure_duration: "20s"
+
+# Delegate cpuset and io to the user manager, so agents.slice can reserve cores
+# and an I/O weight. System scope (/etc/systemd/system), so it needs sudo, and
+# the user manager reads it only at its next start (re-login or reboot). Off by
+# default for that reason.
+agents_delegate_enabled: false
+agents_delegate_controllers: "cpu cpuset io memory pids"
+
+# Contention-only: the desktop wins under load, and an idle machine still gives
+# builds every core. 100 is the systemd default, so 30 is a bit under a third of
+# the desktop's share when both want the CPU at once. This, not the shim's nice
+# 19, is what makes a build yield on Linux -- rustbuild.slice.j2 says why.
 rust_governor_cpu_weight: 30
 
-# Cores held back from builds on any host with 4 or more; smaller hosts keep
-# every core. Also caps CARGO_BUILD_JOBS, because the cgroup quota is
-# invisible to rustc.
-rust_governor_cpu_reserve_cores: 2
+# The user manager's runtime directory, for every `systemctl --user` call the
+# role makes. Defined once because the fallback is wrong on a fleet box:
+# actual_user_uid is set by the developer role's init, which does not run under
+# a --tags run, so every call then falls back to the CONNECTION user's uid.
+# When that is fixed it is fixed here, in one place.
+developer_rust_uid: "{{ actual_user_uid | default(ansible_facts['user_uid']) }}"
+developer_rust_user_env:
+  XDG_RUNTIME_DIR: "/run/user/{{ developer_rust_uid }}"
 
-# macOS has no cgroups; builds run under this taskpolicy QoS clamp instead.
-# `utility` sits below the desktop without background's disk-IO throttle and
-# E-core pinning.
-rust_governor_macos_qos: utility
+# ---------------------------------------------------------------------------
+# librdkafka from Confluent's clients repository
+# ---------------------------------------------------------------------------
+# Confluent publishes no fingerprint for this key. This pins the key served at
+# packages.confluent.io/clients/{deb,rpm}/archive.key, which signs that repo's
+# metadata -- the same pin scalo-rs's generated images assert.
+developer_rust_confluent_clients_key_fingerprint: CBBB821E8FAF364F79835C438B1DA6120C2BF624  # gitleaks:allow -- public key fingerprint
+
+# Clients-repo apt suites, oldest first; the last entry is the fallback for an
+# Ubuntu release Confluent has not published yet.
+developer_rust_confluent_clients_suites:
+  - noble
+  - resolute
+
+# Confluent builds the clients rpms for RHEL only; Fedora takes this EL release.
+developer_rust_confluent_clients_el_release: 10

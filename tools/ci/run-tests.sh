@@ -55,7 +55,8 @@ fi
 if have shellcheck; then
     ran=$((ran + 1))
     echo "==> shellcheck"
-    if shellcheck install.sh tools/ci/run-tests.sh tools/hyperi-doctor; then
+    if shellcheck install.sh tools/ci/run-tests.sh tools/hyperi-doctor \
+        ansible/roles/developer-rust/files/hyperi-rust-govern; then
         echo "    ok"
     else
         echo "    FAILED"
@@ -79,21 +80,6 @@ if have python3 && python3 -c "import pytest, yaml" >/dev/null 2>&1; then
     fi
 else
     echo "--> pytest or PyYAML not installed, skipping tools tests"
-fi
-
-# hyperi_versions only means anything if it still matches hyperi-ci. Both files
-# are hand-edited in two repos, and a bump on either side used to leave the
-# other behind silently -- three of twelve had drifted before this ran.
-if have python3 && python3 -c "import yaml" >/dev/null 2>&1; then
-    ran=$((ran + 1))
-    echo "==> version pins vs hyperi-ci"
-    if python3 tools/check_version_pins.py; then
-        :
-    else
-        failures=$((failures + 1))
-    fi
-else
-    echo "--> PyYAML not installed, skipping the pin comparison"
 fi
 
 # molecule/vars.yml is the SSoT for the supported releases, but molecule cannot

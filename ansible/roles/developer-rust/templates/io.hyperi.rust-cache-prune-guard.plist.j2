@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{ rust_cache_prune_guard_label }}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/hyperi-rust-cache-prune</string>
+        <string>--yes</string>
+        <string>--max-size</string>
+        <string>{{ rust_cache_build_dir_max }}</string>
+        <string>--max-age-days</string>
+        <string>{{ rust_cache_max_age_days }}</string>
+{% if rust_cache_root %}
+        <string>--cache-root</string>
+        <string>{{ rust_cache_root }}</string>
+{% endif %}
+        <string>--if-free-below</string>
+        <string>{{ rust_cache_prune_free_floor }}</string>
+        <string>--free-target</string>
+        <string>{{ rust_cache_prune_free_target }}</string>
+{% if not rust_cache_prune_docker | bool %}
+        <string>--no-docker</string>
+{% endif %}
+    </array>
+
+    <!-- A launchd agent inherits no shell profile, and the pruner reads
+         CARGO_HOME to find the config that names the pool. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CARGO_HOME</key>
+        <string>{{ developer_rust_cargo_home }}</string>
+    </dict>
+
+    <!-- StartInterval rather than a calendar: the guard is not tied to a time
+         of day, and launchd counts this from load so a sleeping laptop does
+         not accrue a backlog. -->
+    <key>StartInterval</key>
+    <integer>{{ rust_cache_prune_guard_interval_seconds | int }}</integer>
+
+    <!-- A disk already short of space at login is worth catching then. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Walking a large pool is IO-bound; it must never compete with a build. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>19</integer>
+
+    <key>StandardOutPath</key>
+    <string>{{ user_home }}/Library/Logs/hyperi-rust-cache-prune.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{ user_home }}/Library/Logs/hyperi-rust-cache-prune.log</string>
+</dict>
+</plist>

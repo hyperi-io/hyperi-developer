@@ -1,0 +1,185 @@
+---
+# Remove system_cleanup_purge_packages without taking anything else with it, now
+# or later.
+#
+# Now: a removal that would also take a package outside the list -- something
+# depends on one of them -- is refused and reported instead.
+#
+# Later: dependencies only these packages needed become orphans, and
+# hyperi-update runs `apt-get autoremove` / `dnf autoremove` unattended, which
+# would then remove them -- gcc, binutils and libc6-dev among them for the
+# distro Go. Each new orphan the packages depend on directly is marked
+# manually installed first, which also keeps everything it depends on.
+#
+# Every command whose output is parsed runs in the C locale, because dnf
+# translates the table headers read below. Any plan that cannot be read
+# exactly stops the removal rather than removing unmarked.
+#
+# Inputs: system_cleanup_purge_packages (installed package names) and
+# system_cleanup_purge_reason (why they go, for the report).
+
+- name: Simulate removing {{ system_cleanup_purge_reason }}
+  ansible.builtin.command:
+    argv: >-
+      {{ (['apt-get', '-s', 'purge'] if ansible_facts['distribution'] == 'Ubuntu'
+          else ['rpm', '-e', '--test']) + system_cleanup_purge_packages }}
+  environment: {LC_ALL: C.UTF-8, LANGUAGE: ""}
+  become: true
+  register: system_cleanup_purge_sim
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# apt names a dependant in the plan, and rpm refuses outright.
+- name: Note what else the removal would take, for {{ system_cleanup_purge_reason }}
+  ansible.builtin.set_fact:
+    system_cleanup_purge_dependants: >-
+      {{ system_cleanup_purge_sim.stdout_lines | default([]) | select('match', '^(Purg|Remv) ')
+         | map('regex_replace', '^\S+ (\S+).*$', '\1') | reject('in', system_cleanup_purge_packages) | list }}
+
+- name: Report a package kept because something depends on it, {{ system_cleanup_purge_reason }}
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ (deploy_warnings | default([])
+          + ['Kept ' ~ system_cleanup_purge_packages | join(', ') ~ ' (' ~ system_cleanup_purge_reason ~ '): '
+             ~ (('removing it would also remove ' ~ system_cleanup_purge_dependants | join(', '))
+                if system_cleanup_purge_dependants
+                else ('the package manager refused the removal: '
+                      ~ system_cleanup_purge_sim.stderr | default('') | trim))]) | unique }}
+  when: system_cleanup_purge_sim.rc != 0 or system_cleanup_purge_dependants | length > 0
+
+- name: Remove the packages, {{ system_cleanup_purge_reason }}
+  when:
+    - system_cleanup_purge_sim.rc == 0
+    - system_cleanup_purge_dependants | length == 0
+  block:
+    - name: List the packages already orphaned
+      ansible.builtin.command:
+        argv: >-
+          {{ ['apt-get', '-s', 'autoremove'] if ansible_facts['distribution'] == 'Ubuntu'
+             else ['dnf', '-q', 'repoquery', '--unneeded', '--qf', '%{name}\n'] }}
+      environment: {LC_ALL: C.UTF-8, LANGUAGE: ""}
+      become: true
+      register: system_cleanup_purge_orphans_before
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # dnf ends a plan it is told not to run with rc 1 and "Operation aborted",
+    # and lists orphans only with clean_requirements_on_remove, which a host's
+    # dnf config can turn off.
+    - name: List the packages the removal would orphan
+      ansible.builtin.command:
+        argv: >-
+          {{ (['apt-get', '-s', 'purge', '--autoremove'] if ansible_facts['distribution'] == 'Ubuntu'
+              else ['dnf', 'remove', '--assumeno', '--setopt=clean_requirements_on_remove=True'])
+             + system_cleanup_purge_packages }}
+      environment: {LC_ALL: C.UTF-8, LANGUAGE: ""}
+      become: true
+      register: system_cleanup_purge_orphans_after
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # Hard and soft dependencies alike: apt keeps what a manual package
+    # recommends, and dnf's weak dependencies are its recommends. dnf takes one
+    # --providers-of per query, so it asks twice.
+    - name: List what the packages depend on directly
+      ansible.builtin.command:
+        argv: >-
+          {{ (['apt-cache', 'depends', '--installed', '--no-suggests', '--no-conflicts',
+               '--no-breaks', '--no-replaces', '--no-enhances']
+              if ansible_facts['distribution'] == 'Ubuntu'
+              else ['dnf', '-q', 'repoquery', '--installed', '--providers-of=' ~ system_cleanup_purge_dep_kind, '--qf', '%{name}\n'])
+             + system_cleanup_purge_packages }}
+      loop: "{{ ['depends'] if ansible_facts['distribution'] == 'Ubuntu' else ['requires', 'recommends'] }}"
+      loop_control:
+        loop_var: system_cleanup_purge_dep_kind
+      environment: {LC_ALL: C.UTF-8, LANGUAGE: ""}
+      become: true
+      register: system_cleanup_purge_direct
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # apt: the Remv/Purg lines of each plan. dnf: the "Removing unused
+    # dependencies" table of the plan, checked against its summary count.
+    - name: Name the direct dependencies the removal newly orphans
+      ansible.builtin.set_fact:
+        system_cleanup_purge_new_orphans: >-
+          {{ _after | reject('in', _before) | reject('in', system_cleanup_purge_packages)
+             | select('in', _direct) | list }}
+        system_cleanup_purge_plan_read: >-
+          {{ system_cleanup_purge_orphans_before.rc == 0
+             and system_cleanup_purge_direct.results | rejectattr('rc', 'eq', 0) | list | length == 0
+             and (system_cleanup_purge_orphans_after.rc == 0
+                  if ansible_facts['distribution'] == 'Ubuntu'
+                  else (system_cleanup_purge_orphans_after.rc == 1
+                        and 'Operation aborted' in system_cleanup_purge_orphans_after.stdout
+                                                    ~ system_cleanup_purge_orphans_after.stderr
+                        and _summary | length == 1
+                        and _summary[0] | int == (system_cleanup_purge_packages | length) + (_after | length))) }}
+      vars:
+        _before: >-
+          {{ (system_cleanup_purge_orphans_before.stdout_lines | default([]) | select('match', '^(Purg|Remv) ')
+              | map('regex_replace', '^\S+ (\S+).*$', '\1') | list)
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else (system_cleanup_purge_orphans_before.stdout_lines | default([]) | map('trim') | select | list) }}
+        _after: >-
+          {{ (system_cleanup_purge_orphans_after.stdout_lines | default([]) | select('match', '^(Purg|Remv) ')
+              | map('regex_replace', '^\S+ (\S+).*$', '\1') | list)
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else ((system_cleanup_purge_orphans_after.stdout | default('')
+                    | regex_findall('(?s)Removing unused dependencies:\n(.*?)(?:\n\S|\n\n|$)') | first | default(''))
+                   .splitlines() | map('trim') | select | map('regex_replace', ' .*$', '') | list) }}
+        _summary: >-
+          {{ system_cleanup_purge_orphans_after.stdout | default('')
+             | regex_findall('Transaction Summary:\s*\n\s*Removing:\s+(\d+) package') }}
+        _direct: >-
+          {{ (system_cleanup_purge_direct.results | map(attribute='stdout_lines') | flatten
+              | select('match', '^\s*\|?(Depends|PreDepends|Recommends): [^<]')
+              | map('regex_replace', '^.*: (\S+).*$', '\1') | list)
+             if ansible_facts['distribution'] == 'Ubuntu'
+             else (system_cleanup_purge_direct.results | map(attribute='stdout_lines') | flatten
+                   | map('trim') | select | list) }}
+
+    - name: Report a removal stopped because its plan could not be read, {{ system_cleanup_purge_reason }}
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ (deploy_warnings | default([])
+              + ['Kept ' ~ system_cleanup_purge_packages | join(', ') ~ ' (' ~ system_cleanup_purge_reason ~ '):'
+                 ~ " the package manager's plan for it could not be read, so what it would orphan is unknown."])
+             | unique }}
+      when: not system_cleanup_purge_plan_read | bool
+
+    - name: Keep the direct dependencies the removal would orphan
+      ansible.builtin.command:
+        argv: >-
+          {{ (['apt-mark', 'manual'] if ansible_facts['distribution'] == 'Ubuntu'
+              else ['dnf', '-y', 'mark', 'user']) + system_cleanup_purge_new_orphans }}
+      become: true
+      changed_when: true
+      when:
+        - system_cleanup_purge_plan_read | bool
+        - system_cleanup_purge_new_orphans | length > 0
+
+    - name: Purge on Ubuntu, {{ system_cleanup_purge_reason }}
+      ansible.builtin.apt:
+        name: "{{ system_cleanup_purge_packages }}"
+        state: absent
+        purge: true
+        autoremove: false
+      become: true
+      when:
+        - system_cleanup_purge_plan_read | bool
+        - ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Remove on Fedora, {{ system_cleanup_purge_reason }}
+      ansible.builtin.dnf:
+        name: "{{ system_cleanup_purge_packages }}"
+        state: absent
+        autoremove: false
+      become: true
+      when:
+        - system_cleanup_purge_plan_read | bool
+        - ansible_facts['distribution'] == 'Fedora'

@@ -6,8 +6,6 @@ package presence is monkeypatched rather than read from this machine's real
 dpkg database.
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 

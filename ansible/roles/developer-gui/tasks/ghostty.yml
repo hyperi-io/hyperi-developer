@@ -36,10 +36,17 @@
 # ============================================================
 # Ghostty Installation - Fedora (COPR)
 # ============================================================
+# dnf5's own copr command, because community.general.copr needs dnf4's python3-dnf, which Fedora Server, cloud and minimal images lack.
+- name: Ensure the dnf5 copr plugin is present (Fedora)
+  ansible.builtin.dnf:
+    name: dnf5-plugins
+    state: present
+  when: ansible_facts['distribution'] == 'Fedora'
+
 - name: Enable scottames/ghostty COPR (Fedora)
-  community.general.copr:
-    name: scottames/ghostty
-    state: enabled
+  ansible.builtin.command:
+    argv: [dnf, -y, copr, enable, scottames/ghostty]
+    creates: /etc/yum.repos.d/_copr:copr.fedorainfracloud.org:scottames:ghostty.repo
   when: ansible_facts['distribution'] == 'Fedora'
 
 - name: Install Ghostty (Fedora)
@@ -49,53 +56,198 @@
   when: ansible_facts['distribution'] == 'Fedora'
 
 # ============================================================
-# Ghostty Installation - Ubuntu (pre-built .deb)
+# Ghostty Installation - Ubuntu (ppa:mkasberg/ghostty-ubuntu)
 # ============================================================
-- name: Get latest Ghostty release
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/mkasberg/ghostty-ubuntu/releases/latest
-    return_content: true
-    headers: "{{ hyperi_github_headers }}"
-  register: ghostty_latest
+- name: Install Ghostty from its PPA (Ubuntu)
+  vars:
+    developer_gui_ghostty_keyring: /etc/apt/keyrings/ghostty-ppa.asc
+    developer_gui_ghostty_repo_uri: http://ppa.launchpadcontent.net/mkasberg/ghostty-ubuntu/ubuntu
+    developer_gui_ghostty_pinned: "{{ ghostty_ppa_signing_fingerprint | upper | replace(' ', '') }}"
+    # Check mode adds no repo, so there is nothing to install from yet.
+    developer_gui_ghostty_repo_pending: "{{ ansible_check_mode and developer_gui_ghostty_repo is changed }}"
   when: ansible_facts['distribution'] == 'Ubuntu'
-  check_mode: false
+  block:
+    # Runs before any apt call, because another source for this repository
+    # with a different key stops apt reading anything.
+    - name: Remove other apt sources for the Ghostty PPA
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: apt_source_exclusive.yml
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_apt_source_name: ghostty
 
-# Assets are named ghostty_<ver>_<arch>_<suite>.deb, e.g.
-# ghostty_1.3.1-0.ppa2_arm64_24.04.deb. arm64 debs exist for every suite amd64
-# has, so this is a straight token swap.
-- name: Find .deb file for detected Ubuntu version
-  ansible.builtin.set_fact:
-    ghostty_deb_url: "{{ item.browser_download_url }}"
-  loop: "{{ ghostty_latest.json.assets }}"
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - "'_' + hyperi_arch_deb + '_' + ansible_facts['distribution_version'] + '.deb' in item.name"
+    # A minimal Ubuntu ships neither: gpg reads the key fingerprint, and
+    # deb822_repository needs python3-debian.
+    - name: Ensure gpg and python3-debian are present
+      ansible.builtin.apt:
+        name: [gpg, python3-debian]
+        state: present
 
-- name: Download Ghostty .deb
-  ansible.builtin.get_url:
-    url: "{{ ghostty_deb_url }}"
-    dest: /tmp/ghostty.deb
-    mode: '0644'
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - ghostty_deb_url is defined
+    - name: Create the apt keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
 
-- name: Install Ghostty (Ubuntu)
-  ansible.builtin.apt:
-    deb: /tmp/ghostty.deb
-    state: present
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - ghostty_deb_url is defined
-    - not ansible_check_mode
+    # failed_when: on a fresh host there is no trusted key to read yet.
+    - name: Read the trusted Ghostty PPA signing key
+      ansible.builtin.command:
+        argv: [gpg, --show-keys, --with-colons, "{{ developer_gui_ghostty_keyring }}"]
+      register: developer_gui_ghostty_trusted
+      changed_when: false
+      failed_when: false
+      check_mode: false
 
-- name: Remove Ghostty .deb
-  ansible.builtin.file:
-    path: /tmp/ghostty.deb
-    state: absent
-  when:
-    - ansible_facts['distribution'] == 'Ubuntu'
-    - ghostty_deb_url is defined
+    # A trusted file that already holds exactly the pinned key needs no fetch,
+    # so a keyserver outage cannot fail the converge of a provisioned host.
+    - name: Check whether the trusted Ghostty PPA key is already the pinned one
+      ansible.builtin.set_fact:
+        developer_gui_ghostty_key_current: >-
+          {{ developer_gui_ghostty_trusted.rc | default(1) == 0
+             and (developer_gui_ghostty_trusted.stdout_lines | select('match', '^pub:') | list | length) == 1
+             and ((developer_gui_ghostty_trusted.stdout_lines | select('match', '^fpr:') | first | default('')).split(':')[9]
+                  | default('')) == developer_gui_ghostty_pinned }}
+
+    # Not in check mode: keyserver.ubuntu.com answers the HEAD request get_url
+    # makes there with 405, and with no download there is nothing to verify.
+    - name: Fetch and verify the Ghostty PPA signing key
+      when:
+        - not developer_gui_ghostty_key_current | bool
+        - not ansible_check_mode
+      block:
+        - name: Download the Ghostty PPA signing key
+          ansible.builtin.get_url:
+            url: "{{ ghostty_ppa_signing_key_url }}"
+            dest: "{{ developer_gui_ghostty_keyring }}.unverified"
+            mode: '0644'
+            force: true
+
+        - name: Read the Ghostty PPA signing key fingerprint
+          ansible.builtin.command:
+            argv: [gpg, --show-keys, --with-colons, "{{ developer_gui_ghostty_keyring }}.unverified"]
+          register: developer_gui_ghostty_key
+          changed_when: false
+
+        # Exactly one primary key, and the pinned one: apt trusts every key in a
+        # Signed-By file, so a second key riding along would be trusted too.
+        - name: Verify the Ghostty PPA signing key fingerprint
+          ansible.builtin.assert:
+            that:
+              - developer_gui_ghostty_key_count | int == 1
+              - developer_gui_ghostty_key_fpr == developer_gui_ghostty_pinned
+            fail_msg: >-
+              Ghostty PPA key file holds {{ developer_gui_ghostty_key_count }} key(s), primary
+              {{ developer_gui_ghostty_key_fpr or 'missing' }}; expected exactly one,
+              {{ ghostty_ppa_signing_fingerprint }}
+            quiet: true
+          vars:
+            developer_gui_ghostty_key_count: "{{ developer_gui_ghostty_key.stdout_lines | select('match', '^pub:') | list | length }}"
+            developer_gui_ghostty_key_fpr: >-
+              {{ (developer_gui_ghostty_key.stdout_lines | select('match', '^fpr:')
+                  | first | default('')).split(':')[9] | default('') }}
+
+        - name: Install the verified Ghostty PPA signing key
+          ansible.builtin.copy:
+            src: "{{ developer_gui_ghostty_keyring }}.unverified"
+            dest: "{{ developer_gui_ghostty_keyring }}"
+            remote_src: true
+            owner: root
+            group: root
+            mode: '0644'
+
+    # The running release when the PPA publishes it, else the newest series it
+    # does publish -- see ghostty_ppa_supported_suites.
+    #
+    # http for the same reason as the git-core PPA in developer/tasks/git.yml:
+    # Launchpad over https hangs on half-working IPv6, and signed_by verifies
+    # what arrives whatever carried it.
+    - name: Add the Ghostty PPA repository
+      ansible.builtin.deb822_repository:
+        name: ghostty-ppa
+        types: deb
+        uris: "{{ developer_gui_ghostty_repo_uri }}"
+        suites: >-
+          {{ ansible_facts['distribution_release']
+             if ansible_facts['distribution_release'] in ghostty_ppa_supported_suites
+             else ghostty_ppa_supported_suites | last }}
+        components: main
+        signed_by: "{{ developer_gui_ghostty_keyring }}"
+        state: present
+      register: developer_gui_ghostty_repo
+
+    - name: Refresh the apt cache for the Ghostty PPA
+      ansible.builtin.apt:
+        update_cache: true
+      changed_when: false
+      when: not developer_gui_ghostty_repo_pending
+
+    - name: Read the ghostty versions apt offers
+      ansible.builtin.command:
+        argv: [apt-cache, madison, ghostty]
+      register: developer_gui_ghostty_madison
+      changed_when: false
+      check_mode: false
+      when: not developer_gui_ghostty_repo_pending
+
+    # Empty when ghostty is not installed.
+    - name: Read the installed ghostty version
+      ansible.builtin.command:
+        argv: [dpkg-query, -W, '-f=${Version}', ghostty]
+      register: developer_gui_ghostty_installed
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # A GitHub-release .deb (1.3.1-0~ppa2) sorts above the PPA's 1.3.1~ppa2-noble1, so apt never replaces it and this step swaps it for the PPA build.
+    - name: Replace a ghostty GitHub-release .deb with the PPA build
+      ansible.builtin.apt:
+        name: "ghostty={{ developer_gui_ghostty_ppa_versions | community.general.version_sort | last }}"
+        allow_downgrade: true
+      vars:
+        developer_gui_ghostty_ppa_versions: >-
+          {{ developer_gui_ghostty_madison.stdout_lines | select('search', developer_gui_ghostty_repo_uri)
+             | map('split', '|') | map(attribute=1) | map('trim') | list }}
+      when:
+        - not developer_gui_ghostty_repo_pending
+        - developer_gui_ghostty_installed.rc == 0
+        - developer_gui_ghostty_installed.stdout is match('^[0-9.]+-0~ppa[0-9]+$')
+        - developer_gui_ghostty_ppa_versions | length > 0
+
+    - name: Install Ghostty (Ubuntu)
+      ansible.builtin.apt:
+        name: ghostty
+        state: present
+      when: not developer_gui_ghostty_repo_pending
+
+  rescue:
+    # Deleted as a file on a key mismatch, leaving the trusted key: deb822_repository state=absent would delete that keyring too.
+    - name: Remove the Ghostty PPA repository after a key mismatch
+      ansible.builtin.file:
+        path: "{{ hyperi_exclusive_apt_sources.ghostty.file }}"
+        state: absent
+      when: ansible_failed_task.action in ['assert', 'ansible.builtin.assert']
+
+    - name: Remove the Ghostty PPA source if apt reported a conflicting key
+      ansible.builtin.include_role:
+        name: system_cleanup
+        tasks_from: apt_source_exclusive.yml
+        apply:
+          tags: ['always']
+      vars:
+        system_cleanup_apt_source_name: ghostty
+        system_cleanup_apt_source_failed: "{{ ansible_failed_result }}"
+
+    # unique: a persona can pull this role into the play a second time.
+    - name: Record that Ghostty did not install (Ubuntu)
+      # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared accumulator
+      ansible.builtin.set_fact:
+        deploy_warnings: >-
+          {{ (deploy_warnings | default([])
+              + ['Ghostty: ' ~ (ansible_failed_task.name | default('unknown task'))
+                 ~ ' -- ' ~ (ansible_failed_result.msg | default('no message'))]) | unique }}
 
 # ============================================================
 # Ghostty Installation - macOS (Homebrew)
@@ -228,7 +380,7 @@
 # ============================================================
 # CLI on PATH
 # ============================================================
-# Linux gets this free: the .deb and COPR both drop /usr/bin/ghostty.
+# Linux gets this free: the PPA and COPR packages both drop /usr/bin/ghostty.
 #
 # macOS does not. The cask installs Ghostty.app plus manpages and completions,
 # but no binary -- so `ghostty +validate-config`, `ghostty +list-themes` and

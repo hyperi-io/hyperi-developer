@@ -25,7 +25,6 @@
 # in place, not skipped when already present. `uv tool install --upgrade`
 # installs it if missing and pulls the latest PyPI release if present, so a
 # staff/contributor box that ran an earlier version does not stay pinned to it.
-# (In --pinned mode this instead installs the version from versions.yml.)
 - name: Install or upgrade hyperi-ci to the latest release
   ansible.builtin.command:
     cmd: uv tool install --upgrade hyperi-ci
@@ -104,24 +103,25 @@
 # of THIS repo (see CONTRIBUTING), not something hyperi-ci calls.
 #
 # Not packaged anywhere, so cargo it is -- the bottom rung, and the only rung.
-# --pinned takes the exact crates.io release from hyperi_versions -- latest otherwise.
+#
+# Into the effective CARGO_HOME developer-rust resolved, else the one the host
+# exports, where `cargo install-update` finds it.
 - name: Install alint (repository-structure linter, NOT ansible-lint)
   ansible.builtin.command:
-    cmd: >-
-      cargo install alint
-      {{ ('--version ' ~ (hyperi_versions['alint'] | regex_replace('^v', '')))
-      if (hyperi_pinned | default(false) and 'alint' in (hyperi_versions | default({})))
-      else '' }}
-    creates: "{{ user_home }}/.cargo/bin/alint"
+    cmd: cargo install alint
+    creates: "{{ contributor_cargo_home }}/bin/alint"
   become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
   become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
-  environment:
-    # /opt/homebrew/opt/rustup/bin: brew's rustup never links its shims into
-    # /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac. This
-    # task has no distribution gate, so it runs there too.
-    PATH: >-
-      {{ user_home }}/.cargo/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:{{
-      ansible_facts['env'].PATH }}
+  # /opt/homebrew/opt/rustup/bin: brew's rustup never links its shims into
+  # /opt/homebrew/bin, so without it no cargo resolves on a rustup Mac. This
+  # task has no distribution gate, so it runs there too.
+  environment: >-
+    {{ cargo_env | default({'PATH': contributor_cargo_home ~ '/bin:/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/local/bin:'
+                                    ~ ansible_facts['env'].PATH,
+                            'CARGO_HOME': contributor_cargo_home}
+                           | combine({'RUSTUP_HOME': hyperi_host_rustup_home} if hyperi_host_rustup_home | default('') else {})) }}
+  vars:
+    contributor_cargo_home: "{{ developer_rust_cargo_home | default(hyperi_cargo_home | default(user_home ~ '/.cargo')) }}"
   register: contributor_alint
   changed_when: "'Installed package' in contributor_alint.stdout | default('')"
   failed_when: false
@@ -143,13 +143,14 @@
 # ============================================================================
 # hyperi-ci calls it for Rust and TypeScript dependency audits. brew has it; no
 # distro packages it, so both Linuxes take the official google/osv-scanner
-# release binary (Tier 3 -- hyperi-update pulls the latest on each run).
+# release binary (Tier 3 -- hyperi-update pulls the newest past the release-age
+# cooldown on each run).
 #
 # Not the `osv-scanner` snap: it is published strict, so `classic: true` is not
 # honoured and the confined build can read only $HOME. Repos under /projects are
 # invisible to it, and the resulting scan failure surfaces through hyperi-ci as
 # "issues found (non-blocking)" -- a gate failing open while reading like a
-# result. It also ignores hyperi_versions and refreshes on snapd's schedule.
+# result. It also refreshes on snapd's own schedule.
 - name: Install osv-scanner (macOS)
   community.general.homebrew:
     name: osv-scanner
@@ -168,30 +169,44 @@
 - name: Install osv-scanner (Linux -- re-fetched GitHub release, Tier 3)
   when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
   block:
-    # --pinned takes the CI-exact tag from group_vars; latest otherwise -- and
-    # only then do we hit the GitHub API, so a pinned install does not depend
-    # on it. Same shape as kubeconform in the infrastructure role.
-    - name: Get latest osv-scanner version
-      ansible.builtin.uri:
-        url: https://api.github.com/repos/google/osv-scanner/releases/latest
-        return_content: true
-        headers: "{{ hyperi_github_headers }}"
-      register: contributor_osv_latest
-      check_mode: false
-      when: not (hyperi_pinned | default(false) and 'osv-scanner' in (hyperi_versions | default({})))
+    # Same shape as kubeconform in the infrastructure role.
+    - name: Resolve the osv-scanner release
+      ansible.builtin.include_role:
+        name: github_release
+        # The include is already gated by this file's tags, and its tasks carry none.
+        apply:
+          tags: ['always']
+      vars:
+        github_release_repo: google/osv-scanner
 
-    - name: Resolve the osv-scanner tag (pinned or latest)
+    - name: Resolve the osv-scanner tag
       ansible.builtin.set_fact:
-        contributor_osv_ref: >-
-          {{ hyperi_versions['osv-scanner']
-             if (hyperi_pinned | default(false) and 'osv-scanner' in (hyperi_versions | default({})))
-             else contributor_osv_latest.json.tag_name }}
+        contributor_osv_ref: "{{ github_release_doc.tag_name }}"
+        contributor_osv_asset: "osv-scanner_linux_{{ hyperi_arch_deb }}"
 
+    - name: Fetch the osv-scanner release checksums
+      ansible.builtin.uri:
+        url: https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_ref }}/osv-scanner_SHA256SUMS
+        return_content: true
+      register: contributor_osv_sums
+      check_mode: false
+
+    - name: Resolve the osv-scanner checksum
+      ansible.builtin.set_fact:
+        contributor_osv_sha: >-
+          {{ (contributor_osv_sums.content.splitlines()
+              | select('match', '^[0-9a-f]{64} +' ~ contributor_osv_asset ~ '$')
+              | first).split() | first }}
+
+    # Without a checksum get_url keeps whatever already sits at dest, so a new
+    # release never landed. The digest comes from the same release, so it detects
+    # a change and a truncated download; it is not a provenance check.
     - name: Download osv-scanner
       ansible.builtin.get_url:
         url: >-
-          https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_ref }}/osv-scanner_linux_{{ hyperi_arch_deb }}
+          https://github.com/google/osv-scanner/releases/download/{{ contributor_osv_ref }}/{{ contributor_osv_asset }}
         dest: /usr/local/bin/osv-scanner
+        checksum: "sha256:{{ contributor_osv_sha }}"
         owner: root
         group: root
         mode: '0755'

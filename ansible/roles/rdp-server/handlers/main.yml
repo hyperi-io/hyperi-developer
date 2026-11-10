@@ -1,10 +1,6 @@
 ---
 # RDP Role - Handlers
 
-- name: reload udev rules
+- name: Reload udev rules
   ansible.builtin.command: udevadm control --reload-rules
-  changed_when: true
-
-- name: trigger udev rules
-  ansible.builtin.command: udevadm trigger --subsystem-match=drm
   changed_when: true

@@ -25,6 +25,7 @@
         - bw          # Bitwarden — removed by decision
         - linear      # Linear CLI — removed by decision
         - minikube    # superseded by kind
+        - dive        # dropped, unmaintained since 2025-05
       register: verify_gone
 
     - name: Assert retired artefacts were removed
@@ -40,9 +41,12 @@
       loop_control:
         label: "{{ item.item }}"
 
+    # Ubuntu only, like the assertion that reads it: on Fedora package_facts
+    # needs rpm Python bindings a minimal image lacks.
     - name: Gather installed packages
       ansible.builtin.package_facts:
         manager: auto
+      when: ansible_facts['distribution'] == 'Ubuntu'
 
     # Ubuntu only: prepare.yml installs these through apt, and the names are
     # Debian's.
@@ -64,6 +68,76 @@
       loop_control:
         label: "{{ item }}"
       when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # ==================================================================
+    # SUPERSEDED BY A PACKAGE -- both directions, per distro. A copy goes
+    # where prepare installed the package that replaces it, and stays where
+    # it did not: there it is the only working copy.
+    # ==================================================================
+    - name: Stat the copies a package supersedes
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+      loop: "{{ verify_superseded_gone[ansible_facts['distribution']] | default([]) }}"
+      register: verify_superseded_gone_stat
+      vars:
+        verify_superseded_gone:
+          Ubuntu: [kubectx, kubens, helm]
+          Fedora: [k9s, gitleaks]
+
+    - name: Assert the superseded copies were removed
+      ansible.builtin.assert:
+        that:
+          - not item.stat.exists
+        fail_msg: >-
+          /usr/local/bin/{{ item.item }} survived beside the package that
+          supplies it. /usr/local/bin precedes /usr/bin on PATH, so it shadows
+          the package and nothing updates it.
+        success_msg: "/usr/local/bin/{{ item.item }} removed"
+      loop: "{{ verify_superseded_gone_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Stat the copies with no package behind them
+      ansible.builtin.stat:
+        path: "/usr/local/bin/{{ item }}"
+      loop: "{{ verify_superseded_kept[ansible_facts['distribution']] | default([]) }}"
+      register: verify_superseded_kept_stat
+      vars:
+        # Fedora helm and kustomize have a /usr/bin entry that is a link back
+        # into /usr/local/bin and a dangling link -- not a packaged copy.
+        verify_superseded_kept:
+          Ubuntu: [k9s, gitleaks]
+          Fedora: [kubectx, kubens, helm, kustomize]
+
+    - name: Assert copies with no package behind them were left alone
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: >-
+          /usr/local/bin/{{ item.item }} was REMOVED although no package
+          supplies it here. It was the only working copy of the tool.
+        success_msg: "/usr/local/bin/{{ item.item }} correctly left alone"
+      loop: "{{ verify_superseded_kept_stat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # The tombstones touch /usr/local/bin only; the package's own files stay.
+    # Ubuntu only: prepare installs the kubectx package there.
+    - name: Stat the packaged kubectx and kubens (Ubuntu)
+      ansible.builtin.stat:
+        path: "/usr/bin/{{ item }}"
+      loop: "{{ ['kubectx', 'kubens'] if ansible_facts['distribution'] == 'Ubuntu' else [] }}"
+      register: verify_packaged_kubectx
+
+    - name: Assert the packaged kubectx and kubens survived
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "/usr/bin/{{ item.item }} is gone -- a tombstone removed the package's own file."
+        success_msg: "/usr/bin/{{ item.item }} intact"
+      loop: "{{ verify_packaged_kubectx.results }}"
+      loop_control:
+        label: "{{ item.item }}"
 
     # ==================================================================
     # MUST SURVIVE — the half that stops us becoming destructive
@@ -122,11 +196,11 @@
           uv does not resolve to the stale copy
           (resolved: '{{ verify_uv_which.stdout | default('nothing', true) }}')
 
-    # The Fedora binary-to-dnf migrations (yq, kustomize) are not asserted here.
-    # This scenario is Ubuntu only -- see molecule.yml -- and the assertion would
-    # need a full converge anyway, since a removals-only run never installs the
-    # package that is supposed to win.
-    # The repo is the half that keeps serving BUSL packages if it survives.
+    # The Fedora yq migration is not asserted here: its removal sits in the
+    # install path of utilities.yml, which a removals-only run never reaches.
+    # kustomize is covered in the superseded-by-a-package section above.
+    # Without Packer the repo is unhooked, because one left trusting a superseded
+    # key fails every apt refresh. With Packer (the gosrc host) it stays.
     - name: Stat the HashiCorp repository artefacts (Ubuntu)
       ansible.builtin.stat:
         path: "{{ item }}"
@@ -138,19 +212,36 @@
       register: verify_hashicorp
       when: ansible_facts['distribution'] == 'Ubuntu'
 
-    - name: Assert the HashiCorp repository was unhooked
+    - name: Assert the HashiCorp repository was unhooked where Packer is absent
       ansible.builtin.assert:
         that:
           - not item.stat.exists
         fail_msg: >-
-          {{ item.item }} survived remediation. The HashiCorp repo goes on
-          serving BUSL packages and updates for as long as it is configured,
-          so leaving it is worse than leaving the binaries.
+          {{ item.item }} survived remediation on a host without Packer. A
+          HashiCorp repo whose key the host no longer trusts fails every apt
+          refresh, and nothing else here removes it.
         success_msg: "{{ item.item }} removed"
       loop: "{{ verify_hashicorp.results | default([]) }}"
       loop_control:
         label: "{{ item.item | default('skipped') }}"
-      when: ansible_facts['distribution'] == 'Ubuntu'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' not in inventory_hostname"
+
+    - name: Assert the HashiCorp repository was kept where Packer is installed
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: >-
+          {{ item.item }} was removed from a host with Packer installed, which
+          leaves Packer with no update source.
+        success_msg: "{{ item.item }} kept"
+      loop: "{{ verify_hashicorp.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('skipped') }}"
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - "'gosrc' in inventory_hostname"
 
     - name: Stat the retired vendor repository artefacts (Ubuntu)
       ansible.builtin.stat:
@@ -191,6 +282,172 @@
           menu — the sandboxed one, which cannot read ~/.ssh or a unix socket.
         success_msg: "DBeaver flatpak removed"
       when: ansible_facts['distribution'] == 'Ubuntu'
+
+    # ==================================================================
+    # HAND-INSTALLED DUPLICATES -- both directions.
+    # ==================================================================
+    - name: Stat the user-level copies
+      ansible.builtin.stat:
+        path: "{{ ansible_facts['env']['HOME'] }}/{{ item.path }}"
+        follow: false
+      loop:
+        - {path: .local/bin/kind, gone: true}
+        - {path: go/bin/lazygit, gone: true}
+        - {path: .local/bin/kubeconform, gone: false}
+        - {path: .local/bin/tinygo-dev, gone: false}
+        - {path: .local/bin/argocd, gone: false}
+        - {path: .local/bin/lazygit, gone: false}
+        - {path: .local/bin/kubectx, gone: false}
+        - {path: .local/bin/yq, gone: false}
+      loop_control:
+        label: "{{ item.path }}"
+      register: verify_user_copies
+
+    - name: Assert user-level duplicates went and everything else stayed
+      ansible.builtin.assert:
+        that:
+          - (item.stat.exists or item.stat.islnk | default(false)) != item.item.gone
+        fail_msg: >-
+          ~/{{ item.item.path }} {{ 'survived beside the managed copy it shadows'
+          if item.item.gone else 'was REMOVED -- it was the only copy, a link, a
+          directory, or a tool the sweep does not cover' }}.
+        success_msg: "~/{{ item.item.path }} {{ 'removed' if item.item.gone else 'left alone' }}"
+      loop: "{{ verify_user_copies.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"
+
+    # The managed copies themselves must never be what goes.
+    - name: Stat the managed copies behind the duplicates
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/bin/kind
+        - /usr/local/bin/lazygit
+        - /usr/local/bin/argocd
+        - /usr/local/bin/macbash
+        - /usr/local/bin/git-scrub
+        - /usr/local/bin/yq
+        - /usr/local/go/bin/go
+      register: verify_managed_copies
+
+    - name: Assert the managed copies survived
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+        fail_msg: "{{ item.item }} is gone -- a duplicate sweep removed the managed copy."
+        success_msg: "{{ item.item }} intact"
+      loop: "{{ verify_managed_copies.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Re-read the installed packages
+      ansible.builtin.package_facts:
+        manager: auto
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: List the installed packages (Fedora)
+      ansible.builtin.command:
+        argv: [rpm, -qa, --qf, "%{NAME}\n"]
+      register: verify_rpms
+      changed_when: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Collect the installed package names
+      ansible.builtin.set_fact:
+        verify_installed: >-
+          {{ ansible_facts.packages.keys() | list if ansible_facts['distribution'] == 'Ubuntu'
+             else verify_rpms.stdout_lines }}
+
+    # On the golink host /usr/local/go IS the distro tree, and on gosrc its
+    # standard library still links into the distro's, so the distro Go
+    # stays. On Fedora the repository golangci-lint requires golang, so it stays
+    # there too.
+    - name: Assert the hand-installed and distro duplicates were removed
+      ansible.builtin.assert:
+        that:
+          - verify_installed | select('match', item) | list | length == 0
+        fail_msg: "{{ item }} is still installed beside the managed copy it duplicates."
+        success_msg: "{{ item }} removed"
+      loop: >-
+        {{ ['^macbash$']
+           + ([] if inventory_hostname is search('golink|gosrc') else
+              (['^golang-go$', '^golang-src$', '^golang-[0-9.]+-go$']
+               if ansible_facts['distribution'] == 'Ubuntu' else [])) }}
+
+    - name: Assert the packages that must stay are still installed
+      ansible.builtin.assert:
+        that:
+          - item in verify_installed
+        fail_msg: >-
+          {{ item }} was removed. It has a dependant, is not on the purge list,
+          is offered by a repository, or is the only Go.
+        success_msg: "{{ item }} kept"
+      loop: >-
+        {{ ((['git-scrub', 'git-scrub-dependant', 'kind', 'k9s']
+             + (['golang-go'] if inventory_hostname is search('golink|gosrc') else []))
+            if ansible_facts['distribution'] == 'Ubuntu'
+            else ['golangci-lint', 'golang']) }}
+
+    # A managed Go that still runs `go version` can have lost its standard
+    # library with the distro packages, so it has to build something.
+    - name: Write a program for the managed Go to build
+      ansible.builtin.copy:
+        content: |
+          package main
+
+          func main() { println("ok") }
+        dest: /root/verify-hello.go
+        mode: '0644'
+
+    - name: Build with the managed Go
+      ansible.builtin.command:
+        argv: [/usr/local/go/bin/go, run, /root/verify-hello.go]
+      environment:
+        GOTOOLCHAIN: local
+        GOFLAGS: -mod=mod
+      register: verify_go_build
+      changed_when: false
+      failed_when: verify_go_build.rc != 0
+
+    # The Go purge must not leave the compiler toolchain for the updater's
+    # unattended autoremove to take.
+    - name: Simulate the updater's autoremove (Ubuntu)
+      ansible.builtin.command:
+        argv: [apt-get, -s, autoremove]
+      register: verify_autoremove
+      changed_when: false
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: Assert the Go purge orphaned no compiler toolchain (Ubuntu)
+      ansible.builtin.assert:
+        that:
+          - verify_autoremove.stdout_lines | select('match', '^Remv ' ~ item ~ ' ') | list | length == 0
+        fail_msg: "apt-get autoremove would now remove {{ item }}, orphaned by the Go purge."
+        success_msg: "{{ item }} not autoremovable"
+      loop:
+        - gcc
+        - binutils
+        - libc6-dev
+      when: ansible_facts['distribution'] == 'Ubuntu'
+
+    - name: List what dnf would autoremove (Fedora)
+      ansible.builtin.command:
+        argv: [dnf, -q, repoquery, --unneeded, --qf, "%{name}\n"]
+      register: verify_unneeded
+      changed_when: false
+      when: ansible_facts['distribution'] == 'Fedora'
+
+    - name: Assert the Go purge orphaned no compiler toolchain (Fedora)
+      ansible.builtin.assert:
+        that:
+          - item not in verify_unneeded.stdout_lines
+        fail_msg: "dnf autoremove would now remove {{ item }}, orphaned by the Go purge."
+        success_msg: "{{ item }} not autoremovable"
+      loop:
+        - gcc
+        - binutils
+        - glibc-devel
+      when: ansible_facts['distribution'] == 'Fedora'
 
     # PATH hygiene is NOT asserted here. The tasks that drop the unguarded
     # ~/.bashrc prepends live in the install path of the developer and

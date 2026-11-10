@@ -9,8 +9,8 @@ persona.
 Four levels, smallest to largest: **tool -> group -> role -> persona.** Every
 level is selectable the same way from Ansible and from `install.sh`
 (`--tags <name>`). The bare `./install.sh` runs only the additive `developer`
-base; everything else is opt-in. Two fetch modes: **latest** (default, no
-maintenance) and **`--pinned`** (opt-in: exact versions mirroring hyperi-ci).
+base; everything else is opt-in. Every tool is fetched at whatever version is
+current when the installer runs.
 
 ```mermaid
 flowchart TD
@@ -97,9 +97,11 @@ flowchart TD
 | developer-typescript | `developer-typescript` | developer-node | opt-in |
 | developer-languages | `developer-languages` | all `developer-<lang>` | opt-in (meta) |
 | infrastructure | `infrastructure` | - | opt-in |
+| packer | `packer` | - | opt-in, in no persona |
 | contributor | `contributor` | developer | opt-in |
 | soe | `soe` | contributor | opt-in |
 | soe-gui | `soe-gui` | astral, rdp-client | opt-in |
+| developer-ai | `developer-ai` | - (probed, not declared) | opt-in |
 | rdp-server | `rdp-server` | - | opt-in |
 | rdp-client | `rdp-client` | - | opt-in; pulled by default via soe-gui |
 | vpn-clients | `vpn-clients` | - | opt-in / soe default |
@@ -108,6 +110,13 @@ flowchart TD
 | vm_optimizer | `vm` | - | opt-in |
 | system_cleanup | `always` | - | always (cache-clean only) |
 
+`developer-ai`'s empty Deps column is not the same empty as the others. It has
+three hard dependencies - Claude Code, the codex binary, node - and declares
+none of them, because declaring them would be wrong twice over. Claude Code
+comes only from `soe`, so depending on it drags HyperI org policy onto a box
+that asked for a review tool; node comes from the `developer` base rather than
+`developer-node`, so the dependency that looks right supplies nothing. Whether Claude Code is there depends on what the target user's PATH reaches, which no role graph can answer. The run probes the target for all three instead and names the tag that fixes each miss.
+
 ## Groups - themed tag bundles inside a role
 
 A group is a themed tag over several tools in one role, so you can take the set
@@ -115,8 +124,9 @@ without the whole role.
 
 | Group | Tag | Role | Tools |
 |---|---|---|---|
+| ai | `ai` | developer-ai | Codex CLI, the Codex plugin for Claude Code |
 | cloudflare | `cloudflare` | infrastructure | flarectl, wrangler |
-| data | `data` | infrastructure | clickhouse-client, rpk, valkey-cli, vector |
+| data | `data` | infrastructure | clickhouse-client, confluent-cli, rpk, valkey-cli, vector |
 | forgejo | `forgejo` / `codeberg` | soe | tea (Forgejo/Gitea CLI) |
 | rdp-client | `rdp-client` | rdp-client | Remmina (Linux), Thincast (macOS) |
 | vpn-clients | `vpn-clients` | vpn-clients | OpenVPN 3, WireGuard, Tunnelblick (macOS) |
@@ -124,46 +134,53 @@ without the whole role.
 Per-app tags stay too (`--tags vscode`, `--tags slack`, ...): run
 `./install.sh --list-apps` for the full per-app list.
 
-## Tool matrix - install method and pin policy per tool
+## Tool matrix - install method per tool
 
-`Method` is how the tool is fetched. **Default installs are always latest and
-unpinned** - the `Pinned` column applies ONLY when you opt into `--pinned`, and
-then says what that mode does: **SHA256** = manual binary; **version** =
-repo/brew-signed, pin the version only; **n/a** = not pinnable/meta.
+`Method` is how the tool is fetched. Every install resolves the current version
+at run time, so there is no per-tool version policy to read here.
 
-**SHA256 marks the rows that NEED a checksum, not the rows that have one.**
-Pinning is by tag today across the board, and digest verification at download is
-still the planned hardening (see Auto-update below, and hyperi-ci #66). A tag can
-be force-moved, so those rows currently rest on HTTPS and the tag alone.
+**Digest verification is not universal.** `go` and `rustup` fetch a checksum
+from their publisher and verify it. The rest rest on HTTPS and the release tag,
+which a publisher can in principle force-move. Extending checksum-at-download to
+the other manual binaries is the outstanding hardening (hyperi-ci #66).
 
-Four fetches do verify a digest today, and they are the ones whose SHA is held
-in the repo or read from a published manifest: the Go toolchain, rustup-init,
-the Claude Code binary, and macbash (whose `.sha256` sits beside the asset on
-downloads.hyperi.io, so the fetch also re-pulls a republished binary).
+Three fetches verify a digest IN THIS REPO, and they are the ones whose SHA is held here or read from a published manifest: the Go toolchain, rustup-init, and macbash (whose `.sha256` sits beside the asset on downloads.hyperi.io, so the fetch also re-pulls a republished binary). A fourth, the Codex CLI on Linux, DELEGATES the check to a vendor script this repo runs unverified. That is a weaker position than the other three and is counted separately on purpose. Claude Code is Anthropic's native build on every platform: the release manifest's detached signature is checked against the release key, pinned by fingerprint, and the binary against the manifest's SHA256.
+
+Codex is the one where what is verified matters. The installer script has no
+published checksum of its own; what it verifies is its payload, the
+`codex-package-<target>.tar.gz` release tarball, against the published
+`codex-package_SHA256SUMS` before it unpacks anything. So the digest covers what
+lands on disk, not the script that puts it there, and the script is re-fetched
+and re-run unattended by the weekly `hyperi-update` timer on an soe box. That
+check is still most of why the role runs the installer rather than fetching the
+asset itself: the thin `codex-<target>.tar.gz` assets, the obvious thing to
+reach for instead, are not in that manifest and have no published digest at all.
 
 ### developer (base, additive - runs bare)
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| astral suite: uv, ruff, ty (uv bundles `uv audit` + `uv check`) | all | Fedora dnf / macOS brew; Ubuntu has no apt package (see Auto-update) | version / SHA256 |
-| CLI utils (jq, gron, bat, fzf, ripgrep, fd, git-delta, moreutils, miller, rsync, tmux, htop, wget, shellcheck, age, parallel, ...) | all | distro repo / brew | version |
-| sd | all | distro (apt/dnf) / brew | version |
-| yq (mikefarah; apt `yq` is kislyuk/yq, a different tool) | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
-| lazygit | all | Fedora COPR / Ubuntu apt (re-fetch on 24.04 LTS) / brew | version / SHA256 |
-| docker (Engine on Linux, CLI-only on macOS) | all | vendor-repo / brew | version |
-| git, git-lfs, git-filter-repo, gh | all | distro/PPA/brew | version |
-| chrome, brave (opt-in `never`) | all | vendor-repo / cask | version |
-| Homebrew (bootstrap) | macOS | vendor-script | n/a |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| astral suite: uv, ruff, ty (uv bundles `uv audit` + `uv check`) | all | Fedora dnf / macOS brew; Ubuntu has no apt package (see Auto-update) |
+| Python 3.14 for uv (`astral_python_version`), pinned as uv's global default; system `python3` untouched | all | system python3 where it is 3.14+ (Fedora, Ubuntu 26.04), else `uv python install`; `uv python pin --global` per user |
+| CLI utils (jq, bat, fzf, ripgrep, fd, git-delta, moreutils, miller, rsync, tmux, htop, wget, shellcheck, age, parallel, ...) | all | distro repo / brew |
+| gron | Ubuntu, macOS | apt / brew (no Fedora package) |
+| sd | all | distro (apt/dnf) / brew |
+| yq (mikefarah; apt `yq` is kislyuk/yq, a different tool) | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
+| lazygit | all | Linux github-binary (Tier 3: re-fetch) / brew |
+| docker (Engine on Linux, CLI-only on macOS) | all | vendor-repo / brew |
+| git, git-lfs, git-filter-repo, gh | all | distro/PPA/brew |
+| chrome, brave (opt-in `never`) | all | vendor-repo / cask |
+| Homebrew (bootstrap) | macOS | vendor-script |
 
 ### developer-gui
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| VS Code | all | vendor-repo / cask | version |
-| Ghostty | Fedora (COPR) / macOS (cask) | vendor-repo / cask | version |
-| Ghostty | Ubuntu | github-binary (.deb) | SHA256 |
-| DBeaver | all | Ubuntu vendor-repo (dbeaver.io/debs) / Fedora flatpak / cask | version |
-| VS Code privacy profile (opt-in: `-e vscode_privacy_enabled=true`) | all | bundled script (`hyperi-vscode-privacy`) | n/a |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| VS Code | all | vendor-repo / cask |
+| Ghostty | Fedora (COPR) / macOS (cask) | vendor-repo / cask |
+| Ghostty | Ubuntu | PPA (`ppa:mkasberg/ghostty-ubuntu`, key pinned by fingerprint); 24.04 is frozen at Ghostty 1.3.1 by the PPA, only 26.04 tracks new releases; a series the PPA does not publish takes the newest series it does |
+| DBeaver | all | Ubuntu vendor-repo (dbeaver.io/debs) / Fedora flatpak / cask |
+| VS Code privacy profile (opt-in: `-e vscode_privacy_enabled=true`) | all | bundled script (`hyperi-vscode-privacy`) |
 
 The privacy profile is off by default because it edits a personal
 `settings.json`. It merges one marked block of managed keys into VSCode,
@@ -180,20 +197,21 @@ is the meta-role pulling them all.
 
 #### developer-rust
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| rustup + stable toolchain, rustfmt, clippy | all | vendor-script + rustup | n/a |
-| cargo-binstall | all | cargo | n/a |
-| cargo-* (nextest, deny, chef, bacon, update) | all | cargo | n/a |
-| cargo-audit, cargo-hack, cargo-pgo | all | cargo | n/a |
-| cargo-machete (unused deps), cargo-semver-checks (API breaks) | all | cargo | n/a |
-| cargo-llvm-cov + llvm-tools-preview | all | cargo / rustup | n/a |
-| protobuf-compiler, librdkafka-dev | Linux | distro repo | version |
-| mold, clang | Linux | distro repo | version |
-| sccache | all | github-binary, latest each run (Tier 3) / brew | SHA256 verified |
-| cargo-sweep | all | cargo-binstall / cargo | n/a |
-| hyperi-rust-setup, hyperi-rust-cache-prune | all | role file -> `/usr/local/bin` | n/a |
-| build governor (`hyperi-rust-govern` + `rust-build.slice`) | all | role file + user unit | n/a |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| rustup + stable toolchain, rustfmt, clippy | all | vendor-script + rustup |
+| cargo-binstall | all | cargo |
+| cargo-* (nextest, deny, chef, bacon, update) | all | cargo |
+| cargo-audit, cargo-hack, cargo-pgo | all | cargo |
+| cargo-machete (unused deps), cargo-semver-checks (API breaks) | all | cargo |
+| cargo-llvm-cov + llvm-tools-preview | all | cargo / rustup |
+| protobuf-compiler | Linux | distro repo |
+| librdkafka1, librdkafka-dev (Fedora: librdkafka-devel) | Linux | vendor-repo (Confluent clients repo) |
+| mold, clang | Linux | distro repo |
+| sccache | all | github-binary, latest each run (Tier 3) / brew |
+| cargo-sweep | all | cargo-binstall / cargo |
+| hyperi-rust-setup, hyperi-rust-cache-prune | all | role file -> `/usr/local/bin` |
+| build governor (`hyperi-rust-govern` + `rustbuild.slice`) | all | role file + user unit |
 
 Every cargo tool is installed with `--locked`, and `hyperi-update` refreshes them
 with `cargo install-update -a --locked`. `cargo install` ignores the crate's
@@ -220,84 +238,85 @@ full toolchain converge:
 
 The build governor is the same shape (`--tags rust-governor`), and opt-OUT
 (`-e rust_governor_enabled=false` removes it). Concurrent cargo/rustc across
-several projects can OOM a host outright, so: one build at a time per user
-(later ones wait on a lock), the whole tree -- sccache-hosted compiles
-included -- inside `rust-build.slice` with memory capped as a percentage of
-the host's RAM, CPU capped at cores minus two, and priority below the
-desktop. macOS has no cgroups and gets the lock, the job cap and a
-`taskpolicy` QoS clamp instead -- no hard memory ceiling.
-`HYPERI_RUST_GOVERNOR=off` bypasses one invocation.
+several projects can OOM a host outright, so: the whole tree -- sccache-hosted
+compiles included -- runs inside `rustbuild.slice` with memory capped as a
+percentage of the host's RAM, at nice 19 and a CPU weight below the desktop's.
+No core is withheld and no job count is set: builds take every core until
+something else wants one. macOS has no cgroups and gets nice 19 alone -- no
+hard memory ceiling. `HYPERI_RUST_GOVERNOR=off` bypasses one invocation.
 
-That tag installs both tools, writes the caps, and schedules the prune
+The `rust-cache` tag installs both tools, writes the caps, and schedules the prune
 (systemd timer on Linux, launchd agent on macOS). Sizes come from
 `rust_cache_*` in the role defaults; a build box overrides them per host.
 
 #### developer-go
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| go, delve | all | distro repo / brew | version |
-| gopls | all | go install | n/a |
-| golangci-lint* (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
-| gosec, govulncheck | all | Fedora dnf / Ubuntu `go install` / brew | version |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| go, delve | all | distro repo / brew |
+| gopls | all | go install |
+| golangci-lint* (Tier 3: re-fetch) | all | github-binary / brew |
+| gosec, govulncheck | all | Fedora dnf / Ubuntu `go install` / brew |
 
 #### developer-python
 
 The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 `uv check`, so this role adds only the opt-in legacy type checker.
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| mypy (opt-in; `uv check`/`ty` is the default) | all | uv-tool | version |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| mypy (opt-in; `uv check`/`ty` is the default) | all | uv-tool |
 
 #### developer-node
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| node, npm | all | vendor-repo / brew | version |
-| semantic-release (+ plugins) | all | npm global | n/a |
-| pnpm, corepack | all | corepack (ships with node) | n/a |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| eslint, prettier | all | npm global |
+
+The runtime is NOT here. node, npm, semantic-release, pnpm and corepack live in
+the `developer` base -- they are core tooling that semantic-release and CI need,
+so the base installs them and this role adds only the linters. That matters
+because it decides which tag fixes a missing node: `developer`, not
+`developer-node`. developer-ai's plugin gate says so in its warning, and this
+table used to say the opposite.
 
 #### developer-typescript (dep: developer-node)
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| typescript, tsx, ts-node | all | pnpm global | n/a |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| typescript, tsx | all | pnpm global |
 
 #### developer-c
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| C build tools (gcc, make, cmake, pkg-config) | Linux distro; macOS CLT | distro / xcode-select | version |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| C build tools (gcc, make, cmake, pkg-config) | Linux distro; macOS CLT | distro / xcode-select |
 
 ### infrastructure
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| kubectl | all | vendor-repo (pkgs.k8s.io) / brew | version |
-| helm | all | vendor-repo (baltocdn apt/dnf) / brew | version |
-| kubectx, kubens | all | distro (apt universe / dnf) / brew | version |
-| k9s | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
-| kind, argocd (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
-| kustomize | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
-| checkov | all | uv-tool (Tier 2) / brew | version |
-| terraform-docs (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
-| dive (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
-| aws-cli v2 | all | Fedora dnf (`awscli2`) / Ubuntu official snap / brew | version |
-| aws-vault (Tier 3: re-fetch) | all | github-binary / brew | SHA256 |
-| opentofu (`tofu`) | all | vendor-repo (packages.opentofu.org), apt AND dnf / brew | version |
-| openbao | all | vendor-repo (pkgs.openbao.org) / Fedora dnf / brew | version |
-| azure-cli, google-cloud-cli | all | vendor-repo / cask | version |
-| clickhouse-client, rpk, valkey-cli, vector (the `data` group) | Linux; macOS partial | vendor-repo / distro | version |
-| wrangler (the `cloudflare` group) | all | npm-global / brew | version |
-| flarectl (the `cloudflare` group) | all | `go install` from source / brew | source tag |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| kubectl | all | vendor-repo (pkgs.k8s.io), the minor in `infrastructure_kubectl_minor` / brew |
+| helm | all | Ubuntu vendor-repo (packages.buildkite.com) / Fedora dnf / brew |
+| kubectx, kubens | all | Ubuntu apt universe / Fedora github-binary (Fedora packages neither) / brew |
+| k9s | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
+| kind, argocd (Tier 3: re-fetch) | all | github-binary / brew |
+| kustomize | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
+| checkov | all | uv-tool (Tier 2) / brew |
+| terraform-docs (Tier 3: re-fetch) | all | github-binary / brew |
+| aws-cli v2 | all | Fedora dnf (`awscli2`) / Ubuntu official snap / brew |
+| aws-vault (Tier 3: re-fetch) | all | github-binary from the ByteNess fork / brew formula |
+| opentofu (`tofu`) | all | vendor-repo (packages.opentofu.org), apt AND dnf / brew |
+| openbao | all | vendor-repo (pkgs.openbao.org) / Fedora dnf / brew |
+| azure-cli, google-cloud-cli | all | vendor-repo / cask |
+| clickhouse-client, confluent-cli, rpk, valkey-cli, vector (the `data` group) | Linux; macOS partial | vendor-repo / distro |
+| wrangler (the `cloudflare` group) | all | npm-global / brew |
+| flarectl (the `cloudflare` group) | all | `go install` from source / brew |
 
 Almost every macOS path resolves to brew or a cask. The language managers that
 remain there carry no formula at all: `alint` and `maid` have none, and
 semantic-release needs its plugin set installed alongside it, which only npm
-gives. `git-scrub` is the one release-tarball exception -- its formula exists in
-the release but is not in the hyperi-io tap, so macOS takes the darwin asset
-until it is tapped.
+gives.
 
 Cloudflare publishes no flarectl binary and no distro packages it, so both
 platforms build it from source. It also lives on cloudflare-go's `v0` branch --
@@ -305,28 +324,36 @@ from v4 that SDK is generated and carries no `cmd/` directory. The Linux build
 needs a Go toolchain (`--tags developer-go`); without one the run records a
 warning and continues.
 
+### packer
+
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| packer | all | vendor-repo (apt.releases.hashicorp.com, rpm.releases.hashicorp.com), signing key fingerprint-pinned / brew (`hashicorp/tap`) |
+
+The one HashiCorp tool installed: BUSL, with no open-source fork, so it is its own opt-in role rather than part of `infrastructure`. `--tags removals` takes terraform and vault, and removes this repo only where Packer is not installed.
+
 ### contributor (CI toolchain - what `hyperi-ci check` drives)
 
 `*` = blocking CI gate.
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| hyperi-ci, semgrep | all | uv-tool (Tier 2) / brew | version |
-| alint | all | cargo (Tier 2) / brew | version |
-| osv-scanner | all | Linux re-fetch (Tier 3) / brew | version / SHA256 |
-| gitleaks* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
-| act | all | Fedora COPR / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
-| trivy | all | vendor-repo (official aquasecurity apt/dnf) / brew | version |
-| hadolint* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew | version / SHA256 |
-| pip-audit* | all | uv-tool (Tier 2) / brew | version |
-| kubeconform*, kube-linter | all | github-binary (Tier 3: re-fetch) / brew | SHA256 |
-| yamllint, ansible-lint, pre-commit | all | distro (apt universe / dnf) / brew | version |
-| actionlint | all | Ubuntu snap / Fedora re-fetch (Tier 3) / brew | version / SHA256 |
-| vulture | all | Ubuntu apt / Fedora uv-tool (Tier 2) / brew | version |
-| typos | all | cargo (Tier 2) / brew | version |
-| maid (mermaid validator, used by `/docs`) | all | npm global (Tier 2) | n/a |
-| git-scrub (git-history scrubber) | all | github-binary (Tier 3: re-fetch) | version |
-| macbash (macOS bash portability checker) | all | Linux downloads.hyperi.io binary (Tier 3, digest-verified) / brew tap | SHA256 |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| hyperi-ci, semgrep | all | uv-tool (Tier 2) / brew |
+| alint | all | cargo (Tier 2) / brew |
+| osv-scanner | all | Linux re-fetch (Tier 3) / brew |
+| gitleaks* | all | Fedora dnf / Ubuntu re-fetch (Tier 3) / brew |
+| act | all | Fedora COPR / Ubuntu re-fetch (Tier 3) / brew |
+| trivy | all | vendor-repo (official aquasecurity apt/dnf) / brew |
+| hadolint* | all | Linux re-fetch (Tier 3) / brew |
+| pip-audit* | all | uv-tool (Tier 2) / brew |
+| kubeconform*, kube-linter | all | github-binary (Tier 3: re-fetch) / brew |
+| yamllint, ansible-lint, pre-commit | all | distro (apt universe / dnf) / brew |
+| actionlint | all | Linux re-fetch (Tier 3) / brew |
+| vulture | all | Ubuntu apt / Fedora uv-tool (Tier 2) / brew |
+| typos | all | cargo (Tier 2) / brew |
+| maid (mermaid validator, used by `/docs`) | all | npm global (Tier 2) |
+| git-scrub (git-history scrubber) | all | github-binary (Tier 3: re-fetch) / brew tap |
+| macbash (macOS bash portability checker) | all | Linux downloads.hyperi.io binary (Tier 3, digest-verified) / brew tap |
 
 `hyperi-ci` is a Python tool from PyPI, installed via `uv tool` and refreshed to
 the latest release on every run (upgrade-if-present, not install-once). soe
@@ -335,19 +362,66 @@ hyperi-ci.
 
 ### soe / soe-gui (HyperI org policy)
 
-| Tool(s) | Platforms | Method | Pinned |
-|---|---|---|---|
-| Claude Code CLI | Linux github-binary (SHA-verified) / macOS cask | github-binary / cask | SHA256 |
-| tea (Forgejo/Gitea CLI, `forgejo` / `codeberg` tags; `gh` is GitHub-only) | Linux github-binary / macOS brew | github-binary / brew | SHA256 |
-| openvpn3 client (-> vpn-clients group) | Fedora COPR / Ubuntu vendor-repo / macOS brew | vendor-repo / brew | version |
-| WireGuard, Tunnelblick (macOS) | all / macOS | distro / cask | version |
-| Slack | all | vendor-repo / cask | version |
-| LibreOffice (org office suite) | Linux | distro repo | version |
-| Nemo, GNOME extensions (gext), fonts | Linux | distro / uv-tool / vendored | version |
-| colima + Apple `container` (macOS only) | macOS | brew / github-binary | version / SHA256 |
-| Arcane container UI (opt-in `soe_arcane_enabled`) | all | container image | tag |
-| Local ClickHouse + Redpanda (opt-in `soe_local_services_enabled`) | all | container image | latest, always |
-| removals / update_command / admin-scripts (opt-in `never`, on for soe) | Linux | tombstones + scripts | n/a |
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| Claude Code CLI (binary, tag `claude`) | Native build on Linux and macOS, `soe_claude_channel` (default `stable`), signed manifest checked against the key pinned by fingerprint, self-updating per user | signed-manifest |
+| Claude Code managed settings (tag `claude-policy`, soe only) | all | role file -> `/etc/claude-code/` |
+| tea (Forgejo/Gitea CLI, `forgejo` / `codeberg` tags; `gh` is GitHub-only) | Linux github-binary / macOS brew | github-binary / brew |
+| openvpn3 client (-> vpn-clients group) | Fedora COPR / Ubuntu vendor-repo / macOS brew | vendor-repo / brew |
+| WireGuard, Tunnelblick (macOS) | all / macOS | distro / cask |
+| Slack | all | vendor-repo / cask |
+| LibreOffice (org office suite) | Linux | distro repo |
+| Nemo, GNOME extensions (gext), fonts | Linux | distro / uv-tool / vendored |
+| PrtSc from a Mac RDP client (arrives as F13) opens the GNOME screenshot UI (tag `printscreen`) | Linux GNOME | system dconf |
+| colima + Apple `container` (macOS only; `container` needs Apple silicon and macOS 26) | macOS | brew |
+| Local ClickHouse + Redpanda (opt-in `soe_local_services_enabled`) | all | container image |
+| removals / update_command / admin-scripts (opt-in `never`, on for soe) | Linux | tombstones + scripts |
+
+### developer-ai (opt-in AI coding agents)
+
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| Codex CLI | Linux | vendor-script (chatgpt.com/codex/install.sh; payload digest-verified) |
+| Codex CLI | macOS | cask `codex` (there is no formula) |
+| codex-plugin-cc, the Codex plugin FOR Claude Code | all | `claude plugin install codex@openai-codex` |
+
+Claude-first by design. Claude Code stays the driver and Codex is the
+adversarial reviewer, reached from inside Claude Code through OpenAI's own
+plugin. Nothing in this role installs Claude Code - that is `soe`'s
+`claude` tag, which installs the BINARY AND NOTHING ELSE. The HyperI managed
+settings that used to ride along with it now sit behind `claude-policy`, which
+only `soe` selects, so `--tags claude` on a machine that is not ours no longer
+writes an unoverridable settings file into `/etc`. Codex ships several stable
+releases a week, so it moves faster than most of this matrix.
+
+The plugin's dependencies are hard, and all three are per user: Claude Code, a
+codex that answers both `codex --version` and `codex app-server --help`, and
+node 18.18+ (its hooks run `node <script>.mjs` directly). Miss one and the run
+SKIPS the plugin and names the tag that fixes it - `claude`, `codex`, or
+`developer` for node, which is where node lives. Installing it regardless would
+leave slash commands that throw on every invocation, and a converge reporting
+success over them.
+
+**No context-compression proxy, deliberately.** Headroom
+(headroomlabs-ai/headroom) was built into this role and taken back out before it
+shipped. It works by pointing `ANTHROPIC_BASE_URL` at a local proxy, and Claude
+Code gates capabilities on `api.anthropic.com`: behind any custom base URL it
+stops sending the `context-1m` beta header and accounts against 200k
+([headroom #1158](https://github.com/headroomlabs-ai/headroom/issues/1158)),
+disables on-demand tool loading, inflating context by roughly 25K tokens
+([#746](https://github.com/headroomlabs-ai/headroom/issues/746)), and disables
+Remote Control outright
+([#1779](https://github.com/headroomlabs-ai/headroom/issues/1779), open, quoting
+Claude Code's own *"Remote Control is only available when using Claude via
+api.anthropic.com"*). Trading a 1M window for token compression is a losing
+trade. The 1M half is partly recoverable with a `[1m]`-suffixed model alias and
+tool search with `ENABLE_TOOL_SEARCH=true`; Remote Control is not. Check whether
+that gating still holds before anyone re-adds it.
+
+Neither Codex nor the plugin works straight off a converge. Both need an
+interactive `codex login` (`codex login --device-auth` where there is no
+browser), which the deploy deliberately does not automate: it would put a
+per-user credential in the deploy path of a public repo.
 
 ### Targeted deployment roles (opt-in, not in any persona)
 
@@ -442,40 +516,35 @@ The same trap sits in the molecule verify, which takes the desktop user from
 `MOLECULE_TARGET_DESKTOP_USER` -- asserting against the service account's empty
 home passes every user-scoped check on a host that was never fixed.
 
-## Two install modes
+## One install mode: latest, at the time you run it
 
-**Latest is the default for everything. Pinning is never a default - `--pinned`
-is an explicit opt-in** (for reproducibility or CI parity). Nothing is pinned
-unless you ask for it; any version currently hardcoded in a task moves onto the
-opt-in path.
+**Every tool resolves its version when the installer runs.** A box built today
+gets what is current today, and the same command in four months gets what is
+current then. No release number for anything with an upstream to ask lives in
+this repo, and there is no flag that changes it.
 
-| Mode | Flag | Behaviour |
-|---|---|---|
-| latest | (default) | `/releases/latest`, distro `state: present`, brew latest. No maintenance, no pins. |
-| pinned | `--pinned` (opt-in) | Exact versions (tags) from the `versions.yml` SSoT, mirroring hyperi-ci. |
+| Source | Behaviour |
+|---|---|
+| distro or vendor repo | `state: present`, and the repo carries the box forward on `apt`/`dnf upgrade`. |
+| manual binary | The newest GitHub release at least `hyperi_release_min_age_days` (7) days old, then the matching asset. |
+| cargo / go tools | `cargo install X`, `go install X@latest`. |
+| go, rustup | The publisher's current release, verified against the checksum it serves beside it. |
 
-`--pinned`'s SSoT lives in `inventories/localhost/group_vars/all.yml`
-(`hyperi_versions`) and **mirrors hyperi-ci's `config/versions.yaml`**, so a
-pinned local box matches CI exactly (hadolint, cargo-audit, kubeconform,
-kube-linter, golangci-lint, ...). A retrofitted manual-binary task branches on
-`hyperi_pinned | default(false)`: pinned + pin-exists -> the exact tag (and it
-skips the GitHub API entirely); else latest. Pinning is by TAG today, exactly as
-hyperi-ci does; **SHA256 digest-verification at download is the planned
-hardening** (tracked upstream as hyperi-ci #66) - when it lands, add `sha256:`
-per tool and a `checksum:` on the fetch. The distro-first packaging ladder keeps
-the manual-binary set small.
+Three things are deliberately not versions. **Node's major** (`node_major`) picks
+an LTS line rather than a release, and NodeSource's signed repo patches it in
+place. **Rust's edition** comes with whatever stable rustup installs, so edition
+2024 needs no pin. **kubectl's minor** (`infrastructure_kubectl_minor`) picks the pkgs.k8s.io repository, which publishes one per Kubernetes minor and patches it in place. Left empty it follows the stable minor at https://dl.k8s.io/release/stable.txt. kubectl supports one minor either side of the API server, so this is the knob for cluster version skew. Set it to the minor of the clusters you work against, such as `v1.36`, and the next converge moves the repository and kubectl with it, up or down. A kubectl held with `apt-mark hold` or `dnf versionlock add` is left alone and the run warns.
 
-That mirror is checked, not assumed. `tools/ci/run-tests.sh` reads hyperi-ci's
-pins through its own interpreter and fails on any disagreement, in either
-direction -- a missed bump upstream and a hand-edit here are the same defect.
-A tool hyperi-ci pins that is absent here is fine and reported as a note: an
-absent entry falls back to latest, which is the documented behaviour. The
-reverse is not, because an entry with no counterpart pins a version CI never
-runs.
+**GitHub releases wait 7 days.** Every tool taken from a GitHub release installs the newest release at least `hyperi_release_min_age_days` old (default 7; set it in `local-config/vars.yml` or with `-e`), so a compromised or broken release has time to be pulled first. With none that old the installed copy stays and the run warns. Nothing newer is ever installed in its place. Releases from the hyperi-io org skip the wait (`hyperi_release_cooldown_exempt`).
+
+`go` and `rustup` keep digest verification while tracking latest, by fetching
+the checksum from the publisher at install time -- `go.dev/dl/?mode=json` carries
+a SHA256 per file, and static.rust-lang.org serves `rustup-init.sha256` beside
+the binary.
 
 ### GitHub rate limits on an unattended build
 
-Latest-mode resolves versions through `api.github.com`, which allows **60
+Version resolution goes through `api.github.com`, which allows **60
 requests an hour per IP** anonymously. A run selecting `infrastructure` plus a
 couple of languages spends a good fraction of that by itself, and every machine
 sharing an egress address draws on the same 60 -- so a fleet rollout or an image
@@ -492,8 +561,7 @@ GITHUB_TOKEN=$(gh auth token) ansible-playbook ...
 ```
 
 Without one the header is empty and every call stays anonymous, so a laptop
-install needs no token and behaves exactly as before. `--pinned` sidesteps the
-API for any tool carrying a pin, since a pinned task skips the lookup entirely.
+install needs no token and behaves exactly as before.
 
 **Packaging ladder** (pick the highest that works): distro repo (auto-updates) >
 official vendor apt/dnf repo > official snap/flatpak > manual binary (last
@@ -524,18 +592,17 @@ Autodesk's Automatic Component Toolkit.
 **Container format by distro: Ubuntu uses snap, Fedora uses flatpak.** Neither
 is used where a repo, brew or cask can keep the tool current instead. What
 remains on a container format, and why nothing better exists: the `aws-cli`
-snap on Ubuntu (universe's `awscli` is v2 but frozen), the `actionlint` snap on
-Ubuntu (no apt package and no vendor repo), and the DBeaver flatpak on Fedora
-(no vendor dnf repo). Ubuntu installs no flatpak app at all; the flatpak binary
+snap on Ubuntu (universe's `awscli` is v2 but frozen) and the DBeaver flatpak on
+Fedora (no vendor dnf repo). A strictly confined snap is ruled out for any tool
+that reads a repo: it sees only $HOME, so a checkout under /projects is
+invisible to it -- why actionlint and osv-scanner take the release binary. Ubuntu installs no flatpak app at all; the flatpak binary
 stays only so the tombstones in `removals.yml` can clear ones an older revision
 left behind.
 
-**A pinned tool cannot live on a snap or a distro package.** Neither channel
-takes an arbitrary version, so a tool in `hyperi_versions` must come from a
-release binary or `--pinned` silently installs whatever the channel holds. That
-is why golangci-lint is a Tier 3 binary on Linux despite Fedora packaging it:
-the dnf build trailed the CI pin, so a "pinned" box was running a different
-linter from CI.
+**A snap or distro package installs whatever its channel holds, which can
+trail upstream badly.** That is why golangci-lint is a Tier 3 binary on Linux
+despite Fedora packaging it: the dnf build trails upstream by two minors, and a
+linter behind the Go toolchain cannot read the newer stdlib.
 
 **Moving a tool between channels leaves the old copy behind, and it wins.**
 `/usr/local/bin` and `/snap/bin` both precede `/usr/bin` on the default PATH, so
@@ -543,6 +610,12 @@ a binary superseded by a package shadows it forever and no update ever touches
 it. Every channel move needs a tombstone for the path it vacated, and the
 `remediation` molecule scenario asserts the replacement is what `which` resolves
 to -- not merely that the new thing installed.
+
+**A hand install leaves a second copy too.** The `removals` tag clears copies of the managed tools in `~/.local/bin` and `~/go/bin` where the managed copy exists and is a different file. A deliberate pin there (an older kubectl, golangci-lint v1) goes too, so pin per project instead. Tools whose name another program also uses (yq, tea, sd, act) are left alone. It also purges the upstream .deb or .rpm of macbash, git-scrub, golangci-lint or k9s installed beside the `/usr/local/bin` copy, unless a repository offers a package of that name.
+
+**Dropped tools leave on `--tags removals`.** dive (no release since 2025-05) is no longer installed. A `removals` or `soe` run clears the `/usr/local/bin` copy older revisions put there. A Mac keeps its brew formulae, as with every other retired CLI utility.
+
+developer-go links `go` and `gofmt` into `/usr/local/bin` on every run, and on a `removals` or `soe` run also removes the distro Go once a working, self-contained `/usr/local/go` is in. developer-rust retires cargo-tarpaulin on every run, and on a `removals` or `soe` run clears cargo-home duplicates and, where the host exports a relocated `CARGO_HOME`, the old `~/.cargo/bin` binaries the effective home also holds. A package something else depends on stays, and the run says which. Its direct dependencies that a purge would orphan are marked manually installed, so `hyperi-update`'s autoremove does not take them later.
 
 ## Auto-update
 
@@ -558,27 +631,29 @@ security, so it holds the version it shipped with for the life of the release
 (see the ladder note above). A vendor repo, a snap and Fedora's own packages
 all track upstream properly.
 
-**Tier 2 - language-manager tools.** Tools installed by uv / cargo / go / npm
-have no OS channel; `hyperi-update` refreshes them via each manager
-(`uv tool upgrade --all`, `rustup update && cargo install-update -a`,
-`go install ...@latest`, `npm update -g`). E.g. ruff, ty, semgrep, pip-audit,
-cargo-audit, cargo-hack, typos, govulncheck, maid.
+**Tier 2 - language-manager tools.** Tools installed by uv / cargo / go / npm / pnpm have no OS channel, so `hyperi-update` refreshes them through each manager: `uv tool upgrade --all`, `rustup update` and `cargo install-update -a --locked`, `go install ...@latest` for the tools in `~/go/bin` (only when the module or the Go toolchain moved), `npm update -g`, and `pnpm update -g --latest`. The pnpm globals (eslint, prettier, typescript, tsx) are installed unpinned, so `--latest` moves them to what a fresh converge would install, majors included. `uv python upgrade` moves each uv-managed Python to its newest patch without adding a python or python3 shim, and leaves the superseded patch installed, because uv has no command that removes only those. E.g. ruff, ty, semgrep, pip-audit, cargo-audit, cargo-hack, typos, govulncheck, maid.
 
-**Tier 3 - static binaries.** A handful ship only as a GitHub-release binary with
-no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter,
-aws-vault, dive, tea, terraform-docs, golangci-lint (plus a few tools on
-whichever single distro lacks a package -- k9s, kustomize and yq are Ubuntu-only
-here, since Fedora packages all three). `hyperi-update` re-fetches the latest
-release for these, and skips the ones the running distro installs from a repo so
-the binary cannot shadow the packaged copy.
+**Tier 3 - static binaries.** A handful ship only as a release binary with no repo, snap, or language manager: kind, argocd, kubeconform, kube-linter, terraform-docs, golangci-lint, lazygit, actionlint, osv-scanner, aws-vault, git-scrub, sccache, fnm, hadolint, tea and macbash on both distros, k9s, kustomize, yq, gitleaks and act on Ubuntu, and sd, kubectx and kubens on Fedora. `hyperi-update` re-fetches each one only where the role put it in `/usr/local/bin` on that distro, so the binary cannot shadow a packaged copy. Each download must match the sha256 GitHub publishes for the asset, or the release's checksum file where there is no digest (tea and macbash publish a `.sha256` beside the asset), and is renamed into place so the working copy is never half-written. Each GitHub release is the newest at least 7 days old, as in the roles, which write their age and exempt orgs to `/etc/default/hyperi-update`. `HYPERI_RELEASE_MIN_AGE_DAYS` in the environment overrides that file and `--min-age DAYS` overrides both. With no release old enough the installed copy stays and the summary lists it. A stamp in `/var/lib/hyperi-update` stops an unmoved release being downloaded again, and the GitHub API is asked with the last ETag, so with a token set an unchanged release costs no rate limit (an anonymous 304 still counts). When the API refuses, the release document from the last run stands in. On Ubuntu, uv and uvx in `~/.local/bin` are refreshed the same way as the invoking user.
 
 golangci-lint is here for a different reason: Fedora does package it, but the
-package cannot honour the `hyperi_versions` pin and trailed it. A CI-parity tool
-belongs on the only channel that takes a version.
+build trails upstream, and a linter behind the Go toolchain cannot read the
+newer stdlib.
 
-`hyperi-update` (the "update my system" command) runs all three tiers plus the
-OS / snap / flatpak sweep, so one command brings everything current. soe
-schedules it on a timer; the base leaves update cadence to the host.
+**Codex fits no tier cleanly.** On macOS it is Tier 1: the `codex` cask, swept
+by `brew upgrade`. On Linux there is no repo, no snap and no language manager,
+and it is not Tier 3 either - the release asset is a package TREE that has to be
+staged and symlinked, not a bare binary the re-fetch helpers could drop into
+`/usr/local/bin`. Its update path is re-running the official installer, which
+resolves the current release, verifies the payload digest and short-circuits
+when what is staged is already current. `hyperi-update` does exactly that,
+guarded on codex being present.
+
+The Codex plugin is a channel of its own again: `claude plugin update codex@openai-codex`, which the package manager does not reach because it moves the CLI and not its marketplace plugins.
+
+`hyperi-update` (the "update my system" command) runs all three tiers and the
+two out-of-tier channels above, plus the OS / snap / flatpak sweep, so one
+command brings everything current. soe schedules it on a timer; the base leaves
+update cadence to the host.
 
 ## Checking what a host actually has
 

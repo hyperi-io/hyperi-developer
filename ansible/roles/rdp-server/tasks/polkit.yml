@@ -32,3 +32,34 @@
           return polkit.Result.NOT_HANDLED;
       });
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
+# Opt-in, because polkit gives a remote session only the allow_any defaults, and built from the installed actions so new ones need a re-run.
+- name: Build the remote-as-local polkit rule from the installed actions
+  ansible.builtin.script:
+    cmd: polkit-remote-as-local.py
+    executable: python3
+  register: rdp_polkit_remote_rule
+  changed_when: false
+  check_mode: false
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - rdp_polkit_remote_as_local | bool
+
+- name: Give active remote sessions the local-session polkit defaults
+  ansible.builtin.copy:
+    dest: /etc/polkit-1/rules.d/50-rdp-remote-as-local.rules
+    content: "{{ rdp_polkit_remote_rule.stdout }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - rdp_polkit_remote_as_local | bool
+
+- name: Remove the remote-as-local polkit rule when not opted in
+  ansible.builtin.file:
+    path: /etc/polkit-1/rules.d/50-rdp-remote-as-local.rules
+    state: absent
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - not (rdp_polkit_remote_as_local | bool)

@@ -137,6 +137,13 @@
   when: ansible_facts['distribution'] == 'Fedora'
   failed_when: false
 
+- name: Cancel the aborted-run auto-update restore timer
+  ansible.builtin.systemd:
+    name: hyperi-autoupdate-restore.timer
+    state: stopped
+  when: ansible_facts['distribution'] in ['Ubuntu', 'Fedora']
+  failed_when: false
+
 - name: Remove temporary askpass script (macOS)
   ansible.builtin.file:
     path: /tmp/askpass.sh

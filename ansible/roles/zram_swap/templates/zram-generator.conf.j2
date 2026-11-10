@@ -1,0 +1,10 @@
+# Deployed by hyperi-developer (zram_swap role). Edits are overwritten.
+#
+# The generator reads the FIRST file it finds across /run, /etc, /usr/local/lib
+# and /usr/lib, so this file REPLACES the distro's default rather than merging
+# with it. That is deliberate: Fedora's zram-generator-defaults ships a
+# `host-memory-limit`, and a host above that limit gets NO zram device at all
+# and no error saying so. Not setting the key here means no such ceiling.
+[zram0]
+zram-size = {{ zram_swap_size }}
+compression-algorithm = {{ zram_swap_compression }}

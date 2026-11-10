@@ -1,53 +1,12 @@
 ---
-# Arcane -- container management UI (https://getarcane.app), OPT-IN.
-#
-# Off by default: it is a web UI holding the Docker socket, so it goes on only
-# where someone asked for it. Enable with `-e soe_arcane_enabled=true` or in
-# group_vars. When enabled it is a daemon -- survives a reboot, keeps itself
-# current, answers on loopback only.
-soe_arcane_enabled: false
-
-# Loopback-bound host port. The container always listens on 3552 internally.
-soe_arcane_port: 3552
-
-# Per-user, not system-wide: colima's VM and Docker socket belong to one user,
-# so the macOS case is forced and Linux matches it to keep one code path.
-#
-# user_home, not env.HOME: on a fleet machine reached as a service account the
-# environment names that account's home, and the stack lands where the desktop
-# user will never see it.
-soe_arcane_dir: "{{ user_home }}/.config/hyperi/arcane"
-
-# Arcane's own per-container updater, which skips Arcane itself -- hyperi-update
-# pulls and recreates the stack to cover that gap.
-#
-# Asserted over the REST API, not the compose environment: `autoUpdate` is a
-# database setting, and only fields tagged `envOverride` upstream read the
-# environment. That is why the stack carries an admin API key at all.
-soe_arcane_auto_update: true
-
-# Containers the auto-updater must leave alone, by name. The local spike
-# instances take latest at `local-services up`, which is their owner's decision
-# point -- moving them at any other time recreates a daemon out from under
-# whoever is mid-spike. Single containers can also opt out with the label
-# `com.getarcaneapp.arcane.updater=false`.
-soe_arcane_auto_update_exclude:
-  - "{{ soe_local_clickhouse_name }}"
-  - "{{ soe_local_redpanda_name }}"
-
-# Zone Arcane schedules its background jobs against. IANA name, not an
-# abbreviation.
-soe_arcane_timezone: UTC
-
-# The login is whatever Arcane seeds -- this role sets neither the username nor
-# the password, so upstream's documented default is what you sign in with.
-#
-# Upstream's default policy is `strong`: 12 characters with an uppercase letter,
-# a number and a symbol, which its OWN seeded password fails. Retiring the
-# forced first-login prompt means re-submitting that seeded password, so the
-# policy has to accept it. Eight characters remains the floor whatever this
-# says -- the request schema rejects anything shorter before the policy is read.
-soe_arcane_password_policy: basic
+# Claude Code is Anthropic's native build. The fingerprint is the release
+# signing key published at https://code.claude.com/docs/en/setup, which signs
+# each release manifest, checked before the key is trusted.
+soe_claude_key_url: https://downloads.claude.ai/keys/claude-code.asc
+soe_claude_key_fingerprint: 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE  # gitleaks:allow -- public key fingerprint
+# `stable` can lag a just-launched model by about a week; set `latest` to follow every release.
+soe_claude_channel: stable
+soe_claude_release_url: https://downloads.claude.ai/claude-code-releases
 
 # ============================================================================
 # Local services -- persistent ClickHouse + Redpanda for ad-hoc work, OPT-IN.
@@ -63,9 +22,10 @@ soe_arcane_password_policy: basic
 # already pulled.
 soe_local_services_enabled: false
 
-# Per-user for the same reason Arcane is: colima's VM and socket belong to one
-# user, so the macOS case is forced and Linux matches it. user_home for the
-# same reason soe_arcane_dir uses it.
+# Per-user because colima's VM and Docker socket belong to one user, so the
+# macOS case is forced and Linux matches it. user_home, not env.HOME, so a
+# fleet machine reached as a service account still lands in the desktop
+# user's home.
 soe_local_services_dir: "{{ user_home }}/.config/hyperi/local-services"
 
 soe_local_clickhouse_name: local-clickhouse

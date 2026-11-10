@@ -1,0 +1,9 @@
+# PrtSc on a Mac keyboard reaches an RDP session as F13, which GNOME reads as XF86Tools.
+# Deployed to /etc/dconf/db/local.d/10-printscreen-rdp. Run 'dconf update' after changes.
+
+[org/gnome/shell/keybindings]
+show-screenshot-ui=['Print', 'XF86Tools']
+
+# XF86Tools opens Settings by default. Unbind it there so the screenshot binding gets the key.
+[org/gnome/settings-daemon/plugins/media-keys]
+control-center-static=@as []

@@ -4,8 +4,6 @@ A check that only ever passes proves nothing, so every case here builds a role
 tree that is wrong in one specific way and asserts the checker says so.
 """
 
-from __future__ import annotations
-
 import importlib.util
 import pathlib
 import sys

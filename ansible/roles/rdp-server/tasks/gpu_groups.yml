@@ -17,7 +17,8 @@
 
 - name: Detect GPU PCI vendor IDs from DRM cards
   ansible.builtin.shell:
-    cmd: "cat /sys/class/drm/card[0-9]*/device/vendor 2>/dev/null | sort -u"
+    cmd: "set -o pipefail && cat /sys/class/drm/card[0-9]*/device/vendor 2>/dev/null | sort -u"
+    executable: /bin/bash
   register: rdp_gpu_vendor_ids
   changed_when: false
   failed_when: false
@@ -35,13 +36,6 @@
          else 'nvidia' if '0x10de' in (rdp_gpu_vendor_ids.stdout | default(''))
          else 'virtio' if '0x1af4' in (rdp_gpu_vendor_ids.stdout | default(''))
          else 'none' }}
-  when:
-    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-    - has_gnome
-
-- name: Set hardware-encode expectation fact
-  ansible.builtin.set_fact:
-    rdp_hw_encode_expected: "{{ (rdp_gpu_vendor | default('none')) in ['intel', 'amd', 'nvidia', 'virtio'] }}"
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
@@ -79,7 +73,7 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
-  notify: reload udev rules
+  notify: Reload udev rules
 
 # ============================================================================
 # STATUS
@@ -90,7 +84,6 @@
       GPU vendor: {{ rdp_gpu_vendor | default('unknown') }}
       Class: {{ 'VM (virtio)' if ansible_facts['virtualization_role'] == 'guest' else 'physical' }}
       /dev/dri: {{ 'PRESENT' if dri_device.stat.exists | default(false) else 'ABSENT (software encode)' }}
-      Hardware encode expected: {{ rdp_hw_encode_expected | default(false) }}
       GPU access: gnome-remote-desktop in render/video groups (no world-open rule)
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']

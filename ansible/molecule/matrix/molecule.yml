@@ -5,7 +5,8 @@
 # installs, which is why Fedora belongs here -- there are no deployed Fedora
 # clients to have drifted, but a fresh Fedora box must come up correctly.
 #
-# Scoped to the CLI base (`repository`, `utilities`, `git`). Docker, snap and the
+# Scoped to the CLI base (`repository`, `utilities`, `git`) plus `packer`, the
+# opt-in role with its own vendor repo on every platform. Docker, snap and the
 # GNOME paths need a daemon or a session a container does not have, so widening
 # the tag set means solving that first -- privileged containers or systemd
 # images -- not just adding a tag.
@@ -69,7 +70,7 @@ ansible:
       ansible_playbook:
         - --diff
         - --tags
-        - repository,utilities,git
+        - repository,utilities,git,packer
   playbooks:
     converge: converge.yml
     verify: verify.yml

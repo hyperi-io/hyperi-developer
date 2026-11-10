@@ -38,6 +38,16 @@
       tags: ['contributor', 'gitleaks']
   tags: ['contributor', 'gitleaks']
 
+# After gitleaks.yml, so the package is in before the copy it supersedes goes.
+# `removals` also reaches it, for a remediation run that installs nothing.
+- name: Remove binaries superseded by the packaged tools
+  ansible.builtin.include_tasks:
+    file: superseded.yml
+    apply:
+      tags: ['contributor', 'gitleaks', 'removals']
+  tags: ['contributor', 'gitleaks', 'removals']
+  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+
 - name: Install act (GitHub Actions runner)
   ansible.builtin.include_tasks:
     file: act.yml

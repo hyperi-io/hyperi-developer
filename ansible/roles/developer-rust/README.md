@@ -1,7 +1,7 @@
 # developer-rust
 
-Rust toolchain (rustup + components), cargo tools, and a build environment
-tuned to make the edit-build-test loop bearable.
+Rust toolchain (rustup + components), cargo tools, LLVM with PGO and BOLT,
+and a build environment tuned to make the edit-build-test loop bearable.
 
 ## hyperi-rust-setup
 
@@ -30,8 +30,39 @@ but it is Linux-x86-64 only with no LTO support, so it is a candidate rather
 than a default. Ubuntu, Debian, Fedora and macOS.
 
 Note sccache does not cache incremental compilation, which the `dev` profile
-enables by default; it passes those through. The wins show up on `--release`
-and on clean rebuilds.
+enables by default; those calls pass through uncached. Setting
+`CARGO_INCREMENTAL=1` by hand is different again - sccache then refuses the
+build outright. The wins show up on `--release` and on clean rebuilds.
+
+## LLVM, PGO and BOLT
+
+Standard in this role, not an add-on: clang, lld, BOLT and the LLVM development files, for cross-language LTO, bindgen, PGO and post-link optimisation. Re-apply just this part with `--tags rust-llvm`.
+
+`rust_llvm_version` picks the major:
+
+- `latest` (default) -- the newest `llvmorg-N.x.y` release tag upstream.
+- `rustc` -- the major the installed rustc was built with (`rustc -vV`).
+- an integer, e.g. `22` -- pinned.
+
+Which major matters differs per tool:
+
+- llvm-profdata and llvm-cov must match rustc's LLVM EXACTLY, because the raw profile format changes between majors. rustup's `llvm-tools-preview` supplies matched copies, installed on every rustup host, Macs included.
+- Cross-language LTO needs a system LLVM at least as new as rustc's, hence the default.
+- BOLT works with any recent major.
+
+Nothing is exported (`LLVM_PROFDATA`, `LLVM_COV`, `LIBCLANG_PATH`): a pinned path goes stale on the next `rustup update`.
+
+**Ubuntu** takes apt.llvm.org's VERSIONED suite (`llvm-toolchain-<codename>-<N>`) and only that. The unversioned suite is the development snapshot, and its unversioned packages replace the archive's clang, llvm and lld box-wide. The key file must hold exactly one key, with the published fingerprint, before anything trusts it. The keyring is `/usr/share/keyrings/llvm.gpg`, the same path hyperi-ci uses. Two Signed-By values for one suite stop apt reading any source list, so a one-line entry for the same suite anywhere else (hyperi-ci's `llvm.list`, upstream's `llvm.sh`) is removed once ours is written. A deb822 file someone else wrote for that suite is used as is, with a warning. A failed run puts the sources back as it found them.
+
+`/usr/local/bin` gets `clang`, `clang++`, `ld.lld`, `llvm-bolt`, `merge-fdata` and `perf2bolt` pointing at `/usr/bin/<tool>-<N>`, so `hyperi-rust-setup` names LLVM N as the cargo linker. A real file, or a link not pointing at some `/usr/bin/<tool>-<major>`, is left alone and reported. Unversioned `bolt` on Ubuntu is the Thunderbolt daemon, so the package is always `bolt-<N>`.
+
+`apt full-upgrade` (and `hyperi-update`) moves patch releases within N. A new major needs a re-converge. `rust_llvm_remove_previous: true` removes the old major's packages when it moves.
+
+**Fedora** installs its own LLVM; there is no third-party repo. Fedora 44 ships 22 and rustc is on 23 (as of 2026-10), so the run warns that cross-language LTO with that rustc fails until Fedora catches up. PGO and coverage still work. A pinned major older than Fedora's takes the compat packages (`llvm21`, `clang21`, ...).
+
+**macOS** installs brew's `llvm` and `lld` (`llvm@N`, plus `lld@N` from 19 up, for a pinned older major). `llvm` is keg-only, so Apple's clang stays the default. `lld` is not: `ld.lld`, `ld64.lld` and `wasm-ld` land on PATH, which is harmless because Apple's linker is `ld`. Homebrew builds no BOLT for macOS.
+
+At the end the run compares the system major with rustc's. Older warns. Newer is fine, but merge Rust profiles with rustup's llvm-profdata, not the system one. A pinned major the host cannot package also warns.
 
 ## Keeping the caches bounded
 
@@ -70,6 +101,8 @@ silently stops being cached while `sccache` is still installed and configured.
 `hyperi-rust-cache-prune` reports it rather than showing an empty ceiling, and
 `sccache --stop-server` clears it.
 
+## Bounding the build-artefact pool
+
 **Build artefacts have no upstream cap at all.** Cargo does not track them
 (rust-lang/cargo#13136), so nothing reclaims a `target/` ever, and one per repo
 across a tree full of them is what actually fills a disk.
@@ -82,9 +115,9 @@ binaries, so `cargo run`, IDEs and anything globbing for a built artefact are
 unaffected.
 
 `hyperi-rust-cache-prune` then bounds that pool on a schedule -- a systemd timer
-on Linux, a launchd agent on macOS, weekly and at idle IO priority. It drops
-workspaces not built for `rust_cache_max_age_days`, then evicts
-least-recently-built ones until the pool is under `rust_cache_build_dir_max`.
+on Linux, a launchd agent on macOS, daily and at idle IO priority, as the user.
+It drops workspaces not built for `rust_cache_max_age_days`, then evicts the
+oldest by build time until the pool is under `rust_cache_build_dir_max`.
 It touches no project `target/`, and reports the self-capping caches without
 pruning them.
 
@@ -94,14 +127,30 @@ derived from it chases itself downward. That puts a 692G build box at 115G and a
 256G laptop at the floor, so one default suits both. Set
 `rust_cache_build_dir_max` to an explicit size to override it.
 
-**The ceiling is a weekly reset, not a live cap.** Nothing enforces it between
-runs, so a busy build box spends most of the week above it -- one added 37G in
-two days and another 37G in a single afternoon. That is the design working, not
-a prune that failed. It only matters if the peak, not the floor, would fill the
-disk; check free space before reaching for a shorter schedule, and change
-`rust_cache_prune_schedule_weekday` if the peak is genuinely too high.
+On a filesystem of its own (`rust_cache_root` on a dedicated volume), `auto`
+means no ceiling. A sixth of a 512G cache volume sat under the working set of
+several concurrent build sessions, so every nightly prune evicted live
+workspaces and the rebuild refilled the volume. The guard bounds it there.
 
-sccache and ccache keep fixed ceilings; both enforce their own.
+## The free-space guard
+
+**The ceiling binds while the tool runs, not between runs.** So a guard runs
+every five minutes -- one statvfs while the disk has room. Below
+`rust_cache_prune_free_floor` (15%) it evicts the oldest workspaces, past the
+ceiling if need be, until `rust_cache_prune_free_target` (25%) is free.
+
+**No run evicts a workspace a build is using.** Cargo holds an exclusive flock
+on a lock file in each profile directory of the build-dir for the whole build
+(`.cargo-build-lock`, or `.cargo-lock` in 1.91). The prune takes it without
+waiting, skips the workspace if it is held, and holds it through the delete.
+
+If the pool runs out first and Docker's data root is on the same filesystem,
+the guard has Docker prune its build cache unused for 3 days, then unused images
+created over a week ago. Docker's own commands, as the user, never sudo, and
+never `daemon.json`. `rust_cache_prune_docker: false` switches that off, and
+`rust_cache_prune_guard_enabled: false` drops the guard.
+
+## Which sccache builds actually use
 
 **sccache comes from upstream's release, not the distro.** Ubuntu ships 0.13.0
 against an upstream on 0.17.x, and a wrapper four versions behind is what a
@@ -117,23 +166,40 @@ This does not reopen the objection in the SSoT note below: crates.io stays out
 of the global `rustc-wrapper` path. The binary is the project's own release
 artefact, digest-checked, not an unpinned `cargo install`.
 
-**A cargo-installed sccache still shadows it.** `~/.cargo/bin` precedes
-`/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy
-while builds keep using the absolute path in the cargo config. That split is
-what makes a failed `--show-stats` look like a dead cache when every build is
-being cached normally. The prune reports which binary builds use and queries
-that one; the setup tool prints the `cargo uninstall` line. Removing a binary a
-developer installed is their call.
+**A cargo-installed sccache would shadow it.** The cargo bin directory precedes `/usr/local/bin` on PATH, so anything typed by hand reaches the cargo copy while builds keep using the absolute path in the cargo config. That split is what makes a failed `--show-stats` look like a dead cache when every build is being cached normally. On Linux a `removals` or `soe` run deregisters and removes the cargo copy once the managed one is in place (`tasks/strays.yml`). The setup tool run on its own only prints the `cargo uninstall` line.
+
+**Strays.** cargo-tarpaulin is retired on every run. The rest runs only on a `removals` or `soe` run, because it removes what the role did not install:
+
+- cargo-home copies of sccache, sd, fnm, uv and uvx, once the managed copy exists and is a different file (Linux only)
+- where `CARGO_HOME` is relocated, binaries in the old `~/.cargo/bin` that the effective home also holds
+
+A cargo-installed copy goes through `cargo uninstall --root`, so `cargo install-update` does not reinstall it, and a `~/.cargo` package whose binaries all go is deregistered there too. The registry and git caches and anything installed only in `~/.cargo` stay on disk. They drop off PATH once the relocation is in effect, because the shell profile and the SOE PATH drop-in name `${CARGO_HOME:-$HOME/.cargo}/bin`.
+
+`~/.cargo` counts as superseded only when the host itself exports the relocated `CARGO_HOME` (in `/etc/environment` or a login profile). A home set only with `-e rust_cargo_home=...` leaves `~/.cargo` and its `config.toml` alone and records a warning, because the host's own cargo may still be using them.
 
 `build.build-dir` is stable from Rust 1.91. On an older toolchain the setup tool
 says so and leaves the per-project layout alone, so the default stays safe.
+
+## The build governor
+
+`hyperi-rust-govern` is installed as `~/.local/bin/cargo`, ahead of the real
+cargo on PATH, so a developer or an agent who knows none of this runs
+`cargo build` and is governed: nice 19, and on Linux with a live user manager
+`rustbuild.slice`, which bounds memory and sits below the desktop for CPU.
+Which instrument yields on which host, and why it needs the `zram_swap` role,
+are in
+[docs/rust-build-governor.md](../../../docs/rust-build-governor.md).
+The role also writes `agents.slice`, the cgroup bounding Claude Code sessions,
+from the same RAM budget (`--tags agents-slice`, `agents_*` variables).
+The host-wide picture is
+[docs/concurrent-dev-cache.md](../../../docs/concurrent-dev-cache.md).
 
 ## SSoT
 
 This role is the source of truth for the global Cargo config. It was
 `hyperi-ci`'s `scripts/setup-rust-dev.py` until 2026-07-17.
 
-That script is not what got ported. A review found it could not be adopted:
+That script is not what got ported. It could not be adopted:
 
 - It moved `target/` directories across filesystems with `os.rename`, which
   raises `EXDEV` and has no copy fallback. Proven on a real host where
@@ -169,10 +235,6 @@ workstation.
 
 **Install mold on macOS.** mold is an ELF linker with no Mach-O backend, so it
 cannot link anything built natively on a Mac.
-
-**Remove a cargo-installed sccache that shadows the packaged one.** The tool
-detects the shadow and prints the `cargo uninstall` line. Removing a binary a
-developer installed themselves is their call.
 
 ## Taking over an existing config
 

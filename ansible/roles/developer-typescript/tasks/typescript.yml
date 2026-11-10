@@ -1,11 +1,11 @@
 ---
-# TypeScript toolchain — installs typescript + tsx + ts-node globally via pnpm.
+# TypeScript toolchain — installs typescript + tsx globally via pnpm.
 # Node.js and pnpm come from the core `developer` role now; developer-node is
 # still the declared dependency (meta/main.yml) and pulls that role in.
 
-- name: Install TypeScript and runners (typescript, tsx, ts-node)
+- name: Install TypeScript and the tsx runner
   ansible.builtin.command:
-    cmd: pnpm install -g typescript tsx ts-node
+    cmd: pnpm install -g typescript tsx
   # Same prerequisite as developer-node: pnpm will not do a global install
   # unless PNPM_HOME is set and its bin directory is on PATH. pnpm_env comes
   # from the core role, which installs pnpm in the first place.

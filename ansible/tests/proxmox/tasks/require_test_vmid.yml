@@ -1,0 +1,12 @@
+---
+# The playbooks that include this roll back or delete a VM. The declared test
+# range is the only place they may do that.
+- name: Refuse a vmid outside the test range
+  ansible.builtin.assert:
+    that:
+      - vmid | int >= env.PROXMOX_TEST_VMID_MIN | int
+      - vmid | int <= env.PROXMOX_TEST_VMID_MAX | int
+    fail_msg: >-
+      vmid {{ vmid }} is outside the test range
+      {{ env.PROXMOX_TEST_VMID_MIN }}-{{ env.PROXMOX_TEST_VMID_MAX }}
+    quiet: true

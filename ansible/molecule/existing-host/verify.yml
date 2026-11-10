@@ -277,3 +277,33 @@
           showing a sliver of themselves.
         success_msg: "window-fit extension installed"
       when: rdp_window_fit_enabled | default(true) | bool
+
+    # ------------------------------------------------------------------
+    # GRD PRIORITY AND RESTART GUARDS
+    # ------------------------------------------------------------------
+    - name: Stat the GRD priority drop-ins, needrestart exclusion and retired vaapi-check
+      ansible.builtin.stat:
+        path: "{{ item.path }}"
+      loop:
+        - { path: /etc/systemd/system/gnome-remote-desktop.service.d/priority.conf, present: true }
+        - { path: /etc/systemd/user/gnome-remote-desktop-handover.service.d/priority.conf, present: true }
+        - { path: /etc/needrestart/conf.d/50-gnome-remote-desktop.conf, present: true }
+        - { path: /usr/local/bin/vaapi-check, present: false }
+        - { path: /etc/systemd/system/vaapi-check.service, present: false }
+      loop_control:
+        label: "{{ item.path }}"
+      register: verify_grd_guards
+
+    - name: Assert GRD priority and needrestart guards present, vaapi-check gone
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists == item.item.present
+        fail_msg: >-
+          {{ item.item.path }} should be {{ 'present' if item.item.present else 'absent' }}.
+          Without the drop-ins GRD runs behind builds, without the needrestart
+          exclusion a library update orphans a live session until reboot, and
+          vaapi-check is retired.
+        success_msg: "{{ item.item.path }} {{ 'present' if item.item.present else 'absent' }}"
+      loop: "{{ verify_grd_guards.results }}"
+      loop_control:
+        label: "{{ item.item.path }}"

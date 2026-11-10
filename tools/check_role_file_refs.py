@@ -13,8 +13,6 @@ gate for three months.
 Run: python3 tools/check_role_file_refs.py
 """
 
-from __future__ import annotations
-
 import pathlib
 import re
 import sys

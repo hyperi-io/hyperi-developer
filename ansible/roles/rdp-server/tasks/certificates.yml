@@ -1,6 +1,5 @@
 ---
-# Configure TLS certificates for GNOME Remote Desktop system service
-# Certificates are stored in /var/lib/gnome-remote-desktop/ (not subdirs)
+# TLS pair for the GRD system service, each mode under its own file names so switching back leaves the others untouched.
 
 - name: Create gnome-remote-desktop directory
   ansible.builtin.file:
@@ -16,10 +15,32 @@
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
 
-# The subject comes from rdp_cert_subject (see defaults) rather than being
-# hardcoded: this repo is public, and one company's jurisdiction does not belong
-# in everyone's certificate. `creates:` means an existing host keeps the cert it
-# has -- reissuing would change the fingerprint and make every client re-prompt.
+- name: Choose the certificate mode
+  ansible.builtin.set_fact:
+    rdp_tls_supplied: "{{ (rdp_tls_cert_src | default('') | length > 0) or (rdp_tls_key_src | default('') | length > 0) }}"
+    rdp_tls_mode: >-
+      {{ 'supplied' if (rdp_tls_cert_src | default('') | length > 0) or (rdp_tls_key_src | default('') | length > 0)
+         else 'hardened' if rdp_tls_selfsigned_hardened | bool
+         else 'stock' }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+- name: Set the certificate paths GRD will serve
+  ansible.builtin.set_fact:
+    rdp_tls_active_cert: "/var/lib/gnome-remote-desktop/{{ rdp_tls_basename[rdp_tls_mode] }}.crt"
+    rdp_tls_active_key: "/var/lib/gnome-remote-desktop/{{ rdp_tls_basename[rdp_tls_mode] }}.key"
+  vars:
+    rdp_tls_basename: {supplied: rdp-tls-supplied, hardened: rdp-tls-host, stock: rdp-tls}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+# ============================================================================
+# SELF-SIGNED (default)
+# ============================================================================
+
+# The subject is a variable to keep a company's jurisdiction out of a public repo, and `creates:` avoids a reissue that re-prompts every client.
 - name: Generate self-signed certificate for RDP
   ansible.builtin.command:
     cmd: >-
@@ -32,6 +53,31 @@
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
+    - rdp_tls_mode == 'stock'
+
+# Ten years, because once a client pins a self-signed cert expiry only forces a re-pin.
+- name: Generate hardened self-signed certificate for RDP
+  ansible.builtin.command:
+    cmd: >-
+      openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1
+      -sha384 -days 3650 -nodes
+      -subj "/O={{ rdp_cert_org }}/CN={{ rdp_tls_host_names[0] }}"
+      -addext "subjectAltName={{ rdp_tls_host_names | map('regex_replace', '^', 'DNS:') | join(',') }}"
+      -addext "basicConstraints=critical,CA:FALSE"
+      -addext "keyUsage=critical,digitalSignature"
+      -addext "extendedKeyUsage=serverAuth"
+      -keyout /var/lib/gnome-remote-desktop/rdp-tls-host.key
+      -out /var/lib/gnome-remote-desktop/rdp-tls-host.crt
+  args:
+    creates: /var/lib/gnome-remote-desktop/rdp-tls-host.crt
+  vars:
+    rdp_tls_host_names: >-
+      {{ ([ansible_facts['fqdn']] if '.' in ansible_facts['fqdn'] else [])
+         + [ansible_facts['hostname']] }}
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - rdp_tls_mode == 'hardened'
 
 - name: Set certificate file permissions and ownership
   ansible.builtin.file:
@@ -40,16 +86,182 @@
     owner: gnome-remote-desktop
     group: gnome-remote-desktop
   loop:
-    - { path: '/var/lib/gnome-remote-desktop/rdp-tls.key', mode: '0600' }
-    - { path: '/var/lib/gnome-remote-desktop/rdp-tls.crt', mode: '0644' }
+    - { path: "{{ rdp_tls_active_key }}", mode: '0600' }
+    - { path: "{{ rdp_tls_active_cert }}", mode: '0644' }
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - rdp_tls_mode != 'supplied'
+    - not ansible_check_mode
+
+# ============================================================================
+# OPERATOR-SUPPLIED
+# ============================================================================
+# Refused here, as a mismatched pair otherwise surfaces only as a failed handshake at GRD's next restart.
+
+- name: Supplied certificate and key are installed and validated
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - rdp_tls_supplied | bool
+  block:
+    - name: Require both rdp_tls_cert_src and rdp_tls_key_src
+      ansible.builtin.assert:
+        that:
+          - rdp_tls_cert_src | default('') | length > 0
+          - rdp_tls_key_src | default('') | length > 0
+        fail_msg: "Set both rdp_tls_cert_src and rdp_tls_key_src, or neither for a self-signed certificate."
+
+    - name: Read the supplied certificate's public key
+      ansible.builtin.command:
+        cmd: openssl x509 -noout -pubkey -in {{ rdp_tls_cert_src | quote }}
+      register: rdp_tls_cert_pubkey
+      changed_when: false
+      check_mode: false
+
+    - name: Read the supplied private key's public key
+      ansible.builtin.command:
+        cmd: openssl pkey -pubout -in {{ rdp_tls_key_src | quote }}
+      register: rdp_tls_key_pubkey
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: Refuse a certificate and key that do not match
+      ansible.builtin.assert:
+        that:
+          - rdp_tls_cert_pubkey.stdout == rdp_tls_key_pubkey.stdout
+        fail_msg: "{{ rdp_tls_key_src }} is not the private key for {{ rdp_tls_cert_src }}."
+        quiet: true
+
+    - name: Install the supplied certificate
+      ansible.builtin.copy:
+        src: "{{ rdp_tls_cert_src }}"
+        dest: "{{ rdp_tls_active_cert }}"
+        remote_src: true
+        owner: gnome-remote-desktop
+        group: gnome-remote-desktop
+        mode: '0644'
+
+    - name: Install the supplied private key
+      ansible.builtin.copy:
+        src: "{{ rdp_tls_key_src }}"
+        dest: "{{ rdp_tls_active_key }}"
+        remote_src: true
+        owner: gnome-remote-desktop
+        group: gnome-remote-desktop
+        mode: '0600'
+      no_log: true
+
+# ============================================================================
+# VALIDATE THE ACTIVE PAIR
+# ============================================================================
+# Checked as GRD's own user, since GRD reads the pair only at startup and a bad one fails every handshake.
+
+- name: Active certificate and key are usable by GRD
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
     - not ansible_check_mode
+  block:
+    - name: Stat the active certificate and key
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ rdp_tls_active_cert }}"
+        - "{{ rdp_tls_active_key }}"
+      register: rdp_tls_active_stat
+
+    - name: Check GRD's user can read the active certificate and key
+      ansible.builtin.command:
+        cmd: runuser -u gnome-remote-desktop -- test -r {{ item }}
+      loop:
+        - "{{ rdp_tls_active_cert }}"
+        - "{{ rdp_tls_active_key }}"
+      register: rdp_tls_active_readable
+      changed_when: false
+      failed_when: false
+
+    - name: Read the active certificate's public key
+      ansible.builtin.command:
+        cmd: openssl x509 -noout -pubkey -in {{ rdp_tls_active_cert }}
+      register: rdp_tls_active_cert_pub
+      changed_when: false
+      failed_when: false
+
+    - name: Read the active private key's public key
+      ansible.builtin.command:
+        cmd: openssl pkey -pubout -in {{ rdp_tls_active_key }}
+      register: rdp_tls_active_key_pub
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Refuse a missing, unreadable, unparseable or mismatched pair
+      ansible.builtin.assert:
+        that:
+          - rdp_tls_active_stat.results | map(attribute='stat.exists') | min
+          - rdp_tls_active_stat.results | map(attribute='stat.pw_name') | unique | list == ['gnome-remote-desktop']
+          - rdp_tls_active_readable.results | map(attribute='rc') | max == 0
+          - rdp_tls_active_cert_pub.rc == 0
+          - rdp_tls_active_key_pub.rc == 0
+          - rdp_tls_active_cert_pub.stdout == rdp_tls_active_key_pub.stdout
+        fail_msg: >-
+          GRD cannot use {{ rdp_tls_active_cert }} and {{ rdp_tls_active_key }}
+          ({{ rdp_tls_mode }}): a file is missing, not owned by or readable as
+          gnome-remote-desktop, does not parse, or the key does not belong to
+          the certificate.
+        success_msg: "{{ rdp_tls_mode }} certificate and key present, readable by GRD and matching"
+
+    - name: Check the active certificate is in date
+      ansible.builtin.command:
+        cmd: openssl x509 -noout -checkend 0 -in {{ rdp_tls_active_cert }}
+      register: rdp_tls_active_in_date
+      changed_when: false
+      failed_when: false
+
+    # Only a supplied cert fails on expiry, because an expired self-signed one stays pinned.
+    - name: Refuse an expired supplied certificate
+      ansible.builtin.assert:
+        that:
+          - rdp_tls_active_in_date.rc == 0
+        fail_msg: "{{ rdp_tls_cert_src | default(rdp_tls_active_cert) }} has expired."
+        quiet: true
+      when: rdp_tls_mode == 'supplied'
+
+    - name: Warn about an expired self-signed certificate
+      ansible.builtin.debug:
+        msg: >-
+          {{ rdp_tls_active_cert }} has expired. Clients that pinned it keep
+          working but may warn. Delete the pair and re-run to reissue, which
+          re-prompts every client once.
+      when:
+        - rdp_tls_mode != 'supplied'
+        - rdp_tls_active_in_date.rc != 0
+
+    - name: Check the active certificate covers this host's name
+      ansible.builtin.command:
+        cmd: openssl x509 -noout -checkhost {{ ansible_facts['fqdn'] }} -in {{ rdp_tls_active_cert }}
+      register: rdp_tls_active_host
+      changed_when: false
+      failed_when: false
+
+    - name: Warn when the certificate does not cover this host's name
+      ansible.builtin.debug:
+        msg: >-
+          {{ rdp_tls_active_cert }} does not name {{ ansible_facts['fqdn'] }}.
+          Clients connecting by that name get a name-mismatch warning on top
+          of any trust prompt.
+      when: rdp_tls_active_host.rc != 0
+
+# ============================================================================
+# POINT GRD AT THE ACTIVE PAIR
+# ============================================================================
+# GRD reads these at startup, so a change applies at its next restart.
 
 - name: Configure grdctl to use TLS certificate
   ansible.builtin.command:
-    cmd: grdctl --system rdp set-tls-cert /var/lib/gnome-remote-desktop/rdp-tls.crt
+    cmd: grdctl --system rdp set-tls-cert {{ rdp_tls_active_cert }}
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
@@ -58,9 +270,55 @@
 
 - name: Configure grdctl to use TLS key
   ansible.builtin.command:
-    cmd: grdctl --system rdp set-tls-key /var/lib/gnome-remote-desktop/rdp-tls.key
+    cmd: grdctl --system rdp set-tls-key {{ rdp_tls_active_key }}
   when:
     - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
     - has_gnome
   failed_when: false
   changed_when: false
+
+# ============================================================================
+# FINGERPRINT
+# ============================================================================
+# SHA-256 for FreeRDP clients and SHA-1 for the Microsoft client's thumbprint, to check the first-connect prompt against.
+
+- name: Read the served certificate's fingerprints
+  ansible.builtin.command:
+    cmd: openssl x509 -noout -fingerprint -{{ item }} -in {{ rdp_tls_active_cert }}
+  loop: [sha256, sha1]
+  register: rdp_tls_fingerprints
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+- name: Create the fingerprint file's directory
+  ansible.builtin.file:
+    path: "{{ rdp_tls_fingerprint_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+
+- name: Record the fingerprints for users to check against
+  ansible.builtin.copy:
+    dest: "{{ rdp_tls_fingerprint_file }}"
+    content: |
+      # RDP certificate fingerprints for {{ ansible_facts['fqdn'] }} ({{ rdp_tls_mode }}).
+      # Check your client's first-connect prompt against these before trusting it.
+      # GRD serves this certificate from its next start, so a reboot may be pending.
+      {% for result in rdp_tls_fingerprints.results if result.rc == 0 %}
+      {{ result.stdout }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - has_gnome
+    - rdp_tls_fingerprints.results | selectattr('rc', 'equalto', 0) | list | length > 0
