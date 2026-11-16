@@ -544,19 +544,25 @@ case "$OS_FAMILY" in
         ;;
 esac
 
-# Create temporary Python venv
-python3 -m venv "$TEMP_ANSIBLE_DIR" || {
-    print_error "Failed to create Python venv"
-    exit 1
-}
-
-# Install latest Ansible + ansible-lint via pip
+# Install latest Ansible + ansible-lint via pip, on the first Python it runs on.
+# A Python newer than ansible-core supports installs it and then fails on import.
 print_info "Installing latest Ansible + ansible-lint via pip..."
-"$TEMP_ANSIBLE_DIR/bin/pip" install --upgrade pip setuptools wheel >/dev/null 2>&1
-"$TEMP_ANSIBLE_DIR/bin/pip" install ansible ansible-lint >/dev/null 2>&1 || {
-    print_error "Failed to install Ansible + ansible-lint via pip"
+ansible_ready=0
+for py in python3 python3.14 python3.13 python3.12; do
+    command -v "$py" &>/dev/null || continue
+    "$py" -m venv --clear "$TEMP_ANSIBLE_DIR" >/dev/null 2>&1 || continue
+    "$TEMP_ANSIBLE_DIR/bin/pip" install --upgrade pip setuptools wheel >/dev/null 2>&1
+    "$TEMP_ANSIBLE_DIR/bin/pip" install ansible ansible-lint >/dev/null 2>&1 || continue
+    if "$TEMP_ANSIBLE_DIR/bin/ansible" --version >/dev/null 2>&1; then
+        ansible_ready=1
+        break
+    fi
+    print_warning "Ansible does not run on $("$py" --version 2>&1), trying an older Python"
+done
+if [[ "$ansible_ready" -ne 1 ]]; then
+    print_error "Failed to install a working Ansible + ansible-lint via pip"
     exit 1
-}
+fi
 
 ANSIBLE_VERSION=$("$TEMP_ANSIBLE_DIR/bin/ansible" --version | head -1 | awk '{print $2}')
 ANSIBLE_LINT_VERSION=$("$TEMP_ANSIBLE_DIR/bin/ansible-lint" --version 2>/dev/null | head -1 | awk '{print $2}')
