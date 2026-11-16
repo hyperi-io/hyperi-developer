@@ -14,6 +14,14 @@
       tags: ['developer-rust', 'rust']
   tags: ['developer-rust', 'rust', 'rust-cache', 'rust-governor', 'rust-llvm']
 
+# Both slices size from where builds run, so every tag that renders one sets it.
+- name: Settle where this host's Rust builds run
+  ansible.builtin.include_tasks:
+    file: build_role.yml
+    apply:
+      tags: ['developer-rust', 'rust-governor', 'agents-slice']
+  tags: ['developer-rust', 'rust-governor', 'agents-slice']
+
 # Its own tag so the governor can be applied or re-applied without a full
 # toolchain converge, the same bargain rust-cache makes.
 - name: Govern rust build resources

@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Show or move the memory split between Rust builds and agent sessions, live.
+
+    hyperi-build-slice show          # both slices: use, High, Max, converged Max
+    hyperi-build-slice raise 8G      # give rustbuild.slice 8 GiB until reset
+    hyperi-build-slice reset         # back to the converged sizes
+
+rustbuild.slice and agents.slice share one RAM budget, sized at converge so
+their maxima never add up to more than the host has. `raise` keeps that true:
+whatever it gives the build slice it takes from agents.slice. It refuses when
+that would leave agent sessions less than they use now plus 1 GiB.
+
+Changes are runtime only (`systemctl --user set-property --runtime`), so a
+reboot or `reset` restores the converged sizes, and a converge rewrites them.
+"""
+
+import argparse
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+BUILD = "rustbuild.slice"
+AGENTS = "agents.slice"
+UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
+MIB = 1024 * 1024
+GIB = 1024 * MIB
+SYSTEMCTL = shutil.which("systemctl") or "/usr/bin/systemctl"
+AGENTS_SPARE = GIB
+AGENTS_FLOOR = 2 * GIB
+BUILD_HIGH_RATIO = 7 / 8
+AGENTS_HIGH_RATIO = 9 / 10
+SIZE = re.compile(r"^(\d+(?:\.\d+)?)([KMGT]?)i?B?$", re.IGNORECASE)
+UNITS = {"": 1, "K": 1024, "M": MIB, "G": GIB, "T": 1024 * GIB}
+
+
+def parse_size(text: str) -> int:
+    """Return a size such as 8G, 6144M or 8GiB in bytes."""
+    match = SIZE.match(text.strip())
+    if match is None:
+        raise argparse.ArgumentTypeError(f"not a size: {text!r} (try 8G or 6144M)")
+    number, unit = match.groups()
+    return int(float(number) * UNITS[unit.upper()])
+
+
+def live(unit: str, prop: str) -> int | None:
+    """Return a slice property in bytes, or None when systemd reports no limit."""
+    result = subprocess.run(  # noqa: S603 - fixed argv, unit names are constants
+        [SYSTEMCTL, "--user", "show", unit, "-p", prop, "--value"],
+        capture_output=True,
+        check=True,
+        encoding="utf-8",
+        errors="replace",
+        text=True,
+    )
+    value = result.stdout.strip()
+    return int(value) if value.isdigit() else None
+
+
+def converged(unit: str, prop: str) -> int | None:
+    """Return the property the converged unit file sets, in bytes."""
+    path = UNIT_DIR / unit
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == prop:
+            return parse_size(value)
+    return None
+
+
+def apply(unit: str, high: int, maximum: int) -> None:
+    """Set a slice's MemoryHigh and MemoryMax until reboot or reset."""
+    subprocess.run(  # noqa: S603 - fixed argv, unit names are constants
+        [
+            SYSTEMCTL,
+            "--user",
+            "set-property",
+            "--runtime",
+            unit,
+            f"MemoryHigh={high // MIB}M",
+            f"MemoryMax={maximum // MIB}M",
+        ],
+        check=True,
+    )
+
+
+def gib(value: int | None) -> str:
+    """Format bytes as GiB for the table."""
+    return "none" if value is None else f"{value / GIB:.1f}G"
+
+
+def show() -> int:
+    """Print both slices' use and limits."""
+    print(f"{'slice':16} {'used':>7} {'high':>7} {'max':>7} {'converged':>10}")
+    for unit in (BUILD, AGENTS):
+        print(
+            f"{unit:16} {gib(live(unit, 'MemoryCurrent')):>7} "
+            f"{gib(live(unit, 'MemoryHigh')):>7} {gib(live(unit, 'MemoryMax')):>7} "
+            f"{gib(converged(unit, 'MemoryMax')):>10}"
+        )
+    return 0
+
+
+def raise_build(size: int) -> int:
+    """Give the build slice `size` and take the difference from the agents slice."""
+    build_max = live(BUILD, "MemoryMax")
+    agents_max = live(AGENTS, "MemoryMax")
+    agents_used = live(AGENTS, "MemoryCurrent") or 0
+    if build_max is None or agents_max is None:
+        print(
+            "hyperi-build-slice: both slices need a MemoryMax, "
+            "converge the developer-rust role first",
+            file=sys.stderr,
+        )
+        return 1
+    new_agents_max = agents_max - (size - build_max)
+    needed = max(agents_used + AGENTS_SPARE, AGENTS_FLOOR)
+    if new_agents_max < needed:
+        print(
+            f"hyperi-build-slice: {gib(size)} for builds leaves agent sessions "
+            f"{gib(new_agents_max)}, under the {gib(needed)} they need now. "
+            "Close a session or ask for less.",
+            file=sys.stderr,
+        )
+        return 1
+    apply(BUILD, int(size * BUILD_HIGH_RATIO), size)
+    apply(AGENTS, int(new_agents_max * AGENTS_HIGH_RATIO), new_agents_max)
+    return show()
+
+
+def reset() -> int:
+    """Put both slices back to the sizes the converged unit files set."""
+    for unit in (BUILD, AGENTS):
+        high = converged(unit, "MemoryHigh")
+        maximum = converged(unit, "MemoryMax")
+        if high is None or maximum is None:
+            print(
+                f"hyperi-build-slice: no converged limits in {UNIT_DIR / unit}",
+                file=sys.stderr,
+            )
+            return 1
+        apply(unit, high, maximum)
+    return show()
+
+
+def main() -> int:
+    """Parse the command line and run the verb."""
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    verbs = parser.add_subparsers(dest="verb", required=True)
+    verbs.add_parser("show", help="both slices' use and limits")
+    raise_parser = verbs.add_parser(
+        "raise", help="give the build slice SIZE until reset"
+    )
+    raise_parser.add_argument(
+        "size", type=parse_size, help="the build slice's MemoryMax, e.g. 8G"
+    )
+    verbs.add_parser("reset", help="back to the converged sizes")
+    args = parser.parse_args()
+    if args.verb == "raise":
+        return raise_build(args.size)
+    if args.verb == "reset":
+        return reset()
+    return show()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -49,6 +49,15 @@
         mode: '0755'
       become: true
 
+    - name: Install hyperi-build-slice
+      ansible.builtin.copy:
+        src: hyperi-build-slice
+        dest: /usr/local/bin/hyperi-build-slice
+        owner: root
+        mode: '0755'
+      become: true
+      when: ansible_facts['system'] == 'Linux'
+
     - name: Create the hyperi config directory
       ansible.builtin.file:
         path: "{{ user_home }}/.config/hyperi"
