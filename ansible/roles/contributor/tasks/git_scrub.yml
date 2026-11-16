@@ -25,6 +25,15 @@
       become: false
       environment: "{{ homebrew_env }}"
 
+    # Homebrew refuses formulae from a tap nobody has trusted.
+    - name: Trust the hyperi-io tap (macOS)
+      ansible.builtin.command:
+        cmd: brew trust --tap hyperi-io/tap
+      become: false
+      environment: "{{ homebrew_env }}"
+      register: contributor_git_scrub_trust
+      changed_when: "'Already trusted' not in contributor_git_scrub_trust.stdout"
+
     # Earlier runs of this role put the release binary here. On an Intel Mac it
     # is also the path brew links into, so it has to go before the install.
     - name: Check for a git-scrub binary from the release tarball (macOS)

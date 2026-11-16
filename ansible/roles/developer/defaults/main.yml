@@ -51,14 +51,15 @@ docker_fedora_supported_releases:
 
 # Node.js configuration
 #
-# NodeSource publishes a repo PER MAJOR (node_24.x, node_22.x) and both provide
-# the package `nodejs`, so a box can hold exactly one system-wide major. That is
-# the n slot; fnm covers n-1 per user. Majors come from the SSoT -- see
-# hyperi_core_versions in playbooks/group_vars/all.yml.
+# NodeSource publishes a repo PER MAJOR (node_26.x, node_24.x) and each provides
+# the package `nodejs`, so a box holds exactly one system-wide major and fnm
+# holds the others per user. tasks/nodejs.yml replaces these fallbacks with the
+# majors the Node.js release schedule supports today.
 #
 # The deb and rpm repos are signed by DIFFERENT keys, so both URLs are carried.
 node_major: "{{ hyperi_core_versions.node_major }}"
-node_major_previous: "{{ hyperi_core_versions.node_major_previous }}"
+node_majors_previous: "{{ hyperi_core_versions.node_majors_previous }}"
+developer_node_schedule_url: "{{ hyperi_node_schedule_url }}"
 nodesource_deb_base_url: "https://deb.nodesource.com"
 nodesource_rpm_base_url: "https://rpm.nodesource.com"
 nodesource_deb_gpg_url: "{{ nodesource_deb_base_url }}/gpgkey/nodesource-repo.gpg.key"

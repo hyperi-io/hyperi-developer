@@ -23,6 +23,15 @@
       become: false
       environment: "{{ homebrew_env }}"
 
+    # Homebrew refuses formulae from a tap nobody has trusted.
+    - name: Trust the hyperi-io tap (macOS)
+      ansible.builtin.command:
+        cmd: brew trust --tap hyperi-io/tap
+      become: false
+      environment: "{{ homebrew_env }}"
+      register: contributor_macbash_trust
+      changed_when: "'Already trusted' not in contributor_macbash_trust.stdout"
+
     - name: Install macbash via Homebrew (macOS)
       community.general.homebrew:
         name: macbash

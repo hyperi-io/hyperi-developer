@@ -132,6 +132,9 @@
         user_home }}/.npm-global/bin:{{
         '/opt/homebrew/bin:/usr/local/bin:' if ansible_facts['distribution'] == 'MacOSX' else ''
         }}{{ ansible_facts['env'].PATH }}
+      # The release-age cooldown, in minutes. A global installed inside it
+      # would fail every later `pnpm update` until it ages out.
+      PNPM_CONFIG_MINIMUM_RELEASE_AGE: "{{ (hyperi_release_min_age_days | int) * 1440 }}"
 
 - name: Load macOS-specific variables
   ansible.builtin.include_vars:

@@ -11,7 +11,8 @@
 #   * rustup           (Rust toolchains, where rustup is used) -- user
 #   * cargo tools      (nextest, deny, cargo-audit, ...) -- user
 #   * go tools         (gopls)                           -- user
-#   * npm globals      (maid, semantic-release, pnpm)    -- user
+#   * Node.js majors   (node@<newest LTS>, fnm for the rest) -- user
+#   * npm globals      (npm, pnpm, maid, semantic-release) -- user
 #   * pnpm globals     (eslint, prettier, typescript, ...) -- user
 #   * Codex plugin     (claude plugin update)            -- user
 #
@@ -23,15 +24,13 @@
 #
 # Each section is independent and self-guarding: a tool that isn't installed is
 # skipped (printed, not fatal), and a failing step is recorded and reported in
-# the summary without aborting the rest. At the end, if the system needs it, you
-# get a reboot prompt (default: No).
+# the summary without aborting the rest. A reboot an update needs is reported,
+# never started, unless --ask was given.
 #
-# ONE confirmation, up front. After the y/N everything runs unattended -- sudo
-# is taken immediately after the gate and kept alive -- and the only other
-# question is the reboot prompt at the end.
+# The password is asked for once, at the start, and nothing else asks.
 #
-# Run with:  hyperi-update            (confirms, then prompts once for sudo)
-#            hyperi-update --yes      (no confirmation — for scripts/Ansible)
+# Run with:  hyperi-update            (one sudo password, then unattended)
+#            hyperi-update --ask      (confirm first, and offer a reboot)
 #            hyperi-update --install  (create the clickable "Hyperi Update" app)
 #            hyperi-update --help
 
@@ -45,9 +44,9 @@ setopt nounset pipefail
 # silicon and Intel, and brew's rustup is keg-only, so its shims are never linked
 # into the brew prefix.
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
-export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$HOME/go/bin:$PNPM_HOME:$PNPM_HOME/bin:/opt/homebrew/bin:/opt/homebrew/opt/rustup/bin:/usr/local/bin:/usr/local/opt/rustup/bin:$PATH"
+export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$HOME/go/bin:$HOME/.npm-global/bin:$PNPM_HOME:$PNPM_HOME/bin:/opt/homebrew/bin:/opt/homebrew/opt/rustup/bin:/usr/local/bin:/usr/local/opt/rustup/bin:$PATH"
 
-ASSUME_YES=0
+ASSUME_YES=1
 
 # --- self-resolve: absolute path to this script (symlinks resolved) -------
 SELF=${${(%):-%x}:A}
@@ -58,9 +57,10 @@ hyperi-update -- update Homebrew, macOS, uv tools, rustup and cargo/go/npm/pnpm
                  tools in one go.
 
 Usage:
-  hyperi-update            Confirm, then run all updates (prompts once for sudo).
-  hyperi-update --yes      Skip the confirmation. Still prompts for sudo unless
-                           you have a cached ticket or passwordless sudo.
+  hyperi-update            Run all updates. Asks for the sudo password once,
+                           unless sudo is already passwordless.
+  hyperi-update --ask      Confirm before starting, and offer a reboot if one
+                           is needed.
   hyperi-update --install  Create a clickable "Hyperi Update" app in /Applications.
   hyperi-update --help     Show this help.
 EOF
@@ -148,14 +148,13 @@ case "${1:-}" in
     --install)  install_app; exit $? ;;
     -h|--help)  usage; exit 0 ;;
     -y|--yes)   ASSUME_YES=1 ;;
+    --ask)      ASSUME_YES=0 ;;
     "")         ;;
     *)          print -u2 "hyperi-update: unknown option '$1'"; usage; exit 2 ;;
 esac
 
 # --- confirm ---------------------------------------------------------------
-# This touches every formula, cask and system update on the box, so say so
-# before doing it. --yes is how Ansible and any other unattended caller skips
-# this -- and it is the ONLY question until the reboot prompt at the end.
+# Only with --ask: this touches every formula, cask and system update on the box.
 if (( ! ASSUME_YES )); then
     printf '%s%shyperi-update%s will update EVERYTHING on this Mac:\n\n' "$BOLD" "$BLUE" "$RESET"
     have brew   && printf '  - all Homebrew formulae and casks (including --greedy self-updaters)\n'
@@ -175,19 +174,27 @@ if (( ! ASSUME_YES )); then
     esac
 fi
 
-# --- sudo: ask once, keep alive -------------------------------------------
-# softwareupdate needs root, and asking for it mid-run breaks the one-question
-# contract -- authenticate here, straight after the gate, and keep the ticket
-# alive for the long sections. NOPASSWD leaves no timestamp to refresh, so the
-# keepalive only starts when a password was actually entered.
+# --- sudo: ask once, hold for the run -------------------------------------
+# Homebrew and softwareupdate call sudo from their own children, which a ticket
+# for this terminal does not always cover. A sudoers drop-in lets this user sudo
+# without a password until the run exits, when the trap removes it.
+SUDOERS_DROPIN=/etc/sudoers.d/zz-hyperi-update
 section "Authenticating (sudo)"
-if sudo -n true 2>/dev/null; then
+# -k ignores a cached ticket, so only a standing NOPASSWD rule passes the first test.
+if sudo -k -n true 2>/dev/null; then
     ok "sudo authenticated (passwordless)"
-elif [[ -t 0 ]] && sudo -v; then
-    ok "sudo authenticated"
-    ( while true; do sudo -n true 2>/dev/null; sleep 50; kill -0 "$$" 2>/dev/null || exit; done ) &
-    SUDO_KEEPALIVE_PID=$!
-    trap '[[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
+elif sudo -n true 2>/dev/null || { [[ -t 0 ]] && sudo -v; }; then
+    trap 'sudo -n rm -f "$SUDOERS_DROPIN"' EXIT
+    trap 'exit 130' INT TERM
+    dropin_tmp="$(mktemp)"
+    printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$(id -un)" >"$dropin_tmp"
+    if sudo visudo -cqf "$dropin_tmp" &&
+       sudo install -m 0440 -o root -g wheel "$dropin_tmp" "$SUDOERS_DROPIN"; then
+        ok "sudo held until this run ends"
+    else
+        fail "sudo drop-in (later steps may ask for the password again)"
+    fi
+    rm -f "$dropin_tmp"
 else
     printf '%s    \xe2\x9c\x97 sudo authentication failed — aborting%s\n' "$RED" "$RESET"
     printf '%s    No passwordless sudo and no terminal to prompt on.%s\n' "$RED" "$RESET"
@@ -210,6 +217,63 @@ if have brew; then
 else
     skip "Homebrew not installed"
 fi
+
+# --- Node.js LTS majors ----------------------------------------------------
+# brew upgrade keeps node@N on its major, so the newest LTS is installed and
+# linked here. The other supported majors are fnm's (its section below).
+NODE_SCHEDULE_URL='https://raw.githubusercontent.com/nodejs/Release/main/schedule.json'
+NODE_OTHER_MAJORS=''
+NODE_EOL_MAJORS=''
+
+# node_majors <schedule.json> : the supported majors newest first, then the EOL ones.
+node_majors() {
+    python3 - "$1" 2>/dev/null <<'PY'
+import datetime
+import json
+import re
+import sys
+
+today = datetime.datetime.now(datetime.UTC).date().isoformat()
+with open(sys.argv[1], encoding="utf-8") as fh:
+    lines = {k: v for k, v in json.load(fh).items() if re.fullmatch(r"v\d+", k)}
+supported = sorted(
+    (int(k[1:]) for k, v in lines.items() if v.get("lts", "9") <= today < v.get("end", "")),
+    reverse=True,
+)
+eol = sorted(int(k[1:]) for k, v in lines.items() if v.get("end", "9") <= today)
+print(" ".join(map(str, supported)))
+print(" ".join(map(str, eol)))
+PY
+}
+
+section "Node.js LTS majors"
+node_schedule="$(mktemp)"
+if ! have brew; then
+    skip "Homebrew not installed"
+elif curl -fsSL --connect-timeout 20 --max-time 600 "$NODE_SCHEDULE_URL" -o "$node_schedule" 2>/dev/null &&
+     node_answer="$(node_majors "$node_schedule")" && [[ -n "${node_answer%%$'\n'*}" ]]; then
+    node_supported="${node_answer%%$'\n'*}"
+    NODE_EOL_MAJORS="${node_answer#*$'\n'}"
+    node_system="${node_supported%% *}"
+    NODE_OTHER_MAJORS="${node_supported#$node_system}"
+    ok "supported LTS majors: $node_supported"
+    if brew list --versions "node@$node_system" >/dev/null 2>&1; then
+        ok "node@$node_system installed"
+    else
+        run "brew install node@$node_system" brew install "node@$node_system"
+    fi
+    # node@N can be an alias of the unversioned formula, so compare the binaries.
+    node_linked="$(realpath "$(brew --prefix)/bin/node" 2>/dev/null)"
+    node_wanted="$(realpath "$(brew --prefix "node@$node_system")/bin/node" 2>/dev/null)"
+    if [[ -n "$node_wanted" && "$node_linked" == "$node_wanted" ]]; then
+        ok "node@$node_system linked"
+    else
+        run "brew link node@$node_system" brew link --overwrite --force "node@$node_system"
+    fi
+else
+    printf '%s    ! Node.js release schedule unreadable, Node majors left as they are%s\n' "$YELLOW" "$RESET"
+fi
+rm -f "$node_schedule"
 
 # --- macOS system updates --------------------------------------------------
 # Early, like the firmware section on Linux, so a slow Apple download overlaps
@@ -294,14 +358,41 @@ else
     skip "go not found"
 fi
 
+# --- fnm Node majors -------------------------------------------------------
+# Every supported major but the system one, plus any other major already
+# installed, at its latest patch. A version past end of life is removed.
+section "fnm Node majors"
+if have fnm; then
+    fnm_eol=(${=NODE_EOL_MAJORS})
+    fnm_wanted=(${=NODE_OTHER_MAJORS})
+    for version in ${(f)"$(fnm list 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -u)"}; do
+        major="${${version#v}%%.*}"
+        if (( ${fnm_eol[(Ie)$major]} )); then
+            run "fnm uninstall $version (end of life)" fnm uninstall "$version"
+        elif (( ! ${fnm_wanted[(Ie)$major]} )); then
+            fnm_wanted+=("$major")
+        fi
+    done
+    if (( ${#fnm_wanted} == 0 )); then
+        skip "no fnm Node majors to install or refresh"
+    fi
+    for fm in "${fnm_wanted[@]}"; do
+        run "fnm install $fm" fnm install "$fm"
+    done
+else
+    skip "fnm not found"
+fi
+
 # --- npm and pnpm global tools ---------------------------------------------
-# semantic-release and maid are npm globals. eslint, prettier, typescript and
-# tsx are pnpm globals, which `npm update -g` never sees. pnpm itself is
-# corepack's, so it is re-activated at latest first.
+# npm itself, pnpm, semantic-release and maid are npm globals, and eslint,
+# prettier, typescript and tsx are pnpm globals.
+RELEASE_MIN_AGE="${HYPERI_RELEASE_MIN_AGE_DAYS:-7}"
+[[ "$RELEASE_MIN_AGE" == <-> ]] || RELEASE_MIN_AGE=7
+NPM_BEFORE="$(date -u -v-"${RELEASE_MIN_AGE}"d +%F)"
 section "npm global tools"
 if have npm; then
-    run "npm update -g" npm update -g
-    have corepack && run "corepack pnpm@latest" corepack prepare pnpm@latest --activate
+    run "npm and pnpm" npm install --global npm@latest pnpm@latest --before "$NPM_BEFORE"
+    run "npm update -g" npm update --global --before "$NPM_BEFORE"
 else
     skip "npm not found"
 fi
@@ -309,8 +400,18 @@ fi
 section "pnpm global tools"
 if have pnpm; then
     # --latest, because the roles install each global at its latest release and
-    # the ranges pnpm recorded would otherwise hold them at that major.
-    run "pnpm update -g --latest" pnpm update -g --latest
+    # the ranges pnpm recorded would otherwise hold them at that major. A
+    # release inside the cooldown holds every global until it ages out.
+    pnpm_out="$(env PNPM_CONFIG_MINIMUM_RELEASE_AGE="$((RELEASE_MIN_AGE * 1440))" pnpm update -g --latest 2>&1)"
+    pnpm_rc=$?
+    printf '%s\n' "$pnpm_out"
+    if (( pnpm_rc == 0 )); then
+        ok "pnpm update -g --latest"
+    elif [[ "$pnpm_out" == *ERR_PNPM_NO_MATURE_MATCHING_VERSION* ]]; then
+        printf '%s    ! pnpm globals held: a release is inside the %s-day cooldown%s\n' "$YELLOW" "$RELEASE_MIN_AGE" "$RESET"
+    else
+        fail "pnpm update -g --latest (exit $pnpm_rc)"
+    fi
 else
     skip "pnpm not found"
 fi

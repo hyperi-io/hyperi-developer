@@ -125,6 +125,17 @@
         or ((soe_colima_cfg.content | b64decode | from_yaml).cpu | default(0) | int < soe_colima_cpu | int)
         or ((soe_colima_cfg.content | b64decode | from_yaml).memory | default(0) | int < soe_colima_mem_gb | int)
 
+    - name: Check whether the colima launch agent is loaded
+      ansible.builtin.command:
+        cmd: launchctl print gui/{{ ansible_facts['user_uid'] }}/io.hyperi.colima
+      become: false
+      register: soe_colima_loaded
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    # Bootstrapping a loaded agent fails with 5 or 37 depending on the macOS
+    # release, so only an unloaded agent is bootstrapped.
     - name: Load the colima launch agent
       ansible.builtin.command:
         cmd: >-
@@ -132,9 +143,7 @@
           {{ ansible_facts['env'].HOME }}/Library/LaunchAgents/io.hyperi.colima.plist
       become: false
       register: soe_colima_bootstrap
-      # Runs every time, not just when the plist changed: 37 is "already
-      # bootstrapped", so a re-run is a no-op, and it also re-loads the agent if
-      # someone unloaded it by hand. Gating on `changed` would leave that broken.
+      when: soe_colima_loaded.rc != 0
       failed_when: soe_colima_bootstrap.rc not in [0, 37]
       changed_when: soe_colima_bootstrap.rc == 0
 

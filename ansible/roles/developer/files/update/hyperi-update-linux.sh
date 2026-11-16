@@ -6,6 +6,7 @@
 #   * System packages  (apt or dnf, incl. 3rd-party repos: docker, vscode,
 #                       chrome, brave, git, gh, node, k8s, azure, gcloud,
 #                       opentofu, ...)
+#   * Node.js major    (NodeSource repo -> newest LTS)  -- needs sudo
 #   * Snap             (if installed)                   -- needs sudo
 #   * Flatpak          (apps + runtimes)                -- user
 #   * Firmware         (fwupd)                          -- needs sudo
@@ -14,7 +15,7 @@
 #   * rustup           (Rust toolchains)                -- user
 #   * cargo, go, npm and pnpm global tools              -- user
 #   * Go toolchain     (/usr/local/go, no upstream repo) -- needs sudo
-#   * fnm Node majors  (the n-1 Node, per user)         -- user
+#   * fnm Node majors  (the other LTS majors, per user)  -- user
 #   * Release binaries (/usr/local/bin, no repo/snap)   -- needs sudo
 #   * Codex CLI        (re-run of the installer)        -- user
 #   * Codex plugin     (claude plugin update)           -- user
@@ -61,11 +62,11 @@ CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
 # Make user-level tools reachable even when launched from a GUI/.desktop entry
 # or the systemd unit, neither of which sources the login shell (rustup and the
 # cargo tools live in the cargo home, uv in ~/.local/bin, Go in
-# /usr/local/go/bin, the go-installed tools in ~/go/bin and the pnpm globals in
-# PNPM_HOME).
+# /usr/local/go/bin, the go-installed tools in ~/go/bin, npm and pnpm in
+# ~/.npm-global/bin and the pnpm globals in PNPM_HOME).
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
 export FNM_DIR="${FNM_DIR:-$HOME/.local/share/fnm}"
-export PATH="$HOME/.local/bin:$CARGO_BIN:/usr/local/go/bin:$HOME/go/bin:$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+export PATH="$HOME/.local/bin:$CARGO_BIN:/usr/local/go/bin:$HOME/go/bin:$HOME/.npm-global/bin:$PNPM_HOME:$PNPM_HOME/bin:$PATH"
 
 ASSUME_YES=0
 
@@ -313,6 +314,89 @@ case "$PKG_MGR" in
         ;;
 esac
 
+# --- Node.js LTS majors ----------------------------------------------------
+# NodeSource never moves a box to the next major, so this section does.
+NODE_SCHEDULE_URL='https://raw.githubusercontent.com/nodejs/Release/main/schedule.json'
+NODE_OTHER_MAJORS=''
+NODE_EOL_MAJORS=''
+
+# node_majors <schedule.json> : the supported majors newest first, then the EOL ones.
+node_majors() {
+    python3 - "$1" 2>/dev/null <<'PY'
+import datetime
+import json
+import re
+import sys
+
+today = datetime.datetime.now(datetime.UTC).date().isoformat()
+with open(sys.argv[1], encoding="utf-8") as fh:
+    lines = {k: v for k, v in json.load(fh).items() if re.fullmatch(r"v\d+", k)}
+supported = sorted(
+    (int(k[1:]) for k, v in lines.items() if v.get("lts", "9") <= today < v.get("end", "")),
+    reverse=True,
+)
+eol = sorted(int(k[1:]) for k, v in lines.items() if v.get("end", "9") <= today)
+print(" ".join(map(str, supported)))
+print(" ".join(map(str, eol)))
+PY
+}
+
+# move_nodesource <major> : point the NodeSource repo at <major> and install it.
+move_nodesource() {
+    local file current
+    case "$PKG_MGR" in
+        apt) file=/etc/apt/sources.list.d/nodesource.sources ;;
+        dnf) file=/etc/yum.repos.d/nodesource.repo ;;
+        *)   skip "no apt or dnf, system node left alone"; return 0 ;;
+    esac
+    if [[ ! -f "$file" ]]; then
+        skip "no NodeSource repo, system node left alone"
+        return 0
+    fi
+    current="$(sed -nE 's#.*(node|pub)_([0-9]+)\.x.*#\2#p' "$file" | head -n 1)"
+    if [[ "$current" == "$1" ]]; then
+        ok "system node on the NodeSource $1.x repo"
+        return 0
+    fi
+    if ! sudo sed -i -E "s#(node|pub)_[0-9]+\.x#\1_$1.x#g; s#Node\.js [0-9]+\.x#Node.js $1.x#" "$file"; then
+        fail "NodeSource repo $current.x -> $1.x"
+        return 1
+    fi
+    case "$PKG_MGR" in
+        apt)
+            wait_for_apt_lock || return 1
+            run "apt-get update (NodeSource $1.x)" sudo apt-get update
+            run "nodejs $current.x -> $1.x" sudo apt-get install -y nodejs
+            ;;
+        dnf)
+            run "nodejs $current.x -> $1.x" sudo dnf -y --refresh upgrade nodejs
+            ;;
+    esac
+}
+
+section "Node.js LTS majors"
+node_schedule="$(mktemp)"
+if curl -fsSL "${CURL_LIMITS[@]}" "$NODE_SCHEDULE_URL" -o "$node_schedule" 2>/dev/null &&
+   node_answer="$(node_majors "$node_schedule")" && [[ -n "${node_answer%%$'\n'*}" ]]; then
+    node_supported="${node_answer%%$'\n'*}"
+    NODE_EOL_MAJORS="${node_answer#*$'\n'}"
+    node_system="${node_supported%% *}"
+    NODE_OTHER_MAJORS="${node_supported#"$node_system"}"
+    ok "supported LTS majors: $node_supported"
+    move_nodesource "$node_system"
+else
+    warn "Node.js release schedule unreadable, Node majors left as they are"
+fi
+rm -f "$node_schedule"
+
+# Node 25+ ships no corepack, so the links `corepack enable` wrote now dangle.
+for link in pnpm pnpx yarn yarnpkg; do
+    target="/usr/bin/$link"
+    if [[ -L "$target" && "$(readlink "$target")" == *corepack* ]]; then
+        run "remove the corepack $link link" sudo rm -f "$target"
+    fi
+done
+
 # --- Snap ------------------------------------------------------------------
 section "Snap — snap packages"
 if have snap; then
@@ -399,13 +483,13 @@ else
 fi
 
 # --- npm and pnpm global tools ---------------------------------------------
-# semantic-release, maid and wrangler are npm globals. eslint, prettier,
-# typescript and tsx are pnpm globals, which `npm update -g` never
-# sees. pnpm itself is corepack's, so it is re-activated at latest first.
+# npm itself, pnpm, semantic-release, maid and wrangler are npm globals, and
+# eslint, prettier, typescript and tsx are pnpm globals.
+NPM_BEFORE="$(date -u -d "$RELEASE_MIN_AGE days ago" +%F)"
 section "npm global tools"
 if have npm; then
-    run "npm update -g" npm update -g
-    have corepack && run "corepack pnpm@latest" corepack prepare pnpm@latest --activate
+    run "npm and pnpm" npm install --global npm@latest pnpm@latest --before "$NPM_BEFORE"
+    run "npm update -g" npm update --global --before "$NPM_BEFORE"
 else
     skip "npm not found"
 fi
@@ -413,8 +497,18 @@ fi
 section "pnpm global tools"
 if have pnpm; then
     # --latest, because the roles install each global at its latest release and
-    # the ranges pnpm recorded would otherwise hold them at that major.
-    run "pnpm update -g --latest" pnpm update -g --latest
+    # the ranges pnpm recorded would otherwise hold them at that major. A
+    # release inside the cooldown holds every global until it ages out.
+    pnpm_out="$(env PNPM_CONFIG_MINIMUM_RELEASE_AGE="$((RELEASE_MIN_AGE * 1440))" pnpm update -g --latest 2>&1)"
+    pnpm_rc=$?
+    printf '%s\n' "$pnpm_out"
+    if [[ "$pnpm_rc" -eq 0 ]]; then
+        ok "pnpm update -g --latest"
+    elif [[ "$pnpm_out" == *ERR_PNPM_NO_MATURE_MATCHING_VERSION* ]]; then
+        warn "pnpm globals held: a release is inside the $RELEASE_MIN_AGE-day cooldown"
+    else
+        fail "pnpm update -g --latest (exit $pnpm_rc)"
+    fi
 else
     skip "pnpm not found"
 fi
@@ -514,20 +608,28 @@ else
 fi
 
 # --- fnm Node majors -------------------------------------------------------
-# The SYSTEM node comes from the NodeSource repo and is already updated by the
-# system-packages section. This refreshes the extra major fnm manages (the n-1
-# slot) to its latest patch -- `fnm install <major>` is a no-op when it is
-# already current.
+# Every supported major but the system one, plus any other major already
+# installed, at its latest patch. A version past end of life is removed.
 section "fnm Node majors"
 if have fnm; then
-    fnm_majors="$(fnm list 2>/dev/null | sed -n 's/.*v\([0-9]\{1,\}\)\..*/\1/p' | sort -u)"
-    if [[ -n "$fnm_majors" ]]; then
-        for fm in $fnm_majors; do
-            run "fnm install $fm" fnm install "$fm"
-        done
-    else
-        skip "fnm has no Node versions installed"
+    read -r -a fnm_eol <<<"$NODE_EOL_MAJORS"
+    read -r -a fnm_wanted <<<"$NODE_OTHER_MAJORS"
+    fnm_versions="$(fnm list 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -u)"
+    for version in $fnm_versions; do
+        major="${version#v}"
+        major="${major%%.*}"
+        if [[ " ${fnm_eol[*]} " == *" $major "* ]]; then
+            run "fnm uninstall $version (end of life)" fnm uninstall "$version"
+        elif [[ " ${fnm_wanted[*]} " != *" $major "* ]]; then
+            fnm_wanted+=("$major")
+        fi
+    done
+    if [[ ${#fnm_wanted[@]} -eq 0 ]]; then
+        skip "no fnm Node majors to install or refresh"
     fi
+    for fm in "${fnm_wanted[@]}"; do
+        run "fnm install $fm" fnm install "$fm"
+    done
 else
     skip "fnm not found"
 fi
