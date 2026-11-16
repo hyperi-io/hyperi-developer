@@ -186,13 +186,24 @@ rust_governor_enabled: true
 # REFUSE the build outright rather than fall back to compiling.
 rust_governor_no_incremental: false
 
+# Where Rust builds run: local, client (sent to hyperi-ai's remote.host), target
+# (takes other hosts' builds) or auto (client when remote.host is set).
+# `hyperi-build-slice raise <size>` lifts the slice for one case.
+rust_build_role: auto
+
 # Share of the host's RAM the whole build slice may use. High throttles and
 # reclaims, Max kills the build -- the build dies, never the host. Max is a
 # third of RAM so the desktop and its sessions keep the other two thirds.
-# Raise both on a host dedicated to builds (a remote build target), e.g. 60 and
-# 50, in its host or group vars.
 rust_governor_memory_high_pct: 27
 rust_governor_memory_max_pct: 33
+
+# A client's build slice in MiB, sized for rust-analyzer.
+rust_governor_client_memory_high_mb: 3584
+rust_governor_client_memory_max_mb: 4096
+
+# A build target's shares of RAM.
+rust_governor_target_memory_high_pct: 50
+rust_governor_target_memory_max_pct: 60
 
 # Smallest slice limits in MiB, so a small host can still build. Applied after
 # the percentage, and High never exceeds Max.

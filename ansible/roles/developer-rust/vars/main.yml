@@ -5,13 +5,22 @@
 
 developer_rust_ram_mb: "{{ ansible_facts['memtotal_mb'] | int }}"
 
-# rustbuild.slice. High never exceeds Max.
+# rustbuild.slice, sized by where builds run (tasks/build_role.yml sets the role).
+# High never exceeds Max.
+developer_rust_slice_max_pct: >-
+  {{ rust_governor_target_memory_max_pct if developer_rust_build_role == 'target'
+     else rust_governor_memory_max_pct }}
+developer_rust_slice_high_pct: >-
+  {{ rust_governor_target_memory_high_pct if developer_rust_build_role == 'target'
+     else rust_governor_memory_high_pct }}
 developer_rust_slice_max_mb: >-
-  {{ [developer_rust_ram_mb | int * rust_governor_memory_max_pct | int // 100,
-      rust_governor_memory_max_floor_mb | int] | max }}
+  {{ rust_governor_client_memory_max_mb | int if developer_rust_build_role == 'client'
+     else [developer_rust_ram_mb | int * developer_rust_slice_max_pct | int // 100,
+           rust_governor_memory_max_floor_mb | int] | max }}
 developer_rust_slice_high_mb: >-
-  {{ [[developer_rust_ram_mb | int * rust_governor_memory_high_pct | int // 100,
-       rust_governor_memory_high_floor_mb | int] | max,
+  {{ [rust_governor_client_memory_high_mb | int if developer_rust_build_role == 'client'
+      else [developer_rust_ram_mb | int * developer_rust_slice_high_pct | int // 100,
+            rust_governor_memory_high_floor_mb | int] | max,
       developer_rust_slice_max_mb | int] | min }}
 
 # What the desktop keeps, and what is left for agent sessions once builds have

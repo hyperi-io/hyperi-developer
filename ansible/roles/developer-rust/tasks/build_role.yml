@@ -1,0 +1,29 @@
+---
+# Sets developer_rust_build_role, which vars/main.yml sizes both slices from.
+
+- name: Check the Rust build role is one the role knows
+  ansible.builtin.assert:
+    that:
+      - rust_build_role in ['auto', 'local', 'client', 'target']
+    fail_msg: "rust_build_role must be auto, local, client or target, not {{ rust_build_role }}"
+    quiet: true
+
+- name: Read hyperi-ai's remote build host
+  ansible.builtin.command:
+    cmd: "{{ user_home }}/.local/bin/hyperi-ai config get remote.host"
+  become: true
+  become_user: "{{ actual_user }}"
+  register: developer_rust_remote_host
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: rust_build_role == 'auto'
+
+- name: Record where this host's Rust builds run
+  ansible.builtin.set_fact:
+    developer_rust_build_role: >-
+      {{ rust_build_role if rust_build_role != 'auto'
+         else ('client'
+               if developer_rust_remote_host.rc | default(1) == 0
+                  and (developer_rust_remote_host.stdout | default('') | trim) not in ['', 'None', 'null']
+               else 'local') }}
