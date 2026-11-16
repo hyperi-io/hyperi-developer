@@ -282,6 +282,12 @@
       become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
       tags: ['packer', 'never']
 
+    # DBeaver Community DB GUI (opt-in, in no persona).
+    - role: dbeaver
+      become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+      tags: ['dbeaver', 'never']
+      when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
+
     # ========================================================================
     # PERSONAS (meta-roles) — opinionated bundles that resolve to the roles
     # above via meta/dependencies. They pull the CLEAN developer base: its
