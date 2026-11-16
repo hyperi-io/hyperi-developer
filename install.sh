@@ -160,7 +160,6 @@ Generic dev GUI (developer-gui):
     desktop           GNOME / ubuntu-desktop-minimal install if missing
     vscode            Visual Studio Code
     ghostty           Ghostty terminal + JetBrains Mono font
-    dbeaver           DBeaver Community DB GUI
 
 Languages (developer-<lang>; --languages [list] or developer-languages for all):
     developer-rust        rustup + cargo tools + protoc/librdkafka build deps
@@ -185,6 +184,9 @@ Infrastructure (infrastructure):
 Packer (packer) - opt-in, in no persona:
     packer            HashiCorp Packer from HashiCorp's repo / tap (BUSL,
                       no open-source fork)
+
+DBeaver (dbeaver) - opt-in, in no persona:
+    dbeaver           DBeaver Community DB GUI
 
 Contributor (contributor) - to work ON a HyperI product, no org policy:
     hyperi-ci         hyperi-ci + semgrep, alint

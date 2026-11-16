@@ -179,7 +179,6 @@ reach for instead, are not in that manifest and have no published digest at all.
 | VS Code | all | vendor-repo / cask |
 | Ghostty | Fedora (COPR) / macOS (cask) | vendor-repo / cask |
 | Ghostty | Ubuntu | PPA (`ppa:mkasberg/ghostty-ubuntu`, key pinned by fingerprint); 24.04 is frozen at Ghostty 1.3.1 by the PPA, only 26.04 tracks new releases; a series the PPA does not publish takes the newest series it does |
-| DBeaver | all | Ubuntu vendor-repo (dbeaver.io/debs) / Fedora flatpak / cask |
 | VS Code privacy profile (opt-in: `-e vscode_privacy_enabled=true`) | all | bundled script (`hyperi-vscode-privacy`) |
 
 The privacy profile is off by default because it edits a personal
@@ -331,6 +330,14 @@ warning and continues.
 | packer | all | vendor-repo (apt.releases.hashicorp.com, rpm.releases.hashicorp.com), signing key fingerprint-pinned / brew (`hashicorp/tap`) |
 
 The one HashiCorp tool installed: BUSL, with no open-source fork, so it is its own opt-in role rather than part of `infrastructure`. `--tags removals` takes terraform and vault, and removes this repo only where Packer is not installed.
+
+### dbeaver
+
+| Tool(s) | Platforms | Method |
+|---|---|---|
+| DBeaver | all | Ubuntu: dbeaver.io apt repo / Fedora: flatpak / macOS: cask |
+
+Opt-in with `--tags dbeaver`, in no persona, and only on a GUI host. A box that has it from an earlier `developer-gui` run keeps it.
 
 ### contributor (CI toolchain - what `hyperi-ci check` drives)
 

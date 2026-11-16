@@ -73,12 +73,3 @@
       tags: ['developer-gui', 'ghostty']
   tags: ['developer-gui', 'ghostty']
   when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'
-
-# DBeaver — DB GUI client. Per spec, lives in developer-gui.
-- name: Install DBeaver Community
-  ansible.builtin.include_tasks:
-    file: dbeaver.yml
-    apply:
-      tags: ['developer-gui', 'dbeaver']
-  tags: ['developer-gui', 'dbeaver']
-  when: has_gnome | default(false) or ansible_facts['distribution'] == 'MacOSX'

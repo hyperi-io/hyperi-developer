@@ -75,10 +75,11 @@ flowchart TD
 | Tag | Description |
 |-----|-------------|
 | `developer` | Generic CLI dev base (the default: git, docker, shell utilities) |
-| `developer-gui` | VS Code, Ghostty, DBeaver. Privacy + AI-upsell de-nag profile for VSCode/VSCodium/Cursor off unless `-e vscode_privacy_enabled=true` |
+| `developer-gui` | VS Code, Ghostty. Privacy + AI-upsell de-nag profile for VSCode/VSCodium/Cursor off unless `-e vscode_privacy_enabled=true` |
 | `developer-rust` / `-go` / `-python` / `-node` / `-typescript` / `-c` | Language toolchains |
 | `infrastructure` | OpenTofu, OpenBao, AWS CLI, helm, terraform-docs, `k8s` (kubectl, kubectx, kubens, k9s, kind, argocd, kustomize, kubeconform, kube-linter), `data` (clickhouse-client, confluent-cli, rpk, valkey-cli, vector), `cloudflare` (flarectl, wrangler) |
 | `packer` | HashiCorp Packer from HashiCorp's repo or tap. Opt-in, in no persona |
+| `dbeaver` | DBeaver Community DB GUI. Opt-in, in no persona |
 | `contributor` | hyperi-ci + its check tools (semgrep, alint), gitleaks, trivy, hadolint, pip-audit, yamllint, ansible-lint, pre-commit, act, git-scrub, macbash |
 | `soe` / `soe-gui` | HyperI org policy (opt-in) |
 | `wallpaper` | HyperI wallpaper only, from `soe-gui`: set as the desktop background and listed in the GNOME Settings picker |
@@ -184,7 +185,8 @@ digest. Read that before changing a role or adding a tool.
 
 **Opt-in, via tags:**
 
-- `developer-gui`: VS Code, Ghostty (Solarized theme), DBeaver
+- `developer-gui`: VS Code, Ghostty (Solarized theme)
+- `dbeaver` (off by default, and in no persona): DBeaver Community
 - `vscode-privacy` (off by default): strips the Copilot/AI upsell UI and the telemetry that stock VSCode ships enabled, across VSCode, VSCodium and Cursor. Enable with `-e vscode_privacy_enabled=true`. It merges one marked block into `settings.json` and never touches a comment or a key it does not manage, backs the file up before its first write, and `-e vscode_privacy_uninstall=true` takes only its own keys back out. Where you have set one of those keys yourself further down the file, yours wins and the run tells you which ones -- so it cannot look applied while changing nothing
 - Languages: Rust, Go, Python, C/C++, Node.js, TypeScript (the Astral suite -- uv, ruff, ty -- ships in the base, as does Node.js: it is core tooling that semantic-release and CI need)
 - `infrastructure`: OpenTofu + OpenBao (the OSS forks in place of terraform and vault), AWS CLI v2, checkov, and terraform-docs for generating IaC module reference docs (engine-agnostic -- it reads `.tf` whichever binary runs it, and OpenTofu has no native `tofu docs`). Under `k8s`: kubectl + kubectx + kubens + k9s + kind + argocd + kustomize + kubeconform + kube-linter. helm is NOT in that group -- it sits in `cloud`, so plain `--tags infrastructure` gets it whether or not you select `k8s`. The `data` group: clickhouse-client, confluent-cli, rpk, valkey-cli, vector. The `cloudflare` group: flarectl + wrangler (flarectl builds from source on both platforms -- Cloudflare ships no binary -- so Linux needs `developer-go`)
