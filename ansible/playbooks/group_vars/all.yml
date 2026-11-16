@@ -6,8 +6,8 @@
 # below. Cargo tools install unversioned. Go
 # and rustup fetch the current version with the checksum published beside it.
 #
-# What remains below is a selection rather than a version -- a Node LTS line,
-# which NodeSource's signed repo then keeps patched.
+# Node's LTS majors come from the Node.js release schedule at run time. The pair
+# below is only the fallback for a run that cannot read it.
 
 # GitHub's anonymous release API allows 60 requests an hour PER IP, and a run
 # selecting infrastructure plus a couple of languages spends a good fraction of
@@ -67,23 +67,22 @@ hyperi_release_env:
 # Two shapes, decided by what upstream actually publishes:
 #
 #   signed repo      node, gh, docker, git. The repo keeps the box current on
-#                    its own via `apt/dnf upgrade`, so only the MAJOR is pinned
-#                    here -- there is no patch version to chase, and routine OS
-#                    updates carry the tool forward for free.
+#                    its own via `apt/dnf upgrade`. NodeSource publishes one
+#                    repo per major, so the role and hyperi-update move it to
+#                    the newest LTS major the schedule names.
 #   resolved artefact  go, rustup, fnm. Upstream publishes no repo, so the role
 #                    asks upstream for the current release when it runs and
 #                    verifies the download against the checksum served with it.
 #
-# Only the Node majors remain, because a major is a choice rather than a version
-# to chase. Bumping one in a year is editing a number here.
+# Every Node major past its LTS start and before its end of life is installed:
+# the newest system-wide from NodeSource, so root, systemd units,
+# semantic-release and CI resolve the same node, and the rest per user via fnm.
+hyperi_node_schedule_url: https://raw.githubusercontent.com/nodejs/Release/main/schedule.json
+
 hyperi_core_versions:
-  # Node n and n-1. n is installed system-wide from the NodeSource repo, so
-  # root, systemd units, semantic-release and CI all resolve the same node;
-  # n-1 is per-user via fnm, for projects not yet moved to n. 24 is Active LTS
-  # (Krypton), 22 is in maintenance. When 26 goes LTS in Oct 2026 these become
-  # 26 and 24.
-  node_major: 24
-  node_major_previous: 22
+  # Used only when the schedule above cannot be read.
+  node_major: 26
+  node_majors_previous: [24, 22]
 
 # ============================================================================
 # apt sources the roles own outright

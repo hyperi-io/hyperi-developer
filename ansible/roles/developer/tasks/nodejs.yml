@@ -13,14 +13,71 @@
 # the trust ladder as a distro one. The sin was the `curl | bash` that used to
 # bootstrap it, and that is what is gone.
 #
-# n system-wide + n-1 per user. NodeSource's per-major repos BOTH provide the
-# package `nodejs`, so apt can hold only one of them; side-by-side genuinely
-# needs a version manager, which is what fnm is doing here.
+# Every LTS major still supported is installed: the newest system-wide, the
+# rest per user via fnm. NodeSource's per-major repos all provide the package
+# `nodejs`, so apt can hold only one of them.
 #
-# npm is NOT installed as a separate package: NodeSource's nodejs bundles npm
-# and corepack. On Ubuntu the distro `npm` package pulls node 18 as a
-# dependency and apt refuses the pair outright ("held broken packages"), so
-# asking for it by name breaks the run.
+# npm and pnpm are npm globals in ~/.npm-global, at the newest release past the
+# release-age cooldown. The distro `npm` package is never asked for: on Ubuntu
+# it pulls node 18 and apt refuses the pair ("held broken packages"). Node 25+
+# ships no corepack, so pnpm no longer comes from it.
+
+# ============================================================================
+# Which majors -- the Node.js release schedule
+# ============================================================================
+
+- name: Read the Node.js release schedule
+  ansible.builtin.uri:
+    url: "{{ developer_node_schedule_url }}"
+    return_content: true
+    timeout: 30
+  register: developer_node_schedule
+  become: false
+  check_mode: false
+  failed_when: false
+
+# A major is supported from its `lts` date until its `end` date. ISO dates
+# compare correctly as strings. The file is served as text/plain, so uri leaves
+# `.json` unset and the body is parsed here.
+- name: Pick the supported Node LTS majors
+  ansible.builtin.set_fact:
+    developer_node_lts_majors: >-
+      {{ developer_node_lines
+         | selectattr('value.lts', 'defined')
+         | selectattr('value.lts', 'le', developer_node_today)
+         | selectattr('value.end', 'gt', developer_node_today)
+         | map(attribute='key') | map('regex_replace', '^v', '') | map('int')
+         | sort(reverse=true) | list }}
+    developer_node_eol_majors: >-
+      {{ developer_node_lines
+         | selectattr('value.end', 'defined')
+         | selectattr('value.end', 'le', developer_node_today)
+         | map(attribute='key') | map('regex_replace', '^v', '') | map('int')
+         | list }}
+  vars:
+    developer_node_today: "{{ now(utc=true, fmt='%Y-%m-%d') }}"
+    developer_node_lines: >-
+      {{ ((developer_node_schedule.content
+           if developer_node_schedule.status | default(0) == 200 else '{}')
+          | from_json | dict2items
+          | selectattr('key', 'match', '^v[0-9]+$') | list) }}
+
+- name: Take the Node majors from the schedule
+  # noqa: var-naming[no-role-prefix] -- overrides the role defaults of the same name.
+  ansible.builtin.set_fact:
+    node_major: "{{ developer_node_lts_majors[0] }}"
+    node_majors_previous: "{{ developer_node_lts_majors[1:] }}"
+  when: developer_node_lts_majors | length > 0
+
+- name: Record that the Node schedule was unreadable
+  # noqa: var-naming[no-role-prefix] -- deploy_warnings is the shared
+  # accumulator reported by playbooks/main.yml post_tasks.
+  ansible.builtin.set_fact:
+    deploy_warnings: >-
+      {{ deploy_warnings | default([])
+         + ['node: release schedule unreadable, used the fallback majors '
+            ~ ([node_major] + node_majors_previous) | join(', ')] }}
+  when: developer_node_lts_majors | length == 0
 
 # ============================================================================
 # Ubuntu -- NodeSource apt repo
@@ -61,10 +118,11 @@
         architectures: "{{ hyperi_arch_deb | default('amd64') }}"
         state: present
 
+    # latest, because `present` keeps the old major after the repo moves.
     - name: Install Node.js (Ubuntu)
       ansible.builtin.apt:
         name: nodejs
-        state: present
+        state: latest  # noqa: package-latest
         update_cache: true
 
   become: true
@@ -94,10 +152,12 @@
         # authoritative for the package regardless of what Fedora ships.
         priority: 10
 
+    # latest, because `present` keeps the old major after the repo moves.
     - name: Install Node.js (Fedora)
       ansible.builtin.dnf:
         name: nodejs
-        state: present
+        state: latest  # noqa: package-latest
+        update_cache: true
 
   become: true
   when: ansible_facts['distribution'] == 'Fedora'
@@ -114,13 +174,13 @@
   environment: "{{ homebrew_env }}"
   when: ansible_facts['distribution'] == 'MacOSX'
 
-# Versioned brew formulae are keg-only, so `node@24` installs WITHOUT linking
-# and `node` never appears on PATH -- every npm/corepack/semantic-release task
-# below would then fail on a Mac. Linking it is what makes the pin usable.
+# Versioned brew formulae are keg-only, so `node@N` installs WITHOUT linking
+# and `node` never appears on PATH -- every npm and semantic-release task below
+# would then fail on a Mac. Linking it is what makes the major usable.
 #
-# The unversioned `node` formula is not an option: it tracks Current (26.x
-# today), not the LTS major this file exists to pin.
-- name: Link the pinned Node major into the Homebrew prefix (macOS)
+# The unversioned `node` formula is not an option: it tracks Current, which is
+# a non-LTS major from each April to October.
+- name: Link the system Node major into the Homebrew prefix (macOS)
   ansible.builtin.command:
     cmd: brew link --overwrite --force node@{{ node_major }}
   become: false
@@ -130,13 +190,13 @@
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================
-# n-1 major, per user, via fnm
+# The other supported majors, per user, via fnm
 # ============================================================================
-# Only the n major can be a system package (see the header). fnm gives a
-# developer the previous major for a project that has not moved yet, without
-# disturbing the system node that CI and tooling resolve.
+# Only one major can be a system package (see the header). fnm gives a
+# developer the other supported majors for a project that has not moved yet,
+# without disturbing the system node that CI and tooling resolve.
 
-- name: Install fnm and the previous Node major (Linux)
+- name: Install fnm and the other Node majors (Linux)
   block:
     - name: Resolve the fnm release
       ansible.builtin.include_role:
@@ -177,9 +237,10 @@
         group: root
       become: true
 
-    - name: Install the previous Node major via fnm
+    - name: Install the other Node majors via fnm
       ansible.builtin.command:
-        cmd: /usr/local/bin/fnm install {{ node_major_previous }}
+        cmd: /usr/local/bin/fnm install {{ item }}
+      loop: "{{ node_majors_previous }}"
       become: true
       become_user: "{{ actual_user }}"
       environment:
@@ -189,11 +250,33 @@
       # exits 0 when the major is present, so the message is the only signal.
       changed_when: "'already installed' not in developer_fnm_install.stderr"
 
+    - name: List the fnm Node versions
+      ansible.builtin.command:
+        cmd: /usr/local/bin/fnm list
+      become: true
+      become_user: "{{ actual_user }}"
+      environment:
+        FNM_DIR: "{{ user_home }}/.local/share/fnm"
+      register: developer_fnm_list
+      changed_when: false
+      check_mode: false
+
+    - name: Remove fnm Node versions past end of life
+      ansible.builtin.command:
+        cmd: /usr/local/bin/fnm uninstall {{ item }}
+      loop: "{{ developer_fnm_list.stdout | regex_findall('v[0-9]+\\.[0-9]+\\.[0-9]+') | unique }}"
+      when: (item | regex_replace('^v([0-9]+)\\..*$', '\\1') | int) in developer_node_eol_majors
+      become: true
+      become_user: "{{ actual_user }}"
+      environment:
+        FNM_DIR: "{{ user_home }}/.local/share/fnm"
+      changed_when: true
+
     # fnm sets the FIRST version it installs as its `default` alias, so without
     # this the base shell (which has no per-project pin) would resolve `node` to
-    # the n-1 major and shadow the system n -- backwards. Pinning default to
-    # `system` keeps the NodeSource node authoritative everywhere except a
-    # project that pins otherwise. Verified: base shell -> system 24.
+    # an older fnm major and shadow the system one. Pinning default to `system`
+    # keeps the NodeSource node authoritative everywhere except a project that
+    # pins otherwise.
     - name: Point the fnm default at the system Node
       ansible.builtin.command:
         cmd: /usr/local/bin/fnm default system
@@ -230,12 +313,12 @@
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['fnm/node ' ~ node_major_previous ~ ': '
+             + ['fnm/node ' ~ node_majors_previous | join(', ') ~ ': '
                 ~ (ansible_failed_result.msg | default('install failed'))] }}
 
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Install fnm and the previous Node major (macOS)
+- name: Install fnm and the other Node majors (macOS)
   block:
     - name: Install fnm (macOS)
       community.general.homebrew:
@@ -244,17 +327,36 @@
       become: false
       environment: "{{ homebrew_env }}"
 
-    - name: Install the previous Node major via fnm (macOS)
+    - name: Install the other Node majors via fnm (macOS)
       ansible.builtin.command:
-        cmd: fnm install {{ node_major_previous }}
+        cmd: fnm install {{ item }}
+      loop: "{{ node_majors_previous }}"
       become: false
       environment: "{{ homebrew_env }}"
       register: developer_fnm_install_macos
       # See the Linux note above -- fnm exits 0 either way.
       changed_when: "'already installed' not in developer_fnm_install_macos.stderr"
 
+    - name: List the fnm Node versions (macOS)
+      ansible.builtin.command:
+        cmd: fnm list
+      become: false
+      environment: "{{ homebrew_env }}"
+      register: developer_fnm_list_macos
+      changed_when: false
+      check_mode: false
+
+    - name: Remove fnm Node versions past end of life (macOS)
+      ansible.builtin.command:
+        cmd: fnm uninstall {{ item }}
+      loop: "{{ developer_fnm_list_macos.stdout | regex_findall('v[0-9]+\\.[0-9]+\\.[0-9]+') | unique }}"
+      when: (item | regex_replace('^v([0-9]+)\\..*$', '\\1') | int) in developer_node_eol_majors
+      become: false
+      environment: "{{ homebrew_env }}"
+      changed_when: true
+
     # See the Linux note -- keep the system (Homebrew node@N) major as fnm's
-    # default so the base shell is not silently switched to n-1.
+    # default so the base shell is not silently switched to an fnm major.
     - name: Point the fnm default at the system Node (macOS)
       ansible.builtin.command:
         cmd: fnm default system
@@ -279,7 +381,7 @@
       ansible.builtin.set_fact:
         deploy_warnings: >-
           {{ deploy_warnings | default([])
-             + ['fnm/node ' ~ node_major_previous ~ ': '
+             + ['fnm/node ' ~ node_majors_previous | join(', ') ~ ': '
                 ~ (ansible_failed_result.msg | default('install failed'))] }}
 
   when: ansible_facts['distribution'] == 'MacOSX'
@@ -366,49 +468,77 @@
   when: ansible_facts['distribution'] == 'MacOSX'
 
 # ============================================================================
-# corepack / pnpm -- package managers, core rather than JS-specific
+# npm and pnpm -- npm globals, the newest release past the cooldown
 # ============================================================================
-# corepack ships WITH node (NodeSource bundles it) and provides the pnpm/yarn
-# shims. developer-typescript installs its tooling via `pnpm install -g`, so
-# pnpm must exist before that role runs -- nothing installed it before, which
-# left that tag broken.
+# The npm NodeSource bundles trails npm's releases, and Node 25+ ships no
+# corepack. ~/.npm-global/bin sits ahead of the system node on PATH, so every
+# Node major resolves these copies. developer-node and developer-typescript
+# install with `pnpm install -g`, so pnpm has to land before them.
+#
+# `--before` makes npm take the newest release published by that date, which is
+# how hyperi_release_min_age_days reaches the registry. npm reports every
+# reinstall as "changed", so the version list decides whether anything moved.
 
-- name: Enable corepack (Linux)
+- name: Set the npm release cutoff
+  ansible.builtin.set_fact:
+    developer_npm_before: >-
+      {{ '%Y-%m-%d' | strftime((now().timestamp() | int)
+         - (hyperi_release_min_age_days | int) * 86400, utc=true) }}
+    developer_npm_env: >-
+      {{ npm_config_env if ansible_facts['distribution'] == 'MacOSX'
+         else {'NPM_CONFIG_PREFIX': user_home ~ '/.npm-global'} }}
+
+- name: Read the npm globals before the update
   ansible.builtin.command:
-    cmd: corepack enable
-  become: true
+    cmd: npm ls --global --depth=0 --json
+  environment: "{{ developer_npm_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_npm_globals_before
   changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install the latest npm and pnpm
+  ansible.builtin.command:
+    cmd: npm install --global npm@latest pnpm@latest --before {{ developer_npm_before }}
+  environment: "{{ developer_npm_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  changed_when: false
+
+- name: Report whether npm or pnpm moved
+  ansible.builtin.command:
+    cmd: npm ls --global --depth=0 --json
+  environment: "{{ developer_npm_env }}"
+  become: "{{ ansible_facts['distribution'] != 'MacOSX' }}"
+  become_user: "{{ actual_user if ansible_facts['distribution'] != 'MacOSX' else omit }}"
+  register: developer_npm_globals_after
+  changed_when: developer_npm_globals_after.stdout != developer_npm_globals_before.stdout
+  check_mode: false
+
+# `corepack enable` wrote pnpm and yarn links beside the system node. They point
+# into a corepack the NodeSource package no longer ships from Node 25.
+- name: Find the corepack package-manager links (Linux)
+  ansible.builtin.stat:
+    path: "/usr/bin/{{ item }}"
+    follow: false
+  loop: [pnpm, pnpx, yarn, yarnpkg]
+  register: developer_corepack_links
   when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
 
-- name: Enable corepack (macOS)
-  ansible.builtin.command:
-    cmd: corepack enable
-  environment: "{{ homebrew_env }}"
-  become: false
-  changed_when: false
-  when: ansible_facts['distribution'] == 'MacOSX'
-
-# corepack caches the activated pnpm under the user's home, so this one runs as
-# actual_user rather than the connecting user -- on a fleet machine reached as a
-# service account those are different, and the shim would land in a home nobody
-# logs into. become_user is ignored while become is false, so both are needed.
-- name: Activate the latest pnpm via corepack (Linux)
-  ansible.builtin.command:
-    cmd: corepack prepare pnpm@latest --activate
-  environment:
-    HOME: "{{ user_home }}"
+- name: Remove the corepack package-manager links (Linux)
+  ansible.builtin.file:
+    path: "{{ item.stat.path }}"
+    state: absent
+  loop: "{{ developer_corepack_links.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
   become: true
-  become_user: "{{ actual_user }}"
-  changed_when: false
-  when: ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
-
-- name: Activate the latest pnpm via corepack (macOS)
-  ansible.builtin.command:
-    cmd: corepack prepare pnpm@latest --activate
-  environment: "{{ homebrew_env }}"
-  become: false
-  changed_when: false
-  when: ansible_facts['distribution'] == 'MacOSX'
+  when:
+    - ansible_facts['distribution'] in ['Fedora', 'Ubuntu']
+    - item.stat.islnk | default(false)
+    - "'corepack' in (item.stat.lnk_target | default(''))"
 
 # pnpm refuses `install -g` outright unless its global bin directory is on PATH
 # ("The configured global bin directory is not in PATH -- run pnpm setup"), so

@@ -271,14 +271,17 @@ The base ships the Astral suite (uv, ruff, ty) and `uv` bundles `uv audit` /
 
 | Tool(s) | Platforms | Method |
 |---|---|---|
-| eslint, prettier | all | npm global |
+| eslint, prettier | all | pnpm global |
 
-The runtime is NOT here. node, npm, semantic-release, pnpm and corepack live in
-the `developer` base -- they are core tooling that semantic-release and CI need,
-so the base installs them and this role adds only the linters. That matters
-because it decides which tag fixes a missing node: `developer`, not
-`developer-node`. developer-ai's plugin gate says so in its warning, and this
-table used to say the opposite.
+The runtime is NOT here. node, npm, pnpm and semantic-release live in the
+`developer` base, because semantic-release and CI need them, so the tag that
+fixes a missing node is `developer`, not `developer-node`. The base installs
+every Node LTS major the [Node.js release schedule](https://github.com/nodejs/Release/blob/main/schedule.json)
+supports: the newest from NodeSource (Homebrew `node@N` on macOS), the rest per
+user through fnm. npm and pnpm are npm globals in `~/.npm-global`, at the newest
+release at least `hyperi_release_min_age_days` old. `hyperi-update` moves the
+system node to a new LTS major, adds or removes fnm majors as the schedule
+changes, and updates npm and pnpm with the same cooldown.
 
 #### developer-typescript (dep: developer-node)
 
@@ -530,9 +533,7 @@ this repo, and there is no flag that changes it.
 | cargo / go tools | `cargo install X`, `go install X@latest`. |
 | go, rustup | The publisher's current release, verified against the checksum it serves beside it. |
 
-Three things are deliberately not versions. **Node's major** (`node_major`) picks
-an LTS line rather than a release, and NodeSource's signed repo patches it in
-place. **Rust's edition** comes with whatever stable rustup installs, so edition
+Two things are deliberately not versions. **Rust's edition** comes with whatever stable rustup installs, so edition
 2024 needs no pin. **kubectl's minor** (`infrastructure_kubectl_minor`) picks the pkgs.k8s.io repository, which publishes one per Kubernetes minor and patches it in place. Left empty it follows the stable minor at https://dl.k8s.io/release/stable.txt. kubectl supports one minor either side of the API server, so this is the knob for cluster version skew. Set it to the minor of the clusters you work against, such as `v1.36`, and the next converge moves the repository and kubectl with it, up or down. A kubectl held with `apt-mark hold` or `dnf versionlock add` is left alone and the run warns.
 
 **GitHub releases wait 7 days.** Every tool taken from a GitHub release installs the newest release at least `hyperi_release_min_age_days` old (default 7; set it in `local-config/vars.yml` or with `-e`), so a compromised or broken release has time to be pulled first. With none that old the installed copy stays and the run warns. Nothing newer is ever installed in its place. Releases from the hyperi-io org skip the wait (`hyperi_release_cooldown_exempt`).
