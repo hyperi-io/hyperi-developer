@@ -24,15 +24,13 @@
 #
 # Each section is independent and self-guarding: a tool that isn't installed is
 # skipped (printed, not fatal), and a failing step is recorded and reported in
-# the summary without aborting the rest. At the end, if the system needs it, you
-# get a reboot prompt (default: No).
+# the summary without aborting the rest. A reboot an update needs is reported,
+# never started, unless --ask was given.
 #
-# ONE confirmation, up front. After the y/N everything runs unattended -- sudo
-# is taken immediately after the gate and kept alive -- and the only other
-# question is the reboot prompt at the end.
+# The password is asked for once, at the start, and nothing else asks.
 #
-# Run with:  hyperi-update            (confirms, then prompts once for sudo)
-#            hyperi-update --yes      (no confirmation — for scripts/Ansible)
+# Run with:  hyperi-update            (one sudo password, then unattended)
+#            hyperi-update --ask      (confirm first, and offer a reboot)
 #            hyperi-update --install  (create the clickable "Hyperi Update" app)
 #            hyperi-update --help
 
@@ -48,7 +46,7 @@ setopt nounset pipefail
 export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
 export PATH="$HOME/.local/bin:${CARGO_HOME:-$HOME/.cargo}/bin:$HOME/go/bin:$HOME/.npm-global/bin:$PNPM_HOME:$PNPM_HOME/bin:/opt/homebrew/bin:/opt/homebrew/opt/rustup/bin:/usr/local/bin:/usr/local/opt/rustup/bin:$PATH"
 
-ASSUME_YES=0
+ASSUME_YES=1
 
 # --- self-resolve: absolute path to this script (symlinks resolved) -------
 SELF=${${(%):-%x}:A}
@@ -59,9 +57,10 @@ hyperi-update -- update Homebrew, macOS, uv tools, rustup and cargo/go/npm/pnpm
                  tools in one go.
 
 Usage:
-  hyperi-update            Confirm, then run all updates (prompts once for sudo).
-  hyperi-update --yes      Skip the confirmation. Still prompts for sudo unless
-                           you have a cached ticket or passwordless sudo.
+  hyperi-update            Run all updates. Asks for the sudo password once,
+                           unless sudo is already passwordless.
+  hyperi-update --ask      Confirm before starting, and offer a reboot if one
+                           is needed.
   hyperi-update --install  Create a clickable "Hyperi Update" app in /Applications.
   hyperi-update --help     Show this help.
 EOF
@@ -149,14 +148,13 @@ case "${1:-}" in
     --install)  install_app; exit $? ;;
     -h|--help)  usage; exit 0 ;;
     -y|--yes)   ASSUME_YES=1 ;;
+    --ask)      ASSUME_YES=0 ;;
     "")         ;;
     *)          print -u2 "hyperi-update: unknown option '$1'"; usage; exit 2 ;;
 esac
 
 # --- confirm ---------------------------------------------------------------
-# This touches every formula, cask and system update on the box, so say so
-# before doing it. --yes is how Ansible and any other unattended caller skips
-# this -- and it is the ONLY question until the reboot prompt at the end.
+# Only with --ask: this touches every formula, cask and system update on the box.
 if (( ! ASSUME_YES )); then
     printf '%s%shyperi-update%s will update EVERYTHING on this Mac:\n\n' "$BOLD" "$BLUE" "$RESET"
     have brew   && printf '  - all Homebrew formulae and casks (including --greedy self-updaters)\n'
@@ -176,19 +174,27 @@ if (( ! ASSUME_YES )); then
     esac
 fi
 
-# --- sudo: ask once, keep alive -------------------------------------------
-# softwareupdate needs root, and asking for it mid-run breaks the one-question
-# contract -- authenticate here, straight after the gate, and keep the ticket
-# alive for the long sections. NOPASSWD leaves no timestamp to refresh, so the
-# keepalive only starts when a password was actually entered.
+# --- sudo: ask once, hold for the run -------------------------------------
+# Homebrew and softwareupdate call sudo from their own children, which a ticket
+# for this terminal does not always cover. A sudoers drop-in lets this user sudo
+# without a password until the run exits, when the trap removes it.
+SUDOERS_DROPIN=/etc/sudoers.d/zz-hyperi-update
 section "Authenticating (sudo)"
-if sudo -n true 2>/dev/null; then
+# -k ignores a cached ticket, so only a standing NOPASSWD rule passes the first test.
+if sudo -k -n true 2>/dev/null; then
     ok "sudo authenticated (passwordless)"
-elif [[ -t 0 ]] && sudo -v; then
-    ok "sudo authenticated"
-    ( while true; do sudo -n true 2>/dev/null; sleep 50; kill -0 "$$" 2>/dev/null || exit; done ) &
-    SUDO_KEEPALIVE_PID=$!
-    trap '[[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
+elif sudo -n true 2>/dev/null || { [[ -t 0 ]] && sudo -v; }; then
+    trap 'sudo -n rm -f "$SUDOERS_DROPIN"' EXIT
+    trap 'exit 130' INT TERM
+    dropin_tmp="$(mktemp)"
+    printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$(id -un)" >"$dropin_tmp"
+    if sudo visudo -cqf "$dropin_tmp" &&
+       sudo install -m 0440 -o root -g wheel "$dropin_tmp" "$SUDOERS_DROPIN"; then
+        ok "sudo held until this run ends"
+    else
+        fail "sudo drop-in (later steps may ask for the password again)"
+    fi
+    rm -f "$dropin_tmp"
 else
     printf '%s    \xe2\x9c\x97 sudo authentication failed — aborting%s\n' "$RED" "$RESET"
     printf '%s    No passwordless sudo and no terminal to prompt on.%s\n' "$RED" "$RESET"
